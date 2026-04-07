@@ -161,13 +161,13 @@
                 function setResult(data) {
                   if (data && typeof data === "string") {
                     window.__langData = data;
-                    console.log(
+                    /*console.log(
                       "[boot] Preloaded lang data (" +
                         data.length +
                         " chars" +
                         (activeMod ? ", mod: " + activeMod : "") +
                         ")",
-                    );
+                    );*/
                   }
                   resolve();
                 }

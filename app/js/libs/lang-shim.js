@@ -115,9 +115,9 @@
             c.continue();
           } else {
             if (count > 0) {
-              console.log(
+              /*console.log(
                 "[lang-shim] Restored " + count + " save(s) from IndexedDB",
-              );
+              );*/
             }
             _savesRestored = true;
           }
@@ -495,13 +495,13 @@
         var parsed = JSON.parse(json);
         if (parsed && (parsed.linesLUT || parsed.labelLUT)) {
           putAsset(db, "__mod_lang_data__:" + modId, json, function () {
-            console.log(
+            /*console.log(
               "[lang-shim] Cached lang data for mod " +
                 modId +
                 " (" +
                 json.length +
                 " chars)",
-            );
+            );*/
             callback();
           });
           return;
@@ -1360,11 +1360,11 @@
       SoundManager.playOk();
     };
 
-    console.log(
+    /*console.log(
       "[lang-shim] Mod system patches applied" +
         (_modsLoaded ? " (mods: " + getModList().length + ")" : "") +
         (getActiveMod() ? ", active: " + getActiveMod() : ""),
-    );
+    );*/
   }
 
   // Hook into Scene_Boot.prototype.start
