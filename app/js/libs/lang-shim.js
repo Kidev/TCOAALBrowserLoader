@@ -786,6 +786,12 @@
         Graphics._stretchEnabled = this.stretch;
         Graphics._updateAllElements();
       };
+
+      // ConfigManager.load() already ran in Scene_Boot.create (before
+      // applyPatches), so the patched applyData above missed the initial
+      // load.  Sync Graphics to the current ConfigManager.stretch value now.
+      Graphics._stretchEnabled = ConfigManager.stretch;
+      Graphics._updateAllElements();
     }
 
     if (typeof Window_Options !== "undefined") {
