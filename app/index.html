@@ -1,313 +1,367 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="viewport" content="user-scalable=no">
-    <link rel="icon" id="favicon" type="image/png">
-    <link rel="apple-touch-icon" id="apple-icon">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="viewport" content="user-scalable=no" />
+    <link rel="icon" id="favicon" type="image/png" />
+    <link rel="apple-touch-icon" id="apple-icon" />
     <title>The Coffin of Andy and Leyley</title>
     <style>
-        body {
-            background-color: black;
-            margin: 0;
-            overflow: hidden;
-        }
-        /* Splash shown while bootstrapping (SW registration + IDB check) */
-        #boot-splash {
-            position: fixed;
-            inset: 0;
-            background: #000;
-            color: #888;
-            font-family: 'Georgia', serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            letter-spacing: .06em;
-            z-index: 9999;
-            transition: opacity .3s;
-        }
-        #boot-splash.hidden {
-            opacity: 0;
-            pointer-events: none;
-        }
+      body {
+        background-color: black;
+        margin: 0;
+        overflow: hidden;
+      }
+      /* Splash shown while bootstrapping (SW registration + IDB check) */
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        background: #000;
+        color: #888;
+        font-family: "Georgia", serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        letter-spacing: 0.06em;
+        z-index: 9999;
+        transition: opacity 0.3s;
+      }
+      #boot-splash.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div id="boot-splash">Loading…</div>
 
     <script>
-    /**
-     * Bootstrap: register SW, check for game files, load game scripts.
-     *
-     * On GitHub Pages the game files live in IndexedDB (imported via loader.html).
-     * The Service Worker intercepts script requests and serves them from IDB.
-     * We must ensure the SW is active BEFORE loading game scripts, otherwise
-     * the <script> requests would 404 against the static host.
-     */
-    (function () {
-        'use strict';
+      /**
+       * Bootstrap: register SW, check for game files, load game scripts.
+       *
+       * On GitHub Pages the game files live in IndexedDB (imported via loader.html).
+       * The Service Worker intercepts script requests and serves them from IDB.
+       * We must ensure the SW is active BEFORE loading game scripts, otherwise
+       * the <script> requests would 404 against the static host.
+       */
+      (function () {
+        "use strict";
 
-        var DB_NAME    = 'tcoaal';
+        var DB_NAME = "tcoaal";
         var DB_VERSION = 1;
-        var STORE_NAME = 'assets';
-        var splash     = document.getElementById('boot-splash');
+        var STORE_NAME = "assets";
+        var splash = document.getElementById("boot-splash");
 
-        function setSplash(msg) { splash.textContent = msg; }
+        function setSplash(msg) {
+          splash.textContent = msg;
+        }
 
         // Step 1: register & activate the Service Worker
         function ensureSW() {
-            if (!('serviceWorker' in navigator)) {
+          if (!("serviceWorker" in navigator)) {
+            return Promise.resolve();
+          }
+          return navigator.serviceWorker
+            .register("/sw.js", { scope: "/" })
+            .then(function (reg) {
+              reg.update();
+              if (navigator.serviceWorker.controller) {
                 return Promise.resolve();
-            }
-            return navigator.serviceWorker.register('/sw.js', { scope: '/' })
-                .then(function (reg) {
-                    reg.update();
-                    if (navigator.serviceWorker.controller) {
-                        return Promise.resolve();
-                    }
-                    // Wait for the SW to take control (skipWaiting + claim)
-                    return new Promise(function (resolve) {
-                        navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
-                        // Timeout: if SW doesn't claim in 3s, proceed anyway
-                        setTimeout(resolve, 3000);
-                    });
-                })
-                .catch(function (e) {
-                    console.warn('[boot] SW registration failed:', e);
-                });
+              }
+              // Wait for the SW to take control (skipWaiting + claim)
+              return new Promise(function (resolve) {
+                navigator.serviceWorker.addEventListener(
+                  "controllerchange",
+                  resolve,
+                  { once: true },
+                );
+                // Timeout: if SW doesn't claim in 3s, proceed anyway
+                setTimeout(resolve, 3000);
+              });
+            })
+            .catch(function (e) {
+              console.warn("[boot] SW registration failed:", e);
+            });
         }
 
         // Step 2: check if game files are available (IDB or server)
         function hasGameFiles() {
-            return new Promise(function (resolve) {
-                // First check IDB
+          return new Promise(function (resolve) {
+            // First check IDB
+            try {
+              var req = indexedDB.open(DB_NAME, DB_VERSION);
+              req.onupgradeneeded = function (e) {
+                e.target.result.createObjectStore(STORE_NAME);
+              };
+              req.onsuccess = function (e) {
+                var db = e.target.result;
                 try {
-                    var req = indexedDB.open(DB_NAME, DB_VERSION);
-                    req.onupgradeneeded = function (e) {
-                        e.target.result.createObjectStore(STORE_NAME);
-                    };
-                    req.onsuccess = function (e) {
-                        var db = e.target.result;
-                        try {
-                            var tx    = db.transaction(STORE_NAME, 'readonly');
-                            var check = tx.objectStore(STORE_NAME).get('js/rpg_core.js');
-                            check.onsuccess = function () {
-                                if (check.result) { resolve(true); return; }
-                                // Not in IDB, try network (server.js mode)
-                                checkServer().then(resolve);
-                            };
-                            check.onerror = function () {
-                                checkServer().then(resolve);
-                            };
-                        } catch (ex) { checkServer().then(resolve); }
-                    };
-                    req.onerror = function () { checkServer().then(resolve); };
-                } catch (ex) { checkServer().then(resolve); }
-            });
+                  var tx = db.transaction(STORE_NAME, "readonly");
+                  var check = tx.objectStore(STORE_NAME).get("js/rpg_core.js");
+                  check.onsuccess = function () {
+                    if (check.result) {
+                      resolve(true);
+                      return;
+                    }
+                    // Not in IDB, try network (server.js mode)
+                    checkServer().then(resolve);
+                  };
+                  check.onerror = function () {
+                    checkServer().then(resolve);
+                  };
+                } catch (ex) {
+                  checkServer().then(resolve);
+                }
+              };
+              req.onerror = function () {
+                checkServer().then(resolve);
+              };
+            } catch (ex) {
+              checkServer().then(resolve);
+            }
+          });
         }
 
         // Step 2b: preload language data from IDB into a global so
         // browser-shim.js can serve it synchronously to the DRM payload.
         // This avoids sync XHR which may not be intercepted by the SW.
         function preloadLangData() {
-            return new Promise(function (resolve) {
-                try {
-                    var activeMod = null;
-                    try { activeMod = localStorage.getItem('_activeMod') || null; } catch (e) {}
+          return new Promise(function (resolve) {
+            try {
+              var activeMod = null;
+              try {
+                activeMod = localStorage.getItem("_activeMod") || null;
+              } catch (e) {}
 
-                    var req = indexedDB.open(DB_NAME, DB_VERSION);
-                    req.onsuccess = function (e) {
-                        var db = e.target.result;
+              var req = indexedDB.open(DB_NAME, DB_VERSION);
+              req.onsuccess = function (e) {
+                var db = e.target.result;
 
-                        function loadKey(key, cb) {
-                            try {
-                                var tx  = db.transaction(STORE_NAME, 'readonly');
-                                var get = tx.objectStore(STORE_NAME).get(key);
-                                get.onsuccess = function () { cb(get.result); };
-                                get.onerror   = function () { cb(null); };
-                            } catch (ex) { cb(null); }
-                        }
-
-                        function setResult(data) {
-                            if (data && typeof data === 'string') {
-                                window.__langData = data;
-                                console.log('[boot] Preloaded lang data (' +
-                                    data.length + ' chars' +
-                                    (activeMod ? ', mod: ' + activeMod : '') + ')');
-                            }
-                            resolve();
-                        }
-
-                        if (activeMod) {
-                            // Try mod-specific cached lang data first
-                            loadKey('__mod_lang_data__:' + activeMod, function (modData) {
-                                if (modData) { setResult(modData); return; }
-                                // Fallback to base game lang data
-                                loadKey('__lang_data__', setResult);
-                            });
-                        } else {
-                            loadKey('__lang_data__', setResult);
-                        }
+                function loadKey(key, cb) {
+                  try {
+                    var tx = db.transaction(STORE_NAME, "readonly");
+                    var get = tx.objectStore(STORE_NAME).get(key);
+                    get.onsuccess = function () {
+                      cb(get.result);
                     };
-                    req.onerror = function () { resolve(); };
-                } catch (ex) { resolve(); }
-            });
+                    get.onerror = function () {
+                      cb(null);
+                    };
+                  } catch (ex) {
+                    cb(null);
+                  }
+                }
+
+                function setResult(data) {
+                  if (data && typeof data === "string") {
+                    window.__langData = data;
+                    console.log(
+                      "[boot] Preloaded lang data (" +
+                        data.length +
+                        " chars" +
+                        (activeMod ? ", mod: " + activeMod : "") +
+                        ")",
+                    );
+                  }
+                  resolve();
+                }
+
+                if (activeMod) {
+                  // Try mod-specific cached lang data first
+                  loadKey("__mod_lang_data__:" + activeMod, function (modData) {
+                    if (modData) {
+                      setResult(modData);
+                      return;
+                    }
+                    // Fallback to base game lang data
+                    loadKey("__lang_data__", setResult);
+                  });
+                } else {
+                  loadKey("__lang_data__", setResult);
+                }
+              };
+              req.onerror = function () {
+                resolve();
+              };
+            } catch (ex) {
+              resolve();
+            }
+          });
         }
 
         // Step 2c: load favicon from IDB (icon/icon.png from the user's game files)
         function loadFavicon() {
-            try {
-                var req = indexedDB.open(DB_NAME, DB_VERSION);
-                req.onsuccess = function (e) {
-                    var db = e.target.result;
-                    try {
-                        var tx  = db.transaction(STORE_NAME, 'readonly');
-                        var get = tx.objectStore(STORE_NAME).get('icon/icon.png');
-                        get.onsuccess = function () {
-                            if (!get.result) return;
-                            try {
-                                var blob = (get.result instanceof Blob)
-                                    ? get.result
-                                    : new Blob([get.result], { type: 'image/png' });
-                                var url = URL.createObjectURL(blob);
-                                var fav = document.getElementById('favicon');
-                                var apple = document.getElementById('apple-icon');
-                                if (fav) fav.href = url;
-                                if (apple) apple.href = url;
-                            } catch (ex) {}
-                        };
-                    } catch (ex) {}
+          try {
+            var req = indexedDB.open(DB_NAME, DB_VERSION);
+            req.onsuccess = function (e) {
+              var db = e.target.result;
+              try {
+                var tx = db.transaction(STORE_NAME, "readonly");
+                var get = tx.objectStore(STORE_NAME).get("icon/icon.png");
+                get.onsuccess = function () {
+                  if (!get.result) return;
+                  try {
+                    var blob =
+                      get.result instanceof Blob
+                        ? get.result
+                        : new Blob([get.result], { type: "image/png" });
+                    var url = URL.createObjectURL(blob);
+                    var fav = document.getElementById("favicon");
+                    var apple = document.getElementById("apple-icon");
+                    if (fav) fav.href = url;
+                    if (apple) apple.href = url;
+                  } catch (ex) {}
                 };
-            } catch (ex) {}
+              } catch (ex) {}
+            };
+          } catch (ex) {}
         }
 
         // Check if a local server is serving game files
         function checkServer() {
-            return fetch('js/rpg_core.js', { method: 'HEAD' })
-                .then(function (r) {
-                    return r.ok && r.headers.get('content-type') !== 'text/html';
-                })
-                .catch(function () { return false; });
+          return fetch("js/rpg_core.js", { method: "HEAD" })
+            .then(function (r) {
+              return r.ok && r.headers.get("content-type") !== "text/html";
+            })
+            .catch(function () {
+              return false;
+            });
         }
 
         // Step 3: dynamically load game scripts in order
         function loadScripts(urls, idx) {
-            if (idx >= urls.length) return Promise.resolve();
-            return new Promise(function (resolve, reject) {
-                var s   = document.createElement('script');
-                s.type  = 'text/javascript';
-                s.src   = urls[idx];
-                s.onload  = function () { loadScripts(urls, idx + 1).then(resolve).catch(reject); };
-                s.onerror = function () {
-                    console.warn('[boot] Failed to load:', urls[idx]);
-                    // Continue anyway the SW might serve it on retry
-                    loadScripts(urls, idx + 1).then(resolve).catch(reject);
-                };
-                document.body.appendChild(s);
-            });
+          if (idx >= urls.length) return Promise.resolve();
+          return new Promise(function (resolve, reject) {
+            var s = document.createElement("script");
+            s.type = "text/javascript";
+            s.src = urls[idx];
+            s.onload = function () {
+              loadScripts(urls, idx + 1)
+                .then(resolve)
+                .catch(reject);
+            };
+            s.onerror = function () {
+              console.warn("[boot] Failed to load:", urls[idx]);
+              // Continue anyway the SW might serve it on retry
+              loadScripts(urls, idx + 1)
+                .then(resolve)
+                .catch(reject);
+            };
+            document.body.appendChild(s);
+          });
         }
 
         // Game script order mirrors the original static <script> tags
         var GAME_SCRIPTS = [
-            'js/libs/pixi.js',
-            'js/libs/pixi-tilemap.js',
-            'js/libs/pixi-picture.js',
-            'js/libs/fpsmeter.js',
-            'js/libs/lz-string.js',
-            'js/libs/iphone-inline-video.browser.js',
-            'js/rpg_core.js',
-            'js/libs/pako_inflate.min.js',
-            'js/libs/browser-shim.js',
-            'js/rpg_managers.js',
-            'js/rpg_objects.js',
-            'js/rpg_scenes.js',
-            'js/rpg_sprites.js',
-            'js/rpg_windows.js',
-            'js/plugins.js',
-            'js/libs/lang-shim.js',
-            'js/main.js'
+          "js/libs/pixi.js",
+          "js/libs/pixi-tilemap.js",
+          "js/libs/pixi-picture.js",
+          "js/libs/fpsmeter.js",
+          "js/libs/lz-string.js",
+          "js/libs/iphone-inline-video.browser.js",
+          "js/rpg_core.js",
+          "js/libs/pako_inflate.min.js",
+          "js/libs/browser-shim.js",
+          "js/rpg_managers.js",
+          "js/rpg_objects.js",
+          "js/rpg_scenes.js",
+          "js/rpg_sprites.js",
+          "js/rpg_windows.js",
+          "js/plugins.js",
+          "js/libs/lang-shim.js",
+          "js/main.js",
         ];
 
         // Boot sequence
-        setSplash('Initializing…');
+        setSplash("Initializing…");
 
-        ensureSW().then(function () {
-            setSplash('Checking game files…');
+        ensureSW()
+          .then(function () {
+            setSplash("Checking game files…");
             return hasGameFiles();
-        }).then(function (found) {
+          })
+          .then(function (found) {
             if (!found) {
-                // No game files, redirect to the loader / import screen
-                window.location.href = '/loader.html';
-                return;
+              // No game files, redirect to the loader / import screen
+              window.location.href = "/loader.html";
+              return;
             }
 
             // Game files are in IDB and SW is active, load the game
-            setSplash('Starting game…');
+            setSplash("Starting game…");
 
             // Preload language data from IDB before loading scripts,
             // so browser-shim.js can serve it synchronously.
             // Also load favicon from IDB (non-blocking).
             loadFavicon();
             return preloadLangData().then(function () {
+              // Load the font CSS first (it may also be in IDB)
+              var link = document.createElement("link");
+              link.rel = "stylesheet";
+              link.type = "text/css";
+              link.href = "fonts/gamefont.css";
+              document.head.appendChild(link);
 
-            // Load the font CSS first (it may also be in IDB)
-            var link    = document.createElement('link');
-            link.rel    = 'stylesheet';
-            link.type   = 'text/css';
-            link.href   = 'fonts/gamefont.css';
-            document.head.appendChild(link);
+              // Intercept the onload handler that main.js will set
+              // window.onload already fired so a plain assignment would
+              // never trigger. We capture it and call it ourselves once
+              // all plugin scripts have loaded.
+              var _bootOnload = null;
+              Object.defineProperty(window, "onload", {
+                set: function (fn) {
+                  _bootOnload = fn;
+                },
+                get: function () {
+                  return _bootOnload;
+                },
+                configurable: true,
+              });
 
-            // Intercept the onload handler that main.js will set
-            // window.onload already fired so a plain assignment would
-            // never trigger. We capture it and call it ourselves once
-            // all plugin scripts have loaded.
-            var _bootOnload = null;
-            Object.defineProperty(window, 'onload', {
-                set: function (fn) { _bootOnload = fn; },
-                get: function ()   { return _bootOnload; },
-                configurable: true
-            });
-
-            return loadScripts(GAME_SCRIPTS, 0).then(function () {
+              return loadScripts(GAME_SCRIPTS, 0).then(function () {
                 // Hide the splash
-                splash.classList.add('hidden');
-                setTimeout(function () { splash.remove(); }, 400);
+                splash.classList.add("hidden");
+                setTimeout(function () {
+                  splash.remove();
+                }, 400);
 
                 // main.js called PluginManager.setup($plugins) which
                 // creates async=false <script src> tags for plugins.
                 // They execute in insertion order. Append one more
                 // async=false script with a blob: src, it will run
                 // after every plugin and start the game.
-                var code = 'window.__bootReady=true;';
-                var blob = new Blob([code], { type: 'text/javascript' });
-                var sentinel = document.createElement('script');
-                sentinel.type = 'text/javascript';
+                var code = "window.__bootReady=true;";
+                var blob = new Blob([code], { type: "text/javascript" });
+                var sentinel = document.createElement("script");
+                sentinel.type = "text/javascript";
                 sentinel.async = false;
                 sentinel.src = URL.createObjectURL(blob);
                 sentinel.onload = function () {
-                    URL.revokeObjectURL(sentinel.src);
-                    // Hook lang-shim into Scene_Boot AFTER DRM payload
-                    // has loaded (it overwrites Scene_Boot.prototype.start)
-                    if (window.__langShimHookBoot) window.__langShimHookBoot();
-                    delete window.onload;
-                    if (_bootOnload) {
-                        _bootOnload();
-                    } else if (typeof SceneManager !== 'undefined') {
-                        SceneManager.run(Scene_Boot);
-                    }
+                  URL.revokeObjectURL(sentinel.src);
+                  // Hook lang-shim into Scene_Boot AFTER DRM payload
+                  // has loaded (it overwrites Scene_Boot.prototype.start)
+                  if (window.__langShimHookBoot) window.__langShimHookBoot();
+                  delete window.onload;
+                  if (_bootOnload) {
+                    _bootOnload();
+                  } else if (typeof SceneManager !== "undefined") {
+                    SceneManager.run(Scene_Boot);
+                  }
                 };
                 document.body.appendChild(sentinel);
-            });
-
+              });
             }); // end preloadLangData().then
-        }).catch(function (e) {
-            console.error('[boot] Fatal:', e);
-            setSplash('Error: ' + (e.message || e));
-        });
-    }());
+          })
+          .catch(function (e) {
+            console.error("[boot] Fatal:", e);
+            setSplash("Error: " + (e.message || e));
+          });
+      })();
     </script>
-</body>
+  </body>
 </html>

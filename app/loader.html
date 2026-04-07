@@ -1,677 +1,790 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>kidev's TCOAAL Browser Loader</title>
-    <link rel="icon" href="icon/icon.png" type="image/png">
+    <link rel="icon" href="icon/icon.png" type="image/png" />
     <style>
-        :root {
-            --green: #86d37a;
-            --purple: #ec83c3;
-            --blue: #596891;
-            --yellow: #eeea72;
-            --grey: #5b5b5b;
-            --default: #d3d0c0;
-            --red: #955456;
-            --white: #ffffff;
-            --black: #000000;
-            --bg-color: #1a1a1a;
-            --bg-color-darker: #121212;
-            --bg-color-section: #2a2a2a;
-            --bg-color-section-lighter: #3a3a3a;
-            --txt-color: var(--white);
-            --accent-color: #555555;
-            --accent-color-light: #666666;
-            --play-glow-color: var(--purple);
+      :root {
+        --green: #86d37a;
+        --purple: #ec83c3;
+        --blue: #596891;
+        --yellow: #eeea72;
+        --grey: #5b5b5b;
+        --default: #d3d0c0;
+        --red: #955456;
+        --white: #ffffff;
+        --black: #000000;
+        --bg-color: #1a1a1a;
+        --bg-color-darker: #121212;
+        --bg-color-section: #2a2a2a;
+        --bg-color-section-lighter: #3a3a3a;
+        --txt-color: var(--white);
+        --accent-color: #555555;
+        --accent-color-light: #666666;
+        --play-glow-color: var(--purple);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: var(--black);
+        color: var(--default);
+        font-family: "Georgia", serif;
+        min-height: 100vh;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      /* Full-screen overlay (matches demo forced-import-overlay) */
+      .overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        background: var(--black);
+        background-image: url("img/bg.webp");
+        background-repeat: no-repeat;
+        background-position: top center;
+        background-attachment: local;
+        background-size: cover;
+        z-index: 1;
+      }
+
+      /* Pulsing purple halo */
+      .overlay::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: radial-gradient(
+          circle,
+          rgba(128, 0, 255, 0.25) 0,
+          rgba(128, 0, 255, 0.05) 40%,
+          rgba(0, 0, 0, 0) 80%
+        );
+        background-repeat: no-repeat;
+        background-size: 200% 200%;
+        background-position: 50% 85%;
+        animation: haloPulse 4s ease-in-out infinite;
+      }
+
+      @keyframes haloPulse {
+        0% {
+          opacity: 0.3;
+          transform: scale(1);
         }
-
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            background: var(--black);
-            color: var(--default);
-            font-family: 'Georgia', serif;
-            min-height: 100vh;
-            margin: 0;
-            overflow: hidden;
+        50% {
+          opacity: 0.6;
+          transform: scale(1.1);
         }
-
-        /* Full-screen overlay (matches demo forced-import-overlay) */
-        .overlay {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100vw; height: 100vh;
-            display: flex;
-            justify-content: center;
-            background: var(--black);
-            background-image: url('img/bg.webp');
-            background-repeat: no-repeat;
-            background-position: top center;
-            background-attachment: local;
-            background-size: cover;
-            z-index: 1;
+        100% {
+          opacity: 0.3;
+          transform: scale(1);
         }
+      }
 
-        /* Pulsing purple halo */
-        .overlay::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            pointer-events: none;
-            background: radial-gradient(circle, rgba(128, 0, 255, 0.25) 0, rgba(128, 0, 255, 0.05) 40%, rgba(0, 0, 0, 0) 80%);
-            background-repeat: no-repeat;
-            background-size: 200% 200%;
-            background-position: 50% 85%;
-            animation: haloPulse 4s ease-in-out infinite;
-        }
+      /* GitHub link (top-right) */
+      .github-link {
+        position: absolute;
+        top: 0;
+        right: 0;
+        z-index: 10;
+        color: rgba(255, 255, 255, 0.9);
+        text-decoration: none;
+        transition: all 0.3s ease;
+        padding: 8px 12px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(15, 15, 15, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        font-size: 0.8em;
+        font-family: "Georgia", serif;
+      }
 
-        @keyframes haloPulse {
-            0%   { opacity: 0.3; transform: scale(1); }
-            50%  { opacity: 0.6; transform: scale(1.1); }
-            100% { opacity: 0.3; transform: scale(1); }
-        }
+      .github-link:hover,
+      .tool-link:hover {
+        color: var(--white);
+        background: rgba(74, 144, 226, 0.15);
+        border-color: rgba(74, 144, 226, 0.3);
+        transform: translateY(-1px);
+      }
 
-        /* GitHub link (top-right) */
-        .github-link {
-            position: absolute;
-            top: 0; right: 0;
-            z-index: 10;
-            color: rgba(255, 255, 255, 0.9);
-            text-decoration: none;
-            transition: all 0.3s ease;
-            padding: 8px 12px;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(15, 15, 15, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.8em;
-            font-family: 'Georgia', serif;
-        }
+      .tool-link {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 10;
+        color: rgba(255, 255, 255, 0.9);
+        text-decoration: none;
+        transition: all 0.3s ease;
+        padding: 8px 12px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(15, 15, 15, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        font-size: 0.8em;
+        font-family: "Georgia", serif;
+      }
 
-        .github-link:hover, .tool-link:hover {
-            color: var(--white);
-            background: rgba(74, 144, 226, 0.15);
-            border-color: rgba(74, 144, 226, 0.3);
-            transform: translateY(-1px);
-        }
+      .tool-link:hover {
+        background: rgba(236, 131, 195, 0.15);
+        border-color: rgba(236, 131, 195, 0.3);
+      }
 
-        .tool-link {
-            position: absolute;
-            top: 0; left: 0;
-            z-index: 10;
-            color: rgba(255, 255, 255, 0.9);
-            text-decoration: none;
-            transition: all 0.3s ease;
-            padding: 8px 12px;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(15, 15, 15, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 0.8em;
-            font-family: 'Georgia', serif;
-        }
+      .tool-link .tool-icon {
+        width: 16px;
+        height: 16px;
+        fill: currentColor;
+      }
 
-        .tool-link:hover {
-            background: rgba(236, 131, 195, 0.15);
-            border-color: rgba(236, 131, 195, 0.3);
-        }
+      .github-link .github-icon {
+        width: 16px;
+        height: 16px;
+        fill: currentColor;
+      }
 
-        .tool-link .tool-icon {
-            width: 16px; height: 16px;
-            fill: currentColor;
-        }
+      /* Central content */
+      .content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2vmax;
+        padding: 3vmax;
+        text-align: center;
+        height: 100vh;
+        justify-content: center;
+        position: relative;
+      }
 
-        .github-link .github-icon {
-            width: 16px; height: 16px;
-            fill: currentColor;
-        }
+      .content h1 {
+        color: var(--txt-color);
+        font-size: 2vmax;
+        font-weight: normal;
+        letter-spacing: 0.05em;
+        margin: 0;
+      }
 
-        /* Central content */
-        .content {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 2vmax;
-            padding: 3vmax;
-            text-align: center;
-            height: 100vh;
-            justify-content: center;
-            position: relative;
-        }
+      .content .subtitle {
+        font-size: 1vmax;
+        color: var(--default);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-top: -1vmax;
+      }
 
-        .content h1 {
-            color: var(--txt-color);
-            font-size: 2vmax;
-            font-weight: normal;
-            letter-spacing: .05em;
-            margin: 0;
-        }
+      .content .info {
+        font-size: 0.9vmax;
+        line-height: 1.65;
+        color: rgba(255, 255, 255, 0.6);
+        max-width: 500px;
+      }
 
-        .content .subtitle {
-            font-size: 1vmax;
-            color: var(--default);
-            letter-spacing: .08em;
-            text-transform: uppercase;
-            margin-top: -1vmax;
-        }
+      /* Hidden file input */
+      #file-input {
+        display: none;
+      }
 
-        .content .info {
-            font-size: 0.9vmax;
-            line-height: 1.65;
-            color: rgba(255, 255, 255, 0.6);
-            max-width: 500px;
-        }
+      /* Buttons (composition-btn style) */
+      .action-btn {
+        background: var(--accent-color-light);
+        color: var(--txt-color);
+        border: none;
+        border-radius: 4px;
+        padding: 0.8vmax 2vmax;
+        cursor: pointer;
+        font-size: 1.8vmax;
+        font-family: "Georgia", serif;
+        font-weight: bold;
+        transition: all 0.2s;
+        white-space: nowrap;
+        position: relative;
+      }
 
-        /* Hidden file input */
-        #file-input { display: none; }
+      .action-btn:hover:not(:disabled) {
+        background: var(--accent-color);
+      }
 
-        /* Buttons (composition-btn style) */
-        .action-btn {
-            background: var(--accent-color-light);
-            color: var(--txt-color);
-            border: none;
-            border-radius: 4px;
-            padding: 0.8vmax 2vmax;
-            cursor: pointer;
-            font-size: 1.8vmax;
-            font-family: 'Georgia', serif;
-            font-weight: bold;
-            transition: all 0.2s;
-            white-space: nowrap;
-            position: relative;
-        }
+      .action-btn:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
 
-        .action-btn:hover:not(:disabled) {
-            background: var(--accent-color);
-        }
+      .action-btn.secondary {
+        font-size: 1.2vmax;
+        padding: 0.5vmax 1.5vmax;
+        background: var(--bg-color-section);
+      }
 
-        .action-btn:disabled {
-            opacity: 0.35;
-            cursor: not-allowed;
-        }
+      .action-btn.secondary:hover:not(:disabled) {
+        background: var(--bg-color-section-lighter);
+      }
 
-        .action-btn.secondary {
-            font-size: 1.2vmax;
-            padding: 0.5vmax 1.5vmax;
-            background: var(--bg-color-section);
-        }
+      /* Progress bar (demo import-progress style) */
+      .progress-wrap {
+        display: none;
+        width: 90%;
+        max-width: 500px;
+      }
 
-        .action-btn.secondary:hover:not(:disabled) {
-            background: var(--bg-color-section-lighter);
-        }
+      .progress-wrap.visible {
+        display: block;
+      }
 
-        /* Progress bar (demo import-progress style) */
-        .progress-wrap {
-            display: none;
-            width: 90%;
-            max-width: 500px;
-        }
+      .bar-track {
+        width: 100%;
+        height: 2vmax;
+        background: var(--bg-color-section-lighter);
+        border-radius: 1vmax;
+        overflow: hidden;
+        margin-bottom: 1vmax;
+        border: 2px solid var(--black);
+        position: relative;
+      }
 
-        .progress-wrap.visible { display: block; }
+      .bar-fill {
+        height: 100%;
+        background: var(--white);
+        width: 0;
+        transition: width 0.3s ease;
+        border: 2px solid var(--black);
+        box-sizing: border-box;
+        border-radius: 0.8vmax;
+      }
 
-        .bar-track {
-            width: 100%;
-            height: 2vmax;
-            background: var(--bg-color-section-lighter);
-            border-radius: 1vmax;
-            overflow: hidden;
-            margin-bottom: 1vmax;
-            border: 2px solid var(--black);
-            position: relative;
-        }
+      .status {
+        text-align: center;
+        color: var(--txt-color);
+        font-size: 0.9vmax;
+        min-height: 1.2em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
 
-        .bar-fill {
-            height: 100%;
-            background: var(--white);
-            width: 0;
-            transition: width 0.3s ease;
-            border: 2px solid var(--black);
-            box-sizing: border-box;
-            border-radius: 0.8vmax;
-        }
+      .status.error {
+        color: var(--red);
+      }
+      .status.ok {
+        color: var(--green);
+      }
 
-        .status {
-            text-align: center;
-            color: var(--txt-color);
-            font-size: 0.9vmax;
-            min-height: 1.2em;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
+      /* Bottom note + Steam widget */
+      .bottom-note {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0;
+        margin: 0;
+        padding: 2vmax;
+        line-height: 1;
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #999;
+        font-size: 0.9vmax;
+        font-style: italic;
+      }
 
-        .status.error { color: var(--red); }
-        .status.ok    { color: var(--green); }
-
-        /* Bottom note + Steam widget */
-        .bottom-note {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 0;
-            margin: 0;
-            padding: 2vmax;
-            line-height: 1;
-            position: absolute;
-            bottom: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #999;
-            font-size: 0.9vmax;
-            font-style: italic;
-        }
-
-        #steam-buy-frame {
-            border: 0;
-            z-index: 100;
-            margin: 0;
-        }
-
+      #steam-buy-frame {
+        border: 0;
+        z-index: 100;
+        margin: 0;
+      }
     </style>
-</head>
-<body>
-<div class="overlay">
-    <a href="https://tcoaal.kidev.org" target="_blank" rel="noopener" class="tool-link" onclick="event.stopPropagation()">
+  </head>
+  <body>
+    <div class="overlay">
+      <a
+        href="https://tcoaal.kidev.org"
+        target="_blank"
+        rel="noopener"
+        class="tool-link"
+        onclick="event.stopPropagation()"
+      >
         <svg class="tool-icon" viewBox="0 0 24 24">
-            <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/>
+          <path
+            d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+          />
         </svg>
         <span style="font-size: 1vmax">Asset Explorer</span>
-    </a>
-    <a href="https://github.com/Kidev" target="_blank" rel="noopener" class="github-link" onclick="event.stopPropagation()">
+      </a>
+      <a
+        href="https://github.com/Kidev"
+        target="_blank"
+        rel="noopener"
+        class="github-link"
+        onclick="event.stopPropagation()"
+      >
         <svg class="github-icon" viewBox="0 0 24 24">
-            <path d="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"></path>
+          <path
+            d="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"
+          ></path>
         </svg>
         <span style="font-size: 1vmax">View on GitHub</span>
-    </a>
+      </a>
 
-    <div class="content">
+      <div class="content">
         <!--
         <h1>The Coffin of Andy and Leyley</h1>
         <div class="subtitle">Browser Loader</div>
         -->
 
         <!-- Hidden fallback for browsers that block showDirectoryPicker (Brave, Firefox) -->
-        <input type="file" id="file-input" webkitdirectory>
+        <input type="file" id="file-input" webkitdirectory />
 
         <button class="action-btn" id="btn-load" onclick="loadGameFiles()">
-            Import Game
+          Import Game
         </button>
 
-        <button class="action-btn secondary" id="btn-play" onclick="playGame()" disabled>
-            Play now
+        <button
+          class="action-btn secondary"
+          id="btn-play"
+          onclick="playGame()"
+          disabled
+        >
+          Play now
         </button>
 
         <div class="progress-wrap" id="progress-wrap">
-            <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
-            <div class="status" id="status">Preparing…</div>
+          <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
+          <div class="status" id="status">Preparing…</div>
         </div>
-        
+
         <p class="info">
-            Load your owned copy of the game into this browser.<br>
-            Your files stay on your device and are never uploaded anywhere.
+          Load your owned copy of the game into this browser.<br />
+          Your files stay on your device and are never uploaded anywhere.
         </p>
 
         <p class="bottom-note">
-            You need to own The Coffin of Andy and Leyley
-            <iframe id="steam-buy-frame" src="https://store.steampowered.com/widget/2378900/" frameborder="0" width="646" height="190" style="transform-origin: center top; transform: scale(0.65);"></iframe>
+          You need to own The Coffin of Andy and Leyley
+          <iframe
+            id="steam-buy-frame"
+            src="https://store.steampowered.com/widget/2378900/"
+            frameborder="0"
+            width="646"
+            height="190"
+            style="transform-origin: center top; transform: scale(0.65)"
+          ></iframe>
         </p>
+      </div>
     </div>
-</div>
 
-<script>
-'use strict';
+    <script>
+      "use strict";
 
-// IndexedDB helpers
+      // IndexedDB helpers
 
-const DB_NAME    = 'tcoaal';
-const DB_VERSION = 1;
-const STORE_NAME = 'assets';
+      const DB_NAME = "tcoaal";
+      const DB_VERSION = 1;
+      const STORE_NAME = "assets";
 
-function openDB() {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME);
-        req.onsuccess  = e => resolve(e.target.result);
-        req.onerror    = e => reject(e.target.error);
-    });
-}
+      function openDB() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open(DB_NAME, DB_VERSION);
+          req.onupgradeneeded = (e) =>
+            e.target.result.createObjectStore(STORE_NAME);
+          req.onsuccess = (e) => resolve(e.target.result);
+          req.onerror = (e) => reject(e.target.error);
+        });
+      }
 
-function putAsset(db, key, buffer) {
-    return new Promise((resolve, reject) => {
-        const tx  = db.transaction(STORE_NAME, 'readwrite');
-        const req = tx.objectStore(STORE_NAME).put(buffer, key);
-        req.onsuccess = resolve;
-        req.onerror   = e => reject(e.target.error);
-    });
-}
+      function putAsset(db, key, buffer) {
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, "readwrite");
+          const req = tx.objectStore(STORE_NAME).put(buffer, key);
+          req.onsuccess = resolve;
+          req.onerror = (e) => reject(e.target.error);
+        });
+      }
 
-/** Returns true if the store contains at least one entry. */
-function hasAnyAsset(db) {
-    return new Promise(resolve => {
-        const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).count();
-        req.onsuccess = () => resolve(req.result > 0);
-        req.onerror   = () => resolve(false);
-    });
-}
+      /** Returns true if the store contains at least one entry. */
+      function hasAnyAsset(db) {
+        return new Promise((resolve) => {
+          const req = db
+            .transaction(STORE_NAME, "readonly")
+            .objectStore(STORE_NAME)
+            .count();
+          req.onsuccess = () => resolve(req.result > 0);
+          req.onerror = () => resolve(false);
+        });
+      }
 
-// Directory walker (File System Access API path)
+      // Directory walker (File System Access API path)
 
-/**
- * Recursively collect all files under a directory handle.
- * @returns {Promise<Array<{path: string, handle: FileSystemFileHandle}>>}
- */
-async function collectFiles(dirHandle, prefix) {
-    const results = [];
-    for await (const [name, handle] of dirHandle.entries()) {
-        const relPath = prefix ? `${prefix}/${name}` : name;
-        if (handle.kind === 'directory') {
+      /**
+       * Recursively collect all files under a directory handle.
+       * @returns {Promise<Array<{path: string, handle: FileSystemFileHandle}>>}
+       */
+      async function collectFiles(dirHandle, prefix) {
+        const results = [];
+        for await (const [name, handle] of dirHandle.entries()) {
+          const relPath = prefix ? `${prefix}/${name}` : name;
+          if (handle.kind === "directory") {
             const children = await collectFiles(handle, relPath);
             results.push(...children);
-        } else {
+          } else {
             results.push({ path: relPath, handle });
+          }
         }
-    }
-    return results;
-}
+        return results;
+      }
 
-// Shared file-processing pipeline (used by both picker paths)
+      // Shared file-processing pipeline (used by both picker paths)
 
-/**
- * Store an array of {path, getBuffer} descriptors into IndexedDB.
- * getBuffer is an async function that returns an ArrayBuffer.
- */
-async function storeFiles(entries) {
-    let db;
-    try {
-        db = await openDB();
-    } catch (err) {
-        setStatus('Failed to open IndexedDB: ' + err.message, 'error');
-        $load.disabled = false;
-        return false;
-    }
-
-    const total = entries.length;
-    setStatus(`Loading 0 / ${total} files…`);
-    setProgress(0, total);
-
-    let done = 0;
-    for (const { path: filePath, getBuffer } of entries) {
+      /**
+       * Store an array of {path, getBuffer} descriptors into IndexedDB.
+       * getBuffer is an async function that returns an ArrayBuffer.
+       */
+      async function storeFiles(entries) {
+        let db;
         try {
+          db = await openDB();
+        } catch (err) {
+          setStatus("Failed to open IndexedDB: " + err.message, "error");
+          $load.disabled = false;
+          return false;
+        }
+
+        const total = entries.length;
+        setStatus(`Loading 0 / ${total} files…`);
+        setProgress(0, total);
+
+        let done = 0;
+        for (const { path: filePath, getBuffer } of entries) {
+          try {
             const buffer = await getBuffer();
             await putAsset(db, filePath, buffer);
-        } catch (err) {
-            console.warn('[loader] Skipping', filePath, err);
-        }
-        done++;
-        setProgress(done, total);
-        if (done % 20 === 0 || done === total) {
+          } catch (err) {
+            console.warn("[loader] Skipping", filePath, err);
+          }
+          done++;
+          setProgress(done, total);
+          if (done % 20 === 0 || done === total) {
             setStatus(`Loading ${done} / ${total} files…`);
+          }
         }
-    }
 
-    setStatus(`${total} files stored. Extracting language data…`, 'ok');
-    await extractLangData(db);
-    setStatus('Registering service worker…', 'ok');
-    await registerSW();
-    setStatus('Ready! Launching game…', 'ok');
-    setTimeout(() => { window.location.href = '/index.html'; }, 600);
-    return true;
-}
+        setStatus(`${total} files stored. Extracting language data…`, "ok");
+        await extractLangData(db);
+        setStatus("Registering service worker…", "ok");
+        await registerSW();
+        setStatus("Ready! Launching game…", "ok");
+        setTimeout(() => {
+          window.location.href = "/index.html";
+        }, 600);
+        return true;
+      }
 
-// CLD (Compiled Language Data) extraction
-//
-// The CLD is an encrypted game file at data/9c7050ae76645487.
-// Format: TCOAAL(6) + keyByte(1) + encrypted payload -> LANGDATA(8) + JSON
-// We decrypt it during import and store the plain JSON as '__lang_data__'
-// so the SW and lang-shim.js can serve it without runtime decryption.
+      // CLD (Compiled Language Data) extraction
+      //
+      // The CLD is an encrypted game file at data/9c7050ae76645487.
+      // Format: TCOAAL(6) + keyByte(1) + encrypted payload -> LANGDATA(8) + JSON
+      // We decrypt it during import and store the plain JSON as '__lang_data__'
+      // so the SW and lang-shim.js can serve it without runtime decryption.
 
-const TCOAAL_SIG = [84, 67, 79, 65, 65, 76]; // "TCOAAL"
-const CLD_IDB_KEY = 'data/9c7050ae76645487';
-const LANG_DATA_CACHE_KEY = '__lang_data__';
+      const TCOAAL_SIG = [84, 67, 79, 65, 65, 76]; // "TCOAAL"
+      const CLD_IDB_KEY = "data/9c7050ae76645487";
+      const LANG_DATA_CACHE_KEY = "__lang_data__";
 
-function cldFileMask(hashedRelPath) {
-    const fname = hashedRelPath.split('/').pop().toUpperCase();
-    let m = 0;
-    for (let i = 0; i < fname.length; i++) m = (m << 1) ^ fname.charCodeAt(i);
-    return m;
-}
+      function cldFileMask(hashedRelPath) {
+        const fname = hashedRelPath.split("/").pop().toUpperCase();
+        let m = 0;
+        for (let i = 0; i < fname.length; i++)
+          m = (m << 1) ^ fname.charCodeAt(i);
+        return m;
+      }
 
-/**
- * Decrypt a TCOAAL-encrypted buffer. Returns the decrypted payload (without
- * the 7-byte TCOAAL header). If the buffer doesn't start with the TCOAAL
- * signature, returns the ORIGINAL bytes unchanged (mirrors server.js dekit).
- */
-function cldDekit(arrayBuffer) {
-    const bytes = new Uint8Array(arrayBuffer);
-    // Check for TCOAAL signature
-    if (bytes.length < TCOAAL_SIG.length + 1) return bytes;
-    let isTcoaal = true;
-    for (let i = 0; i < TCOAAL_SIG.length; i++) {
-        if (bytes[i] !== TCOAAL_SIG[i]) { isTcoaal = false; break; }
-    }
-    if (!isTcoaal) return bytes; // not encrypted return as-is
+      /**
+       * Decrypt a TCOAAL-encrypted buffer. Returns the decrypted payload (without
+       * the 7-byte TCOAAL header). If the buffer doesn't start with the TCOAAL
+       * signature, returns the ORIGINAL bytes unchanged (mirrors server.js dekit).
+       */
+      function cldDekit(arrayBuffer) {
+        const bytes = new Uint8Array(arrayBuffer);
+        // Check for TCOAAL signature
+        if (bytes.length < TCOAAL_SIG.length + 1) return bytes;
+        let isTcoaal = true;
+        for (let i = 0; i < TCOAAL_SIG.length; i++) {
+          if (bytes[i] !== TCOAAL_SIG[i]) {
+            isTcoaal = false;
+            break;
+          }
+        }
+        if (!isTcoaal) return bytes; // not encrypted return as-is
 
-    let keyByte = bytes[TCOAAL_SIG.length];
-    const payload = bytes.subarray(TCOAAL_SIG.length + 1);
-    let mask = (cldFileMask(CLD_IDB_KEY) + 1) & 0xff;
-    if (keyByte === 0) keyByte = payload.length;
+        let keyByte = bytes[TCOAAL_SIG.length];
+        const payload = bytes.subarray(TCOAAL_SIG.length + 1);
+        let mask = (cldFileMask(CLD_IDB_KEY) + 1) & 0xff;
+        if (keyByte === 0) keyByte = payload.length;
 
-    const out = new Uint8Array(payload.length);
-    for (let j = 0; j < payload.length; j++) {
-        if (j < keyByte) {
+        const out = new Uint8Array(payload.length);
+        for (let j = 0; j < payload.length; j++) {
+          if (j < keyByte) {
             const b = payload[j];
             out[j] = b ^ mask;
             mask = ((mask << 1) ^ b) & 0xff;
-        } else {
+          } else {
             out[j] = payload[j];
+          }
         }
-    }
-    return out;
-}
+        return out;
+      }
 
-function getAsset(db, key) {
-    return new Promise(resolve => {
-        const tx  = db.transaction(STORE_NAME, 'readonly');
-        const req = tx.objectStore(STORE_NAME).get(key);
-        req.onsuccess = () => resolve(req.result ?? null);
-        req.onerror   = () => resolve(null);
-    });
-}
+      function getAsset(db, key) {
+        return new Promise((resolve) => {
+          const tx = db.transaction(STORE_NAME, "readonly");
+          const req = tx.objectStore(STORE_NAME).get(key);
+          req.onsuccess = () => resolve(req.result ?? null);
+          req.onerror = () => resolve(null);
+        });
+      }
 
-async function extractLangData(db) {
-    const raw = await getAsset(db, CLD_IDB_KEY);
-    if (!raw) {
-        console.warn('[loader] CLD file (' + CLD_IDB_KEY + ') not found in imported data');
-        return;
-    }
-
-    // Normalize to ArrayBuffer (IDB may return typed array or Blob)
-    let buf = raw;
-    if (raw instanceof Blob) {
-        buf = await raw.arrayBuffer();
-    } else if (raw instanceof ArrayBuffer) {
-        // good
-    } else if (raw.buffer instanceof ArrayBuffer) {
-        buf = raw.buffer;
-    } else {
-        console.warn('[loader] CLD: unexpected IDB type:', typeof raw);
-        return;
-    }
-
-    // Decrypt (no-op if not TCOAAL-encrypted)
-    const decrypted = cldDekit(buf);
-    if (!decrypted || decrypted.length < 9) {
-        console.warn('[loader] CLD too short (' + (decrypted ? decrypted.length : 0) + ' bytes)');
-        return;
-    }
-    const sig = new TextDecoder().decode(decrypted.slice(0, 8));
-    if (sig !== 'LANGDATA') {
-        const hexPreview = Array.from(decrypted.slice(0, 16))
-            .map(b => b.toString(16).padStart(2, '0')).join(' ');
-        console.warn('[loader] CLD header mismatch: expected LANGDATA, got "' + sig +
-            '" (' + decrypted.length + ' bytes, hex: ' + hexPreview + ')');
-        return;
-    }
-    const jsonStr = new TextDecoder().decode(decrypted.slice(8));
-    // Validate JSON before storing
-    try {
-        JSON.parse(jsonStr);
-    } catch (e) {
-        console.warn('[loader] CLD JSON parse failed:', e);
-        return;
-    }
-    await putAsset(db, LANG_DATA_CACHE_KEY, jsonStr);
-    console.log('[loader] Language data extracted and cached (' + jsonStr.length + ' bytes)');
-}
-
-// UI helpers
-
-const $bar    = document.getElementById('bar');
-const $status = document.getElementById('status');
-const $wrap   = document.getElementById('progress-wrap');
-const $load   = document.getElementById('btn-load');
-const $play   = document.getElementById('btn-play');
-
-function showProgress(visible) {
-    $wrap.classList.toggle('visible', visible);
-}
-
-function setProgress(done, total) {
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    $bar.style.width = pct + '%';
-}
-
-function setStatus(text, cls) {
-    $status.textContent = text;
-    $status.className   = 'status' + (cls ? ' ' + cls : '');
-}
-
-// Service Worker registration
-
-async function registerSW() {
-    if (!('serviceWorker' in navigator)) return;
-    try {
-        const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-        // Force the browser to re-fetch sw.js and install any updated version
-        // immediately (skipWaiting + clients.claim in the new SW ensure it
-        // takes over before we redirect to index.html).
-        await reg.update();
-        // Wait for the (possibly new) SW to control this page.
-        if (!navigator.serviceWorker.controller) {
-            await new Promise(resolve => {
-                navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
-            });
+      async function extractLangData(db) {
+        const raw = await getAsset(db, CLD_IDB_KEY);
+        if (!raw) {
+          console.warn(
+            "[loader] CLD file (" +
+              CLD_IDB_KEY +
+              ") not found in imported data",
+          );
+          return;
         }
-    } catch (err) {
-        console.warn('[loader] SW registration failed:', err);
-    }
-}
 
-// Main actions
+        // Normalize to ArrayBuffer (IDB may return typed array or Blob)
+        let buf = raw;
+        if (raw instanceof Blob) {
+          buf = await raw.arrayBuffer();
+        } else if (raw instanceof ArrayBuffer) {
+          // good
+        } else if (raw.buffer instanceof ArrayBuffer) {
+          buf = raw.buffer;
+        } else {
+          console.warn("[loader] CLD: unexpected IDB type:", typeof raw);
+          return;
+        }
 
-async function loadGameFiles() {
-    // Try the modern File System Access API first.
-    // Falls back to the hidden <input webkitdirectory> for Brave / Firefox.
-    if (window.showDirectoryPicker) {
-        let dirHandle;
+        // Decrypt (no-op if not TCOAAL-encrypted)
+        const decrypted = cldDekit(buf);
+        if (!decrypted || decrypted.length < 9) {
+          console.warn(
+            "[loader] CLD too short (" +
+              (decrypted ? decrypted.length : 0) +
+              " bytes)",
+          );
+          return;
+        }
+        const sig = new TextDecoder().decode(decrypted.slice(0, 8));
+        if (sig !== "LANGDATA") {
+          const hexPreview = Array.from(decrypted.slice(0, 16))
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(" ");
+          console.warn(
+            '[loader] CLD header mismatch: expected LANGDATA, got "' +
+              sig +
+              '" (' +
+              decrypted.length +
+              " bytes, hex: " +
+              hexPreview +
+              ")",
+          );
+          return;
+        }
+        const jsonStr = new TextDecoder().decode(decrypted.slice(8));
+        // Validate JSON before storing
         try {
-            dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+          JSON.parse(jsonStr);
+        } catch (e) {
+          console.warn("[loader] CLD JSON parse failed:", e);
+          return;
+        }
+        await putAsset(db, LANG_DATA_CACHE_KEY, jsonStr);
+        console.log(
+          "[loader] Language data extracted and cached (" +
+            jsonStr.length +
+            " bytes)",
+        );
+      }
+
+      // UI helpers
+
+      const $bar = document.getElementById("bar");
+      const $status = document.getElementById("status");
+      const $wrap = document.getElementById("progress-wrap");
+      const $load = document.getElementById("btn-load");
+      const $play = document.getElementById("btn-play");
+
+      function showProgress(visible) {
+        $wrap.classList.toggle("visible", visible);
+      }
+
+      function setProgress(done, total) {
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        $bar.style.width = pct + "%";
+      }
+
+      function setStatus(text, cls) {
+        $status.textContent = text;
+        $status.className = "status" + (cls ? " " + cls : "");
+      }
+
+      // Service Worker registration
+
+      async function registerSW() {
+        if (!("serviceWorker" in navigator)) return;
+        try {
+          const reg = await navigator.serviceWorker.register("/sw.js", {
+            scope: "/",
+          });
+          // Force the browser to re-fetch sw.js and install any updated version
+          // immediately (skipWaiting + clients.claim in the new SW ensure it
+          // takes over before we redirect to index.html).
+          await reg.update();
+          // Wait for the (possibly new) SW to control this page.
+          if (!navigator.serviceWorker.controller) {
+            await new Promise((resolve) => {
+              navigator.serviceWorker.addEventListener(
+                "controllerchange",
+                resolve,
+                { once: true },
+              );
+            });
+          }
         } catch (err) {
-            if (err.name === 'AbortError') return; // user cancelled
+          console.warn("[loader] SW registration failed:", err);
+        }
+      }
+
+      // Main actions
+
+      async function loadGameFiles() {
+        // Try the modern File System Access API first.
+        // Falls back to the hidden <input webkitdirectory> for Brave / Firefox.
+        if (window.showDirectoryPicker) {
+          let dirHandle;
+          try {
+            dirHandle = await window.showDirectoryPicker({ mode: "read" });
+          } catch (err) {
+            if (err.name === "AbortError") return; // user cancelled
             // SecurityError or NotAllowedError: browser blocked the API.
             // Fall through to the input element.
-            console.warn('[loader] showDirectoryPicker blocked:', err.message, ', falling back to file input');
-            document.getElementById('file-input').click();
+            console.warn(
+              "[loader] showDirectoryPicker blocked:",
+              err.message,
+              ", falling back to file input",
+            );
+            document.getElementById("file-input").click();
             return;
+          }
+
+          $load.disabled = true;
+          showProgress(true);
+          setStatus("Scanning directory…");
+
+          let files;
+          try {
+            files = await collectFiles(dirHandle, "");
+          } catch (err) {
+            setStatus("Failed to read directory: " + err.message, "error");
+            $load.disabled = false;
+            return;
+          }
+
+          // If the user selected the game root instead of www/, adapt automatically.
+          // Detect by checking whether www/index.html is present.
+          if (files.some((f) => f.path === "www/index.html")) {
+            files = files
+              .filter((f) => f.path.startsWith("www/"))
+              .map((f) => ({ ...f, path: f.path.slice(4) }));
+          }
+
+          const entries = files.map(({ path: p, handle }) => ({
+            path: p,
+            getBuffer: async () => {
+              const f = await handle.getFile();
+              return f.arrayBuffer();
+            },
+          }));
+          await storeFiles(entries);
+        } else {
+          // FSA not available trigger the hidden file input directly.
+          document.getElementById("file-input").click();
         }
+      }
+
+      /**
+       * Handler for the hidden <input type="file" webkitdirectory> fallback.
+       * webkitRelativePath looks like "www/data/be1a37535e921f91"; we strip the
+       * leading directory component so keys match what the SW expects.
+       */
+      async function onFileInputChange(e) {
+        const fileList = e.target.files;
+        if (!fileList || fileList.length === 0) return;
 
         $load.disabled = true;
         showProgress(true);
-        setStatus('Scanning directory…');
+        setStatus("Preparing…");
 
-        let files;
-        try {
-            files = await collectFiles(dirHandle, '');
-        } catch (err) {
-            setStatus('Failed to read directory: ' + err.message, 'error');
-            $load.disabled = false;
-            return;
-        }
+        const entries = Array.from(fileList)
+          .map((file) => {
+            // Drop the top-level directory name chosen by the user.
+            let relPath = file.webkitRelativePath.split("/").slice(1).join("/");
+            // If user selected the game root, relPath starts with "www/"; strip it.
+            if (relPath.startsWith("www/")) relPath = relPath.slice(4);
+            return { path: relPath, getBuffer: () => file.arrayBuffer() };
+          })
+          .filter((e) => e.path); // discard empty paths
 
-        // If the user selected the game root instead of www/, adapt automatically.
-        // Detect by checking whether www/index.html is present.
-        if (files.some(f => f.path === 'www/index.html')) {
-            files = files
-                .filter(f => f.path.startsWith('www/'))
-                .map(f => ({ ...f, path: f.path.slice(4) }));
-        }
-
-        const entries = files.map(({ path: p, handle }) => ({
-            path: p,
-            getBuffer: async () => { const f = await handle.getFile(); return f.arrayBuffer(); },
-        }));
         await storeFiles(entries);
-    } else {
-        // FSA not available trigger the hidden file input directly.
-        document.getElementById('file-input').click();
-    }
-}
+      }
 
-/**
- * Handler for the hidden <input type="file" webkitdirectory> fallback.
- * webkitRelativePath looks like "www/data/be1a37535e921f91"; we strip the
- * leading directory component so keys match what the SW expects.
- */
-async function onFileInputChange(e) {
-    const fileList = e.target.files;
-    if (!fileList || fileList.length === 0) return;
+      async function playGame() {
+        // Ensure CLD is pre-extracted (may be missing if imported before this change)
+        try {
+          const db = await openDB();
+          const cached = await getAsset(db, LANG_DATA_CACHE_KEY);
+          if (!cached) await extractLangData(db);
+        } catch (e) {
+          console.warn("[loader] CLD check on play:", e);
+        }
+        await registerSW();
+        window.location.href = "/index.html";
+      }
 
-    $load.disabled = true;
-    showProgress(true);
-    setStatus('Preparing…');
+      // Init: wire up file input + check if files are already loaded
 
-    const entries = Array.from(fileList).map(file => {
-        // Drop the top-level directory name chosen by the user.
-        let relPath = file.webkitRelativePath.split('/').slice(1).join('/');
-        // If user selected the game root, relPath starts with "www/"; strip it.
-        if (relPath.startsWith('www/')) relPath = relPath.slice(4);
-        return { path: relPath, getBuffer: () => file.arrayBuffer() };
-    }).filter(e => e.path); // discard empty paths
+      (async () => {
+        document
+          .getElementById("file-input")
+          .addEventListener("change", onFileInputChange);
 
-    await storeFiles(entries);
-}
+        let db;
+        try {
+          db = await openDB();
+        } catch {
+          return;
+        }
 
-async function playGame() {
-    // Ensure CLD is pre-extracted (may be missing if imported before this change)
-    try {
-        const db = await openDB();
-        const cached = await getAsset(db, LANG_DATA_CACHE_KEY);
-        if (!cached) await extractLangData(db);
-    } catch (e) {
-        console.warn('[loader] CLD check on play:', e);
-    }
-    await registerSW();
-    window.location.href = '/index.html';
-}
-
-// Init: wire up file input + check if files are already loaded
-
-(async () => {
-    document.getElementById('file-input').addEventListener('change', onFileInputChange);
-
-    let db;
-    try { db = await openDB(); } catch { return; }
-
-    if (await hasAnyAsset(db)) {
-        $play.disabled = false;
-        $play.textContent = 'Play now  (files already loaded)';
-    }
-})();
-</script>
-</body>
+        if (await hasAnyAsset(db)) {
+          $play.disabled = false;
+          $play.textContent = "Play now  (files already loaded)";
+        }
+      })();
+    </script>
+  </body>
 </html>
