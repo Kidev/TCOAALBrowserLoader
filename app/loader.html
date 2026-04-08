@@ -345,8 +345,7 @@
         <div class="subtitle">Browser Loader</div>
         -->
 
-        <!-- Hidden fallback for browsers that block showDirectoryPicker (Brave, Firefox) -->
-        <input type="file" id="file-input" webkitdirectory />
+        <input type="file" id="file-input" webkitdirectory hidden />
 
         <button class="action-btn" id="btn-load" onclick="loadGameFiles()">
           Import Game
@@ -425,27 +424,7 @@
         });
       }
 
-      // Directory walker (File System Access API path)
-
-      /**
-       * Recursively collect all files under a directory handle.
-       * @returns {Promise<Array<{path: string, handle: FileSystemFileHandle}>>}
-       */
-      async function collectFiles(dirHandle, prefix) {
-        const results = [];
-        for await (const [name, handle] of dirHandle.entries()) {
-          const relPath = prefix ? `${prefix}/${name}` : name;
-          if (handle.kind === "directory") {
-            const children = await collectFiles(handle, relPath);
-            results.push(...children);
-          } else {
-            results.push({ path: relPath, handle });
-          }
-        }
-        return results;
-      }
-
-      // Shared file-processing pipeline (used by both picker paths)
+      // File-processing pipeline
 
       /**
        * Store an array of {path, getBuffer} descriptors into IndexedDB.
@@ -673,61 +652,8 @@
         }
       }
 
-      // Main actions
-
-      async function loadGameFiles() {
-        // Try the modern File System Access API first.
-        // Falls back to the hidden <input webkitdirectory> for Brave / Firefox.
-        if (window.showDirectoryPicker) {
-          let dirHandle;
-          try {
-            dirHandle = await window.showDirectoryPicker({ mode: "read" });
-          } catch (err) {
-            if (err.name === "AbortError") return; // user cancelled
-            // SecurityError or NotAllowedError: browser blocked the API.
-            // Fall through to the input element.
-            console.warn(
-              "[loader] showDirectoryPicker blocked:",
-              err.message,
-              ", falling back to file input",
-            );
-            document.getElementById("file-input").click();
-            return;
-          }
-
-          $load.disabled = true;
-          showProgress(true);
-          setStatus("Scanning directory…");
-
-          let files;
-          try {
-            files = await collectFiles(dirHandle, "");
-          } catch (err) {
-            setStatus("Failed to read directory: " + err.message, "error");
-            $load.disabled = false;
-            return;
-          }
-
-          // If the user selected the game root instead of www/, adapt automatically.
-          // Detect by checking whether www/index.html is present.
-          if (files.some((f) => f.path === "www/index.html")) {
-            files = files
-              .filter((f) => f.path.startsWith("www/"))
-              .map((f) => ({ ...f, path: f.path.slice(4) }));
-          }
-
-          const entries = files.map(({ path: p, handle }) => ({
-            path: p,
-            getBuffer: async () => {
-              const f = await handle.getFile();
-              return f.arrayBuffer();
-            },
-          }));
-          await storeFiles(entries);
-        } else {
-          // FSA not available trigger the hidden file input directly.
-          document.getElementById("file-input").click();
-        }
+      function loadGameFiles() {
+        document.getElementById("file-input").click();
       }
 
       /**
