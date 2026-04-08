@@ -49,6 +49,7 @@ const MIME_MAP = {
   ".eot": "application/vnd.ms-fontobject",
   ".txt": "text/plain; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
+  ".loc": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
 };
@@ -205,26 +206,68 @@ function dekit(arrayBuffer, hashedRelPath) {
 function enumerateLanguages(db) {
   return new Promise((resolve) => {
     const langs = new Set();
-    try {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const store = tx.objectStore(STORE_NAME);
-      const range = IDBKeyRange.bound("languages/", "languages/\uffff", false, false);
-      const req = store.openKeyCursor(range);
-      req.onsuccess = () => {
-        const cursor = req.result;
-        if (cursor) {
-          // Keys look like "languages/english/xxx...": extract the middle part
-          const parts = cursor.key.split("/");
-          if (parts.length >= 3 && parts[1]) langs.add(parts[1]);
-          cursor.continue();
-        } else {
-          resolve(Array.from(langs));
-        }
-      };
-      req.onerror = () => resolve([]);
-    } catch {
-      resolve([]);
-    }
+    // Scan base game language keys (languages/english/...)
+    const scanBase = new Promise((res) => {
+      try {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        const range = IDBKeyRange.bound(
+          "languages/",
+          "languages/\uffff",
+          false,
+          false,
+        );
+        const req = store.openKeyCursor(range);
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) {
+            const parts = cursor.key.split("/");
+            if (parts.length >= 3 && parts[1]) langs.add(parts[1]);
+            cursor.continue();
+          } else {
+            res();
+          }
+        };
+        req.onerror = () => res();
+      } catch {
+        res();
+      }
+    });
+
+    // Also scan mod-prefixed language keys (mod:ID:languages/lang/...)
+    const scanMod = _activeMod
+      ? new Promise((res) => {
+          try {
+            const prefix = "mod:" + _activeMod + ":languages/";
+            const tx = db.transaction(STORE_NAME, "readonly");
+            const store = tx.objectStore(STORE_NAME);
+            const range = IDBKeyRange.bound(
+              prefix,
+              prefix + "\uffff",
+              false,
+              false,
+            );
+            const req = store.openKeyCursor(range);
+            req.onsuccess = () => {
+              const cursor = req.result;
+              if (cursor) {
+                // Key: "mod:ID:languages/english/dialogue.loc"
+                const afterPrefix = cursor.key.substring(prefix.length);
+                const lang = afterPrefix.split("/")[0];
+                if (lang) langs.add(lang);
+                cursor.continue();
+              } else {
+                res();
+              }
+            };
+            req.onerror = () => res();
+          } catch {
+            res();
+          }
+        })
+      : Promise.resolve();
+
+    Promise.all([scanBase, scanMod]).then(() => resolve(Array.from(langs)));
   });
 }
 

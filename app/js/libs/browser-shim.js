@@ -67,6 +67,14 @@
     return String(p).replace(/\\/g, "/").replace(/^\.\//, "");
   }
 
+  // Helper: does `p` refer to a language dialogue.loc file?
+  function isLangLocPath(p) {
+    return (
+      typeof p === "string" &&
+      /languages\/[^/]+\/dialogue\.loc$/i.test(normPath(p))
+    );
+  }
+
   // Helper: map an .rpgsave filesystem path to its localStorage key.
   // Returns null if the path isn't a recognised save file pattern.
   function rpgsaveToStorageKey(p) {
@@ -137,13 +145,26 @@
     '        this.list[lang] = "languages/" + lang + "/dialogue.loc";',
     "        try {",
     "          var data = null;",
-    "          var locXhr = new XMLHttpRequest();",
-    '          locXhr.open("GET", "languages/" + lang + "/dialogue.loc", false);',
-    "          locXhr.send();",
-    "          if (locXhr.status >= 200 && locXhr.status < 400 && locXhr.responseText) {",
-    "            var text = locXhr.responseText;",
-    '            var jsonStart = text.indexOf("{");',
-    "            if (jsonStart >= 0) data = JSON.parse(text.substring(jsonStart));",
+    "          // Try XHR first (SW serves mod files from IDB)",
+    "          try {",
+    "            var locXhr = new XMLHttpRequest();",
+    '            locXhr.open("GET", "languages/" + lang + "/dialogue.loc", false);',
+    "            locXhr.send();",
+    "            if (locXhr.status >= 200 && locXhr.status < 400 && locXhr.responseText) {",
+    "              var text = locXhr.responseText;",
+    '              var jsonStart = text.indexOf("{");',
+    "              if (jsonStart >= 0) data = JSON.parse(text.substring(jsonStart));",
+    "            }",
+    "          } catch(xe) {}",
+    "          // Fallback: use preloaded __langData (from IDB, mod-aware)",
+    "          if (!data && window.__langData) {",
+    "            try {",
+    "              var ld = window.__langData;",
+    '              if (typeof ld === "string") {',
+    '                var js = ld.indexOf("{");',
+    "                if (js >= 0) data = JSON.parse(ld.substring(js));",
+    "              }",
+    "            } catch(pe) {}",
     "          }",
     "          if (data) {",
     "            data.imageLUT = data.imageLUT || {};",
@@ -256,6 +277,20 @@
                   return window.Buffer.from(cldStr, "utf8");
                 }
                 return cldStr;
+              }
+            }
+            // Language .loc file: serve from preloaded __langData.
+            // The DRM's Lang.loadLOC reads .loc files via fs.readFileSync;
+            // __langData is preloaded from IDB by index.html (mod-aware).
+            // The .loc format expects leading whitespace before the JSON;
+            // we add padding so the DRM's parser (indexOf '{') works.
+            if (isLangLocPath(p)) {
+              var langJson = ensureLangData();
+              if (langJson) {
+                // Add leading spaces (DRM expects padding before '{')
+                var locContent = "                    " + langJson;
+                if (encoding) return locContent;
+                return window.Buffer.from(locContent, "utf8");
               }
             }
             // .rpgsave -> read from localStorage (DRM reads saves via fs)

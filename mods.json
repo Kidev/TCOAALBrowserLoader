@@ -1295,5 +1295,15 @@
       "movies/wakeuptest.webm",
       "package.json"
     ]
+  },
+  "_mouseControl": {
+    "name": "Mouse Control",
+    "path": "mods/_mouseControl",
+    "type": "built-in plugin",
+    "author": "kidev",
+    "version": "6ebfe6d",
+    "files": [
+      "js/plugins/MouseControl.js"
+    ]
   }
 }
