@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>kidev's TCOAAL Browser Loader</title>
-    <link rel="icon" href="icon/icon.png" type="image/png" />
+    <link rel="icon" id="favicon" href="/favicon.ico" type="image/x-icon" />
     <style>
       :root {
         --green: #86d37a;
@@ -485,6 +485,9 @@
         setStatus("Registering service worker…", "ok");
         await registerSW();
         setStatus("Ready! Launching game…", "ok");
+        const fav = document.getElementById("favicon");
+        fav.href = "icon/icon.png";
+        fav.type = "image/png";
         setTimeout(() => {
           window.location.href = "/index.html";
         }, 600);
@@ -783,6 +786,9 @@
         if (await hasAnyAsset(db)) {
           $play.disabled = false;
           $play.textContent = "Play now  (files already loaded)";
+          const fav = document.getElementById("favicon");
+          fav.href = "icon/icon.png";
+          fav.type = "image/png";
         }
       })();
     </script>

@@ -197,6 +197,37 @@ function dekit(arrayBuffer, hashedRelPath) {
   return out.buffer;
 }
 
+/**
+ * Enumerate available language directories from IDB keys.
+ * Scans for keys matching "languages/{name}/{hash}" and extracts unique
+ * directory names. Returns an array of language names (e.g. ["english","french"]).
+ */
+function enumerateLanguages(db) {
+  return new Promise((resolve) => {
+    const langs = new Set();
+    try {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const range = IDBKeyRange.bound("languages/", "languages/\uffff", false, false);
+      const req = store.openKeyCursor(range);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          // Keys look like "languages/english/xxx...": extract the middle part
+          const parts = cursor.key.split("/");
+          if (parts.length >= 3 && parts[1]) langs.add(parts[1]);
+          cursor.continue();
+        } else {
+          resolve(Array.from(langs));
+        }
+      };
+      req.onerror = () => resolve([]);
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
 // Language data merging for mod support
 
 /**
@@ -559,7 +590,20 @@ async function serveFromIDB(logicalPath, request) {
     return fetch(request);
   }
 
-  // 0. Synthetic DRM inject: assembled from plugin fragments in IDB.
+  // 0b. Available languages list: enumerate language directories from IDB keys.
+  if (logicalPath === "languages-list.json") {
+    const langs = await enumerateLanguages(db);
+    if (langs.length > 0) {
+      return new Response(JSON.stringify(langs), {
+        status: 200,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+    // No languages in IDB: fall through to network (server.js mode)
+    return fetch(request);
+  }
+
+  // 0c. Synthetic DRM inject: assembled from plugin fragments in IDB.
   if (logicalPath === "js/drm-inject.js") {
     if (!_drmAttempted) {
       _drmAttempted = true;

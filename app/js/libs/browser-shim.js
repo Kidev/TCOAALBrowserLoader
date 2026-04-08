@@ -62,16 +62,6 @@
     return typeof p === "string" && p.indexOf("9c7050ae76645487") !== -1;
   }
 
-  // Helper: does `p` refer to the languages directory tree?
-  function isLangDir(p) {
-    return typeof p === "string" && p.indexOf("languages") !== -1;
-  }
-
-  // Helper: does `p` refer to a .loc language file?
-  function isLocFile(p) {
-    return typeof p === "string" && /\.loc$/i.test(p);
-  }
-
   // Helper: normalise path: strip leading .\ or ./, normalise separators
   function normPath(p) {
     return String(p).replace(/\\/g, "/").replace(/^\.\//, "");
@@ -124,29 +114,45 @@
     "  App.close  = function() {};",
     "  App.report = function() {};",
     "",
-    "  // Lang.search: browser version. Reads preloaded lang data from",
-    "  // window.__langData (set by index.html bootstrap from IDB), with",
-    "  // sync XHR fallback for server.js mode.",
+    "  // Lang.search: browser version. Discovers all available languages",
+    "  // via /languages-list.json (served by SW/server.js) and loads each",
+    "  // language's .loc data. Falls back to CLD for the base language.",
     "  Lang.search = function() {",
     "    try {",
-    "      var json = window.__langData;",
-    "      if (!json) {",
-    "        var xhr = new XMLHttpRequest();",
-    '        xhr.open("GET", "/lang-data.json", false);',
-    "        xhr.send();",
-    "        if (xhr.status >= 200 && xhr.status < 400) json = xhr.responseText;",
-    "      }",
-    '      if (!json) { console.warn("[browser-shim] Lang.search: no lang data"); return; }',
-    '      var data = typeof json === "string" ? JSON.parse(json) : json;',
-    "      data.imageLUT = data.imageLUT || {};",
+    "      var langList;",
+    "      try {",
+    "        var lx = new XMLHttpRequest();",
+    '        lx.open("GET", "/languages-list.json", false);',
+    "        lx.send();",
+    "        if (lx.status >= 200 && lx.status < 400) langList = JSON.parse(lx.responseText);",
+    "      } catch(e) {}",
+    '      if (!langList || !langList.length) langList = ["english"];',
+    "",
     "      this.list = {};",
-    '      this.list["english"] = "languages/english/dialogue.loc";',
-    '      this.offc = ["english"];',
+    "      this.offc = langList;",
     "      this.data = this.data || {};",
-    '      this.data["english"] = data;',
-    '      /*console.log("[browser-shim] Lang.search: loaded " +',
-    '        Object.keys(data.linesLUT || {}).length + " lines, " +',
-    '        Object.keys(data.labelLUT || {}).length + " labels");*/',
+    "",
+    "      for (var i = 0; i < langList.length; i++) {",
+    "        var lang = langList[i];",
+    '        this.list[lang] = "languages/" + lang + "/dialogue.loc";',
+    "        try {",
+    "          var data = null;",
+    "          var locXhr = new XMLHttpRequest();",
+    '          locXhr.open("GET", "languages/" + lang + "/dialogue.loc", false);',
+    "          locXhr.send();",
+    "          if (locXhr.status >= 200 && locXhr.status < 400 && locXhr.responseText) {",
+    "            var text = locXhr.responseText;",
+    '            var jsonStart = text.indexOf("{");',
+    "            if (jsonStart >= 0) data = JSON.parse(text.substring(jsonStart));",
+    "          }",
+    "          if (data) {",
+    "            data.imageLUT = data.imageLUT || {};",
+    "            this.data[lang] = data;",
+    "          }",
+    "        } catch(e) {",
+    '          console.warn("[Lang.search] Failed to load " + lang + ":", e);',
+    "        }",
+    "      }",
     "    } catch(e) {",
     '      console.warn("[browser-shim] Lang.search failed:", e);',
     "    }",
@@ -157,6 +163,27 @@
     "",
     "  // Crypto.dekit: pass through (SW/server already decrypts assets)",
     "  Crypto.dekit = function(data) { return data; };",
+    "",
+    "  // Force fullscreen off and hide it from the options menu.",
+    "  // NW.js fullscreen is unavailable in browser; the Stretch option",
+    "  // (added by lang-shim.js) handles aspect-ratio-preserving scaling.",
+    "  ConfigManager.fullscreen = false;",
+    "  var _drm_applyData = ConfigManager.applyData;",
+    "  ConfigManager.applyData = function(config) {",
+    "    _drm_applyData.call(this, config);",
+    "    this.fullscreen = false;",
+    "  };",
+    "",
+    "  // Remove the Fullscreen row from the options window.",
+    "  var _drm_makeCmdList = Window_Options.prototype.makeCommandList;",
+    "  Window_Options.prototype.makeCommandList = function() {",
+    "    _drm_makeCmdList.call(this);",
+    "    for (var i = this._list.length - 1; i >= 0; i--) {",
+    "      if (this._list[i].symbol === 'fullscreen') {",
+    "        this._list.splice(i, 1);",
+    "      }",
+    "    }",
+    "  };",
     "",
     "})();",
   ].join("\n");
@@ -229,20 +256,6 @@
                   return window.Buffer.from(cldStr, "utf8");
                 }
                 return cldStr;
-              }
-            }
-            // .loc language files (TCOAAR mod format):
-            // DRM expects 16-byte signature + 4 bytes + JSON.
-            // Use 20 spaces as padding (mod convention for unencrypted .loc).
-            if (isLocFile(p)) {
-              var json = ensureLangData();
-              if (json) {
-                var padding = "                    "; // 20 spaces
-                var locStr = padding + json;
-                if (encoding === null || encoding === undefined) {
-                  return window.Buffer.from(locStr, "utf8");
-                }
-                return locStr;
               }
             }
             // .rpgsave -> read from localStorage (DRM reads saves via fs)
@@ -328,13 +341,22 @@
           },
           readdirSync: function (p) {
             var np = normPath(p);
-            // TCOAAR DRM scans languages/ for language folders.
-            // Return ['english'] when lang data is available.
-            if (/languages\/?$/i.test(np) && ensureLangData()) {
-              return ["english"];
+            // DRM scans languages/ for language folders.
+            // Fetch the list from the server/SW.
+            if (/languages\/?$/i.test(np)) {
+              try {
+                var lx = new XMLHttpRequest();
+                lx.open("GET", "/languages-list.json", false);
+                lx.send();
+                if (lx.status >= 200 && lx.status < 400) {
+                  var list = JSON.parse(lx.responseText);
+                  if (list && list.length) return list;
+                }
+              } catch (e) {}
+              return ensureLangData() ? ["english"] : [];
             }
             // Return dialogue.loc for language subfolder
-            if (/languages\/[^/]+\/?$/i.test(np) && ensureLangData()) {
+            if (/languages\/[^/]+\/?$/i.test(np)) {
               return ["dialogue.loc"];
             }
             return [];
