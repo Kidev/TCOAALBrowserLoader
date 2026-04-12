@@ -565,7 +565,7 @@ self.addEventListener("fetch", (event) => {
   }
 
   // Infrastructure files: always serve fresh from the network, bypassing the
-  // browser HTTP cache.  A bare `return` would let the browser use its own
+  // browser HTTP cache. A bare `return` would let the browser use its own
   // cache (GitHub Pages: max-age=600), so after a push clients could get stale
   // copies of browser-shim.js / lang-shim.js / etc. for up to 10 minutes.
   // Using respondWith + fetch(cache:"no-store") guarantees the latest version.

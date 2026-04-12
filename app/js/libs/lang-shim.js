@@ -132,14 +132,14 @@
         cursor.onsuccess = function (e) {
           var c = e.target.result;
           if (c) {
+            var key = c.key;
             var keyMatchesMod = prefix
-              ? c.key.indexOf(prefix) === 0
-              : c.key.indexOf(":") < 0 || !isSaveKey(c.key);
-            if (keyMatchesMod && isSaveKey(c.key)) {
+              ? key.indexOf(prefix) === 0
+              : key.indexOf(":") < 0 || !isSaveKey(key);
+            if (keyMatchesMod && isSaveKey(key)) {
               // Only restore keys missing from localStorage
-              if (localStorage.getItem(c.key) === null) {
-                // Use the original setItem to avoid re-mirroring to IDB
-                _origLSSetItem.call(localStorage, c.key, c.value);
+              if (localStorage.getItem(key) === null) {
+                _origLSSetItem.call(localStorage, key, c.value);
                 count++;
               }
             }
@@ -324,6 +324,18 @@
   try {
     _activeMod = localStorage.getItem("_activeMod") || null;
   } catch (e) {}
+
+  // Patch webStorageKey EARLY (before DRM payload executes) so that
+  // any DRM init code that reads/writes saves uses the correct mod prefix.
+  // Without this, the DRM can capture the stock webStorageKey and operate
+  // on unprefixed keys while our post-boot code uses prefixed keys.
+  if (_activeMod && typeof StorageManager !== "undefined") {
+    var _iife_orig_webStorageKey = StorageManager.webStorageKey;
+    StorageManager.webStorageKey = function (savefileId) {
+      var baseKey = _iife_orig_webStorageKey.call(this, savefileId);
+      return _activeMod ? _activeMod + ":" + baseKey : baseKey;
+    };
+  }
 
   var _modStatus = {};
 
@@ -796,14 +808,18 @@
     // Load default mod icon
     loadDefaultModIcon();
 
-    // Patch: StorageManager: mod-aware save keys + mirror to IDB
     if (typeof StorageManager !== "undefined") {
-      var _orig_webStorageKey = StorageManager.webStorageKey;
-      StorageManager.webStorageKey = function (savefileId) {
-        var baseKey = _orig_webStorageKey.call(this, savefileId);
-        var mod = getActiveMod();
-        return mod ? mod + ":" + baseKey : baseKey;
-      };
+      // webStorageKey is already patched in the IIFE (before DRM) when a
+      // mod is active. Re-apply here unconditionally so it also works
+      // when no mod was active at IIFE time but one is activated later.
+      if (!_activeMod) {
+        var _orig_webStorageKey = StorageManager.webStorageKey;
+        StorageManager.webStorageKey = function (savefileId) {
+          var baseKey = _orig_webStorageKey.call(this, savefileId);
+          var mod = getActiveMod();
+          return mod ? mod + ":" + baseKey : baseKey;
+        };
+      }
 
       var _orig_saveToWeb = StorageManager.saveToWebStorage;
       StorageManager.saveToWebStorage = function (savefileId, json) {
@@ -831,8 +847,6 @@
       };
     }
 
-    // Patch: DataManager.latestSavefileId: null guard
-    //
     // Stock code accesses globalInfo[i].timestamp without checking
     // whether globalInfo[i] is defined. When the DRM overrides
     // isThisGameFile it can return true for slots whose global-info
@@ -858,8 +872,6 @@
       };
     }
 
-    // Patch: Stretch option: aspect-ratio-preserving fullscreen
-    //
     // Adds a "Stretch" boolean toggle to the options window. When ON,
     // Graphics._stretchEnabled = true and the canvas scales to fill the
     // browser window while maintaining aspect ratio.
@@ -886,7 +898,7 @@
 
       // ConfigManager.load() already ran in Scene_Boot.create (before
       // applyPatches), so the patched applyData above missed the initial
-      // load.  Sync Graphics to the current ConfigManager.stretch value now.
+      // load. Sync Graphics to the current ConfigManager.stretch value now.
       Graphics._stretchEnabled = ConfigManager.stretch;
       Graphics._updateAllElements();
     }
@@ -934,8 +946,6 @@
       };
     }
 
-    // Patch: Window_TitleCommand: add "Mods" command
-    //
     // The DRM payload defines its own makeCommandList that filters
     // commands to a strict ordered set (MenuOptions.labels()). We wrap
     // it to append "Mods" after that filtering.
@@ -1001,7 +1011,6 @@
       }
     }
 
-    // Patch: Scene_Title: add handler for "Mods" command
     if (typeof Scene_Title !== "undefined") {
       var _orig_createCmdWin = Scene_Title.prototype.createCommandWindow;
       Scene_Title.prototype.createCommandWindow = function () {
@@ -1554,7 +1563,7 @@
 
     // Re-apply the isReady gate AFTER the DRM payload has executed.
     // The DRM can (and does) overwrite Scene_Boot.prototype.isReady,
-    // which drops the _savesRestored gate set during the IIFE.  Without
+    // which drops the _savesRestored gate set during the IIFE. Without
     // this gate the game can boot before IDB saves are restored to
     // localStorage, causing mod saves to appear lost after a reload.
     var _post_drm_isReady = Scene_Boot.prototype.isReady;
