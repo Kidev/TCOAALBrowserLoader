@@ -110,14 +110,14 @@
     function (event) {
       TouchInput._onTouchStart.call(TouchInput, event);
     },
-    { passive: false }
+    { passive: false },
   );
   document.addEventListener(
     "touchmove",
     function (event) {
       TouchInput._onTouchMove.call(TouchInput, event);
     },
-    { passive: false }
+    { passive: false },
   );
   document.addEventListener("touchend", function (event) {
     TouchInput._onTouchEnd.call(TouchInput, event);
@@ -162,10 +162,7 @@
     if (typeof SceneManager === "undefined" || !SceneManager._scene) return;
     var scene = SceneManager._scene;
     var cur;
-    if (
-      typeof Scene_Map !== "undefined" &&
-      scene instanceof Scene_Map
-    ) {
+    if (typeof Scene_Map !== "undefined" && scene instanceof Scene_Map) {
       cur =
         typeof $gameMessage !== "undefined" && $gameMessage.isBusy()
           ? "pointer"
@@ -200,10 +197,7 @@
   //   - Right-click / two-finger tap -> cancel (back out)
 
   function isOnPlayerTile(canvasX, canvasY) {
-    if (
-      typeof $gamePlayer === "undefined" ||
-      typeof $gameMap === "undefined"
-    )
+    if (typeof $gamePlayer === "undefined" || typeof $gameMap === "undefined")
       return false;
     var mapX = $gameMap.canvasToMapX(canvasX);
     var mapY = $gameMap.canvasToMapY(canvasY);

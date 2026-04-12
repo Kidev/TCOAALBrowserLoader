@@ -96,7 +96,6 @@
   var _origLSSetItem = Storage.prototype.setItem;
   var _origLSRemoveItem = Storage.prototype.removeItem;
   try {
-
     Storage.prototype.setItem = function (key, value) {
       _origLSSetItem.call(this, key, value);
       if (this === localStorage && isSaveKey(key)) {
