@@ -191,13 +191,50 @@
     "  // everything, so the lookup is skipped and the logical URL is used.",
     "  // The SW cannot resolve it because the base-game file may have a",
     "  // different original name. Override to always consult the map.",
+    "  //",
+    "  // We load the Copylist ourselves from the mod's static path",
+    "  // (/mods/{id}/www/data/Copylist.txt) rather than calling the DRM's",
+    "  // loadUnencryptedToEncryptedFileHashMap, which does readFileSync to",
+    "  // data/Copylist.txt that path 404s because the SW may not have",
+    "  // _activeMod set yet or the IDB key uses mod: prefix.",
     '  if (typeof Crypto.generateHashFromUnencryptedFilePath === "function") {',
+    "    var _copylistLoaded = false;",
+    "    var _copylistLoadAttempted = false;",
+    "    var _cryptoLoadCopylist = function() {",
+    "      if (_copylistLoadAttempted) return;",
+    "      _copylistLoadAttempted = true;",
+    "      try {",
+    "        var modId = null;",
+    "        try { modId = localStorage.getItem('_activeMod'); } catch(e) {}",
+    "        if (!modId) return;",
+    "        var copylistUrl = '/mods/' + modId + '/www/data/Copylist.txt';",
+    "        var xhr = new XMLHttpRequest();",
+    "        xhr.open('GET', copylistUrl, false);",
+    "        xhr.send();",
+    "        if (xhr.status < 200 || xhr.status >= 400) return;",
+    "        var text = xhr.responseText;",
+    "        if (!text) return;",
+    "        // Ensure _hashToPathMap exists as a plain object",
+    "        if (!Crypto._hashToPathMap || typeof Crypto._hashToPathMap.set === 'function') {",
+    "          Crypto._hashToPathMap = {};",
+    "        }",
+    "        var lines = text.split('\\n');",
+    "        for (var i = 0; i < lines.length; i++) {",
+    "          var line = lines[i].trim();",
+    "          if (!line) continue;",
+    "          var comma = line.lastIndexOf(',');",
+    "          if (comma < 0) continue;",
+    "          var encPath = line.substring(0, comma).replace(/\\\\/g, '/');",
+    "          var hash = line.substring(comma + 1);",
+    "          Crypto._hashToPathMap[hash] = encPath;",
+    "        }",
+    "        _copylistLoaded = true;",
+    "      } catch(e) { console.warn('[browser-shim] Copylist load failed:', e); }",
+    "    };",
     "    var _cryptoTryResolve = function(url) {",
-    "      if (Object.keys(Crypto._hashToPathMap || {}).length === 0) {",
-    "        try { Crypto.loadUnencryptedToEncryptedFileHashMap(); } catch(e) {}",
-    "      }",
+    "      if (!_copylistLoaded) _cryptoLoadCopylist();",
     "      var h = Crypto.generateHashFromUnencryptedFilePath(url);",
-    "      if (Crypto._hashToPathMap && h in Crypto._hashToPathMap) {",
+    "      if (_copylistLoaded && Crypto._hashToPathMap && h in Crypto._hashToPathMap) {",
     "        return Crypto._hashToPathMap[h];",
     "      }",
     "      return url;",
@@ -357,6 +394,14 @@
             }
             // Normalise backslashes to forward slashes for XHR
             var urlPath = normPath(ps);
+            // Copylist.txt: redirect to the mod's static path so
+            // the DRM's own loader doesn't 404 on the bare path.
+            if (/Copylist\.txt$/i.test(urlPath)) {
+              try {
+                var _mid = localStorage.getItem("_activeMod");
+                if (_mid) urlPath = "/mods/" + _mid + "/www/data/Copylist.txt";
+              } catch (e) {}
+            }
             // Sync XHR for game files (server/SW decrypts transparently)
             try {
               var xhr = new XMLHttpRequest();
