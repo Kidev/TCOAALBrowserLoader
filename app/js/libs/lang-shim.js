@@ -656,6 +656,64 @@
     });
   }
 
+  function eraseAllClientData() {
+    // 1. Delete both IDB databases (assets + saves)
+    var dbNames = [ASSETS_DB_NAME, SAVE_DB_NAME];
+    var deleted = 0;
+    function afterDelete() {
+      deleted++;
+      if (deleted < dbNames.length) return;
+      // 2. Clear localStorage
+      try {
+        localStorage.clear();
+      } catch (e) {}
+      // 3. Unregister all service workers, then reload to loader
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker
+          .getRegistrations()
+          .then(function (regs) {
+            var p = regs.map(function (r) {
+              return r.unregister();
+            });
+            return Promise.all(p);
+          })
+          .then(function () {
+            window.location.href = "/loader.html";
+          })
+          .catch(function () {
+            window.location.href = "/loader.html";
+          });
+      } else {
+        window.location.href = "/loader.html";
+      }
+    }
+    // Close cached DB handles so deleteDatabase succeeds
+    if (_assetsDb) {
+      try {
+        _assetsDb.close();
+      } catch (e) {}
+      _assetsDb = null;
+    }
+    if (_saveDb) {
+      try {
+        _saveDb.close();
+      } catch (e) {}
+      _saveDb = null;
+    }
+    for (var i = 0; i < dbNames.length; i++) {
+      (function (name) {
+        try {
+          var req = indexedDB.deleteDatabase(name);
+          req.onsuccess = afterDelete;
+          req.onerror = afterDelete;
+          req.onblocked = afterDelete;
+        } catch (e) {
+          afterDelete();
+        }
+      })(dbNames[i]);
+    }
+  }
+
   function checkModInstalled(modId, callback) {
     openAssetsDb(function (db) {
       if (!db) {
@@ -914,12 +972,20 @@
       // The character sheet loads async: when it arrives, refresh
       // the title command window so the icon appears even on first render.
       if (typeof MenuOptions !== "undefined") {
-        var modsSheet = ImageManager.loadCharacter("!Other1");
+        var modsSheet = ImageManager.loadNormalBitmap("img/mods.png", 0);
         var modsIcon = new Bitmap(26, 26);
         modsSheet.addLoadListener(function () {
-          var pw = Math.floor(modsSheet.width / 12);
-          var ph = Math.floor(modsSheet.height / 8);
-          modsIcon.blt(modsSheet, 8 * pw, 6 * ph, pw, ph, 0, 0, 26, 26);
+          modsIcon.blt(
+            modsSheet,
+            0,
+            0,
+            modsSheet.width,
+            modsSheet.height,
+            0,
+            0,
+            26,
+            26,
+          );
           modsIcon._loadingState = "loaded";
           modsIcon._callLoadListeners();
           // Redraw the title command window if it's currently visible
@@ -974,6 +1040,49 @@
       var am = getActiveMod();
       this._helpWindow.setText(am ? "Mods | Active: " + am : "Mods");
       this.addWindow(this._helpWindow);
+      this._drawEraseButton();
+    };
+
+    Scene_Mods.prototype._drawEraseButton = function () {
+      var hw = this._helpWindow;
+      var pad = hw.standardPadding();
+      var size = hw.contentsHeight();
+      var x = hw.contentsWidth() - size;
+      var self = this;
+
+      // Store hit area in screen coordinates for TouchInput comparison
+      this._eraseBtnRect = {
+        x: hw.x + pad + x,
+        y: hw.y + pad,
+        w: size,
+        h: size,
+      };
+
+      // Load broom sprite from character sheet (row 2, col 9, 48x96)
+      var bmp = ImageManager.loadNormalBitmap(
+        "img/characters/05a60f9a9844fd78.png",
+        0,
+      );
+      var sx = 8 * 48; // col 9 (0-indexed: 8)
+      var sy = 1 * 96; // row 2 (0-indexed: 1), row height = 2 * col width
+      var sw = 48;
+      var sh = 96;
+
+      function drawBroom() {
+        if (!hw.contents) return;
+        var scale = Math.min(size / sw, size / sh);
+        var dw = Math.floor(sw * scale);
+        var dh = Math.floor(sh * scale);
+        var dx = x + Math.floor((size - dw) / 2);
+        var dy = Math.floor((size - dh) / 2);
+        hw.contents.blt(bmp, sx, sy, sw, sh, dx, dy, dw, dh);
+      }
+
+      if (bmp.isReady()) {
+        drawBroom();
+      } else {
+        bmp.addLoadListener(drawBroom);
+      }
     };
 
     Scene_Mods.prototype.createListWindow = function () {
@@ -1013,6 +1122,23 @@
         var mod = this._listWindow.selectedMod();
         if (mod && _modStatus[mod.key] && _modStatus[mod.key].installed) {
           this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
+        }
+      }
+      // Erase button click detection (only when confirm dialog is not showing)
+      if (
+        this._eraseBtnRect &&
+        !this._pendingAction &&
+        TouchInput.isTriggered()
+      ) {
+        var r = this._eraseBtnRect;
+        var tx = TouchInput.x;
+        var ty = TouchInput.y;
+        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          this._showConfirm(
+            "Delete ALL saves & local files?",
+            "eraseAll",
+            null,
+          );
         }
       }
     };
@@ -1165,6 +1291,10 @@
             self._listWindow.refresh();
             self._listWindow.activate();
           });
+          break;
+
+        case "eraseAll":
+          eraseAllClientData();
           break;
 
         default:

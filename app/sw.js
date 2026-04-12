@@ -490,7 +490,21 @@ async function buildDrmScript(db) {
 // Lifecycle
 
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener("activate", (e) =>
+  e.waitUntil(
+    Promise.all([
+      self.clients.claim(),
+      // Invalidate the DRM cache so it gets rebuilt with the new SW code.
+      // This prevents stale DRM payloads from persisting across SW updates.
+      openDB()
+        .then((db) => {
+          const tx = db.transaction(STORE_NAME, "readwrite");
+          tx.objectStore(STORE_NAME).delete(DRM_CACHE_KEY);
+        })
+        .catch(() => {}),
+    ]),
+  ),
+);
 
 // Active mod tracking
 //
@@ -550,11 +564,11 @@ self.addEventListener("fetch", (event) => {
     logicalPath = url.pathname.replace(/^\/+/, "") || "index.html";
   }
 
-  // Never intercept our own infrastructure files: always serve them from the
-  // network so stale IDB copies (from a previous load) are never used.
-  //   index.html     : our custom version with browser-shim + drm-inject wiring
-  //   browser-shim.js: Node.js/NW.js stubs; must always be the latest version
-  //   favicon.ico    : resolved by the server to icon/icon.png
+  // Infrastructure files: always serve fresh from the network, bypassing the
+  // browser HTTP cache.  A bare `return` would let the browser use its own
+  // cache (GitHub Pages: max-age=600), so after a push clients could get stale
+  // copies of browser-shim.js / lang-shim.js / etc. for up to 10 minutes.
+  // Using respondWith + fetch(cache:"no-store") guarantees the latest version.
   if (
     logicalPath === "loader.html" ||
     logicalPath === "sw.js" ||
@@ -563,9 +577,16 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "js/libs/browser-shim.js" ||
     logicalPath === "js/libs/lang-shim.js" ||
     logicalPath === "mods.json" ||
-    logicalPath === "favicon.ico"
-  )
+    logicalPath === "favicon.ico" ||
+    logicalPath === "img/mods.png"
+  ) {
+    event.respondWith(
+      fetch(event.request, { cache: "no-store" }).catch(() =>
+        fetch(event.request),
+      ),
+    );
     return;
+  }
 
   event.respondWith(serveFromIDB(logicalPath, event.request));
 });
