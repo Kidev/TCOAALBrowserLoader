@@ -1,7 +1,8 @@
 /*
  * Enables full mouse/touch control for TCOAAL browser port.
  * Neutralizes the DisableMouse plugin and adds click-to-move, right-click
- * interact, single-click menus, hover-to-select choices, and contextual cursors.
+ * menu/cancel, single-click menus, hover-to-select choices, contextual cursors,
+ * and mobile touch support (two-finger tap = escape).
  *
  * DisableMouse.js replaces TouchInput._onMouseDown with a no-op BEFORE
  * _setupEventHandlers runs. When _setupEventHandlers does:
@@ -76,6 +77,57 @@
     TouchInput._onMouseUp.call(TouchInput, event);
   });
 
+  // Re-register touch listeners to ensure they call our current methods
+  // (guards against DisableMouse or other plugins that may have bound stale refs).
+  // Single touch = trigger (click), two-finger touch = cancel (escape).
+  TouchInput._onTouchStart = function (event) {
+    for (var i = 0; i < event.changedTouches.length; i++) {
+      var touch = event.changedTouches[i];
+      var x = Graphics.pageToCanvasX(touch.pageX);
+      var y = Graphics.pageToCanvasY(touch.pageY);
+      if (Graphics.isInsideCanvas(x, y)) {
+        this._screenPressed = true;
+        this._pressedTime = 0;
+        if (event.touches.length >= 2) {
+          this._onCancel(x, y);
+          // Also simulate escape key for DRM compatibility (same as right-click)
+          if (isOnMap()) {
+            simulateEscape();
+          }
+        } else {
+          this._onTrigger(x, y);
+        }
+        event.preventDefault();
+      }
+    }
+    if (window.cordova || window.navigator.standalone) {
+      event.preventDefault();
+    }
+  };
+
+  document.addEventListener(
+    "touchstart",
+    function (event) {
+      TouchInput._onTouchStart.call(TouchInput, event);
+    },
+    { passive: false }
+  );
+  document.addEventListener(
+    "touchmove",
+    function (event) {
+      TouchInput._onTouchMove.call(TouchInput, event);
+    },
+    { passive: false }
+  );
+  document.addEventListener("touchend", function (event) {
+    TouchInput._onTouchEnd.call(TouchInput, event);
+  });
+
+  // Suppress browser context menu so right-click acts as escape
+  document.addEventListener("contextmenu", function (event) {
+    event.preventDefault();
+  });
+
   // 2. Track mouse position (for hover-to-select in choice windows)
 
   var _mouseX = 0,
@@ -137,23 +189,65 @@
     };
   }
 
-  // 4. Right-click on map = interact with facing event
+  // 4. Right-click / two-finger tap = context-sensitive action
+  //
+  // On the map:
+  //   - Right-click ON the player -> interact with facing event
+  //   - Right-click elsewhere    -> escape (open menu)
+  //   - Mobile long-touch ON the player -> interact with facing event
+  //   - Mobile two-finger tap -> escape (open menu)
+  // In menus:
+  //   - Right-click / two-finger tap -> cancel (back out)
 
-  var _rightClickOk = false;
+  function isOnPlayerTile(canvasX, canvasY) {
+    if (
+      typeof $gamePlayer === "undefined" ||
+      typeof $gameMap === "undefined"
+    )
+      return false;
+    var mapX = $gameMap.canvasToMapX(canvasX);
+    var mapY = $gameMap.canvasToMapY(canvasY);
+    return mapX === $gamePlayer.x && mapY === $gamePlayer.y;
+  }
+
+  function isOnMap() {
+    return (
+      typeof SceneManager !== "undefined" &&
+      typeof Scene_Map !== "undefined" &&
+      SceneManager._scene instanceof Scene_Map &&
+      typeof $gameMessage !== "undefined" &&
+      !$gameMessage.isBusy()
+    );
+  }
+
+  var _rightClickInteract = false;
+  var _pendingEscapeRelease = false;
+
+  // Simulate an escape key press for one frame. Input.update() runs before
+  // TouchInput.update() in SceneManager.updateInputData(), so we set the
+  // key state here (from the DOM event handler) and release it in our
+  // TouchInput.update override below (after Input.update has already read it).
+  function simulateEscape() {
+    if (typeof Input !== "undefined") {
+      Input._currentState["escape"] = true;
+      _pendingEscapeRelease = true;
+    }
+  }
 
   if (typeof TouchInput !== "undefined") {
-    var _restored_onRightButtonDown = TouchInput._onRightButtonDown;
+    var _base_onRightButtonDown = TouchInput._onRightButtonDown;
     TouchInput._onRightButtonDown = function (event) {
-      if (
-        typeof SceneManager !== "undefined" &&
-        typeof Scene_Map !== "undefined" &&
-        SceneManager._scene instanceof Scene_Map &&
-        typeof $gameMessage !== "undefined" &&
-        !$gameMessage.isBusy()
-      ) {
-        _rightClickOk = true;
+      var x = Graphics.pageToCanvasX(event.pageX);
+      var y = Graphics.pageToCanvasY(event.pageY);
+      if (isOnMap() && isOnPlayerTile(x, y)) {
+        _rightClickInteract = true;
       } else {
-        _restored_onRightButtonDown.call(this, event);
+        _base_onRightButtonDown.call(this, event);
+        // Also simulate escape key so DRM payload's menu system responds
+        // (it may only check Input.isTriggered, not TouchInput.isCancelled)
+        if (isOnMap()) {
+          simulateEscape();
+        }
       }
     };
   }
@@ -161,8 +255,8 @@
   if (typeof Game_Player !== "undefined") {
     var _orig_triggerButtonAction = Game_Player.prototype.triggerButtonAction;
     Game_Player.prototype.triggerButtonAction = function () {
-      if (_rightClickOk) {
-        _rightClickOk = false;
+      if (_rightClickInteract) {
+        _rightClickInteract = false;
         if (this.canMove()) {
           if (this.getOnOffVehicle()) return true;
           this.checkEventTriggerHere([0]);
@@ -173,6 +267,48 @@
         return false;
       }
       return _orig_triggerButtonAction.call(this);
+    };
+  }
+
+  // Long-touch on player = interact (mobile equivalent of right-click on player)
+  // After LONG_PRESS_FRAMES frames (~500ms at 60fps) of holding on the player
+  // tile, trigger interact and cancel the touch-move destination.
+
+  var LONG_PRESS_FRAMES = 30;
+  var _longPressTriggered = false;
+
+  if (typeof TouchInput !== "undefined") {
+    var _orig_tiUpdate = TouchInput.update;
+    TouchInput.update = function () {
+      _orig_tiUpdate.call(this);
+
+      // Release simulated escape key (Input.update already read it this frame)
+      if (_pendingEscapeRelease) {
+        Input._currentState["escape"] = false;
+        _pendingEscapeRelease = false;
+      }
+
+      // Long-press detection
+      if (
+        this._screenPressed &&
+        !_longPressTriggered &&
+        this._pressedTime === LONG_PRESS_FRAMES &&
+        isOnMap()
+      ) {
+        var cx = this.x;
+        var cy = this.y;
+        if (isOnPlayerTile(cx, cy)) {
+          _rightClickInteract = true;
+          _longPressTriggered = true;
+          // Clear destination so the player doesn't walk
+          if (typeof $gameTemp !== "undefined") {
+            $gameTemp.clearDestination();
+          }
+        }
+      }
+      if (!this._screenPressed) {
+        _longPressTriggered = false;
+      }
     };
   }
 

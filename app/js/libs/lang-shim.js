@@ -30,11 +30,15 @@
   var _saveDb = null;
   var _savesRestored = false;
 
-  /* RPG Maker save keys we care about (with optional mod prefix). */
+  /* RPG Maker save keys we care about (with optional mod prefix + backup suffix). */
   function isSaveKey(key) {
     var bare = key;
     if (_activeMod && key.indexOf(_activeMod + ":") === 0) {
       bare = key.substring(_activeMod.length + 1);
+    }
+    // Strip backup suffix if present
+    if (bare.length > 3 && bare.substring(bare.length - 3) === "bak") {
+      bare = bare.substring(0, bare.length - 3);
     }
     return (
       bare === "RPG Global" ||
@@ -85,12 +89,36 @@
     });
   }
 
+  // Intercept localStorage writes directly so ALL save-key writes are
+  // mirrored to IDB, regardless of whether they go through StorageManager
+  // or some other code path (e.g. the DRM payload capturing a reference
+  // to the original saveToWebStorage before our patches are applied).
+  var _origLSSetItem = Storage.prototype.setItem;
+  var _origLSRemoveItem = Storage.prototype.removeItem;
+  try {
+
+    Storage.prototype.setItem = function (key, value) {
+      _origLSSetItem.call(this, key, value);
+      if (this === localStorage && isSaveKey(key)) {
+        idbSavePut(key, value);
+      }
+    };
+
+    Storage.prototype.removeItem = function (key) {
+      _origLSRemoveItem.call(this, key);
+      if (this === localStorage && isSaveKey(key)) {
+        idbSaveRemove(key);
+      }
+    };
+  } catch (e) {
+    // Storage prototype not writable in some environments, fall back to
+    // the StorageManager wrapper in applyPatches() as before.
+  }
+
+  // Restore saves from IDB to localStorage. Always check IDB and merge
+  // any missing keys, individual save files can be lost even if RPG Global
+  // survives (e.g. browser storage eviction, quota pressure).
   function restoreSavesFromIDB() {
-    var globalKey = _activeMod ? _activeMod + ":RPG Global" : "RPG Global";
-    if (localStorage.getItem(globalKey) !== null) {
-      _savesRestored = true;
-      return;
-    }
     openSaveDb(function (db) {
       if (!db) {
         _savesRestored = true;
@@ -109,16 +137,15 @@
               ? c.key.indexOf(prefix) === 0
               : c.key.indexOf(":") < 0 || !isSaveKey(c.key);
             if (keyMatchesMod && isSaveKey(c.key)) {
-              localStorage.setItem(c.key, c.value);
-              count++;
+              // Only restore keys missing from localStorage
+              if (localStorage.getItem(c.key) === null) {
+                // Use the original setItem to avoid re-mirroring to IDB
+                _origLSSetItem.call(localStorage, c.key, c.value);
+                count++;
+              }
             }
             c.continue();
           } else {
-            if (count > 0) {
-              /*console.log(
-                "[lang-shim] Restored " + count + " save(s) from IndexedDB",
-              );*/
-            }
             _savesRestored = true;
           }
         };
@@ -133,7 +160,9 @@
 
   restoreSavesFromIDB();
 
-  // Gate Scene_Boot.isReady on save restoration
+  // Gate Scene_Boot.isReady on save restoration (early patch).
+  // NOTE: The DRM payload may overwrite Scene_Boot.prototype.isReady after
+  // this runs, so hookSceneBoot() re-applies the gate after all plugins load.
   if (typeof Scene_Boot !== "undefined") {
     var _orig_isReady = Scene_Boot.prototype.isReady;
     Scene_Boot.prototype.isReady = function () {
@@ -339,6 +368,17 @@
     var raw = localStorage.getItem("_activePlugins");
     if (raw) _activePlugins = JSON.parse(raw);
   } catch (e) {}
+
+  // Auto-enable mouse control mod on mobile/touch devices regardless of user choice
+  var _isMobile =
+    /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
+  if (_isMobile && _activePlugins.indexOf("_mouseControl") < 0) {
+    _activePlugins.push("_mouseControl");
+    try {
+      localStorage.setItem("_activePlugins", JSON.stringify(_activePlugins));
+    } catch (e) {}
+  }
 
   function isPluginActive(modId) {
     return _activePlugins.indexOf(modId) >= 0;
@@ -1382,6 +1422,17 @@
 
   function hookSceneBoot() {
     if (typeof Scene_Boot === "undefined") return;
+
+    // Re-apply the isReady gate AFTER the DRM payload has executed.
+    // The DRM can (and does) overwrite Scene_Boot.prototype.isReady,
+    // which drops the _savesRestored gate set during the IIFE.  Without
+    // this gate the game can boot before IDB saves are restored to
+    // localStorage, causing mod saves to appear lost after a reload.
+    var _post_drm_isReady = Scene_Boot.prototype.isReady;
+    Scene_Boot.prototype.isReady = function () {
+      return _savesRestored && _post_drm_isReady.call(this);
+    };
+
     var _orig_bootStart = Scene_Boot.prototype.start;
     Scene_Boot.prototype.start = function () {
       applyPatches();
