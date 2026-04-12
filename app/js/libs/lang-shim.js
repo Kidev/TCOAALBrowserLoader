@@ -19,7 +19,6 @@
   "use strict";
 
   // IndexedDB save persistence
-  //
   // localStorage is the primary (synchronous) store. Writes are mirrored
   // to IndexedDB asynchronously. On page load, if localStorage is empty
   // but IDB has saves, they are restored before the game boots.
@@ -800,9 +799,11 @@
     if (_patchesApplied) return;
     _patchesApplied = true;
 
-    // Register Delete key in Input.keyMapper (keycode 46)
+    // Register extra keys in Input.keyMapper
     if (typeof Input !== "undefined") {
-      Input.keyMapper[46] = "delete";
+      Input.keyMapper[46] = "delete"; // Delete key
+      Input.keyMapper[83] = "saveExport"; // S key
+      Input.keyMapper[76] = "saveImport"; // L key
     }
 
     // Load default mod icon
@@ -869,6 +870,273 @@
           }
         }
         return savefileId;
+      };
+    }
+
+    // Save file management: export (S), import (L), delete (DEL)
+    // Works on Scene_File (parent of Scene_Save and Scene_Load) so it
+    // functions in both save and load screens, respecting mod key prefixes.
+    if (
+      typeof Scene_File !== "undefined" &&
+      typeof StorageManager !== "undefined" &&
+      typeof DataManager !== "undefined"
+    ) {
+      var _orig_sceneFileUpdate = Scene_File.prototype.update;
+      Scene_File.prototype.update = function () {
+        _orig_sceneFileUpdate.call(this);
+        if (!this._listWindow || !this._listWindow.active) return;
+        if (this._saveConfirmWindow && this._saveConfirmWindow.visible) return;
+        var savefileId = this._listWindow.index() + 1;
+        if (Input.isTriggered("saveExport")) {
+          this._handleSaveExport(savefileId);
+        } else if (Input.isTriggered("saveImport")) {
+          this._handleSaveImport(savefileId);
+        } else if (Input.isTriggered("delete")) {
+          this._handleSaveDelete(savefileId);
+        }
+      };
+
+      // Draw key hints on the right side of the help window
+      var _orig_sceneFileStart = Scene_File.prototype.start;
+      Scene_File.prototype.start = function () {
+        _orig_sceneFileStart.call(this);
+        if (this._helpWindow) {
+          var hw = this._helpWindow;
+          var hints = "[S] Export   [L] Import   [Del] Delete";
+          hw.contents.fontSize = 16;
+          hw.contents.textColor = "#888888";
+          var tw = hw.contents.measureTextWidth(hints);
+          var x = hw.contentsWidth() - tw - hw.textPadding();
+          var y = (hw.contentsHeight() - 20) / 2;
+          hw.contents.drawText(hints, x, y, tw + 4, 20, "right");
+          hw.contents.fontSize = hw.standardFontSize();
+          hw.resetTextColor();
+        }
+      };
+
+      // Export: download save data as .json file
+      Scene_File.prototype._handleSaveExport = function (savefileId) {
+        if (!DataManager.isThisGameFile(savefileId)) {
+          SoundManager.playBuzzer();
+          return;
+        }
+        try {
+          var json = StorageManager.load(savefileId);
+          if (!json) {
+            SoundManager.playBuzzer();
+            return;
+          }
+          var info = DataManager.loadSavefileInfo(savefileId);
+          var exportData = { savefileId: savefileId, info: info, data: json };
+          var blob = new Blob([JSON.stringify(exportData)], {
+            type: "application/json",
+          });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement("a");
+          var mod = getActiveMod();
+          var prefix = mod ? mod + "_" : "";
+          a.href = url;
+          a.download = prefix + "save_" + savefileId + ".json";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          SoundManager.playSave();
+        } catch (e) {
+          console.error("[lang-shim] Save export failed:", e);
+          SoundManager.playBuzzer();
+        }
+      };
+
+      // Import: load a .json save file into an empty slot
+      Scene_File.prototype._handleSaveImport = function (savefileId) {
+        if (DataManager.isThisGameFile(savefileId)) {
+          SoundManager.playBuzzer();
+          return;
+        }
+        var self = this;
+        var input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json";
+        input.style.display = "none";
+        input.addEventListener("change", function () {
+          if (!input.files || !input.files[0]) return;
+          var reader = new FileReader();
+          reader.onload = function (e) {
+            try {
+              var parsed = JSON.parse(e.target.result);
+              if (!parsed || !parsed.data) {
+                SoundManager.playBuzzer();
+                return;
+              }
+              // Validate the save data parses correctly
+              var contents = JsonEx.parse(parsed.data);
+              if (!contents) {
+                SoundManager.playBuzzer();
+                return;
+              }
+              // Write the save data
+              StorageManager.save(savefileId, parsed.data);
+              // Update global info
+              var globalInfo = DataManager.loadGlobalInfo() || [];
+              if (parsed.info) {
+                // Use the exported info but update timestamp
+                parsed.info.timestamp = Date.now();
+                globalInfo[savefileId] = parsed.info;
+              } else {
+                globalInfo[savefileId] = {
+                  globalId: DataManager._globalId,
+                  title: $dataSystem.gameTitle,
+                  characters: [],
+                  faces: [],
+                  playtime: "Unknown",
+                  timestamp: Date.now(),
+                };
+              }
+              DataManager.saveGlobalInfo(globalInfo);
+              SoundManager.playLoad();
+              self._listWindow.refresh();
+            } catch (ex) {
+              console.error("[lang-shim] Save import failed:", ex);
+              SoundManager.playBuzzer();
+            }
+          };
+          reader.readAsText(input.files[0]);
+        });
+        document.body.appendChild(input);
+        input.click();
+        document.body.removeChild(input);
+      };
+
+      // Delete: remove save after confirmation
+      Scene_File.prototype._handleSaveDelete = function (savefileId) {
+        if (!DataManager.isThisGameFile(savefileId)) {
+          SoundManager.playBuzzer();
+          return;
+        }
+        this._pendingDeleteId = savefileId;
+        this._listWindow.deactivate();
+        if (!this._saveConfirmWindow) {
+          this._createSaveConfirmWindow();
+        }
+        this._saveConfirmWindow.setAction("delete", savefileId);
+        this._saveConfirmWindow.show();
+        this._saveConfirmWindow.open();
+        this._saveConfirmWindow.activate();
+        this._saveConfirmWindow.select(1); // Default to "No"
+      };
+
+      Scene_File.prototype._createSaveConfirmWindow = function () {
+        this._saveConfirmWindow = new Window_SaveConfirm(0, 0);
+        this._saveConfirmWindow.x =
+          (Graphics.boxWidth - this._saveConfirmWindow.width) / 2;
+        this._saveConfirmWindow.y =
+          (Graphics.boxHeight - this._saveConfirmWindow.height) / 2;
+        this._saveConfirmWindow.setHandler(
+          "confirm",
+          this._onDeleteConfirm.bind(this),
+        );
+        this._saveConfirmWindow.setHandler(
+          "cancel",
+          this._onDeleteCancel.bind(this),
+        );
+        this._saveConfirmWindow.hide();
+        this._saveConfirmWindow.close();
+        this.addWindow(this._saveConfirmWindow);
+      };
+
+      Scene_File.prototype._onDeleteConfirm = function () {
+        var id = this._pendingDeleteId;
+        try {
+          StorageManager.remove(id);
+          // Also remove backup if it exists
+          var bakKey = StorageManager.webStorageKey(id) + "bak";
+          localStorage.removeItem(bakKey);
+          // Update global info
+          var globalInfo = DataManager.loadGlobalInfo() || [];
+          delete globalInfo[id];
+          DataManager.saveGlobalInfo(globalInfo);
+          SoundManager.playOk();
+        } catch (e) {
+          console.error("[lang-shim] Save delete failed:", e);
+          SoundManager.playBuzzer();
+        }
+        this._saveConfirmWindow.close();
+        this._saveConfirmWindow.hide();
+        this._listWindow.refresh();
+        this._listWindow.activate();
+        this._pendingDeleteId = null;
+      };
+
+      Scene_File.prototype._onDeleteCancel = function () {
+        this._saveConfirmWindow.close();
+        this._saveConfirmWindow.hide();
+        this._listWindow.activate();
+        this._pendingDeleteId = null;
+      };
+
+      // Confirmation dialog window for save deletion
+      window.Window_SaveConfirm = function () {
+        this.initialize.apply(this, arguments);
+      };
+
+      Window_SaveConfirm.prototype = Object.create(Window_Command.prototype);
+      Window_SaveConfirm.prototype.constructor = Window_SaveConfirm;
+
+      Window_SaveConfirm.prototype.initialize = function (x, y) {
+        this._actionText = "";
+        Window_Command.prototype.initialize.call(this, x, y);
+        this.openness = 0;
+      };
+
+      Window_SaveConfirm.prototype.setAction = function (action, slotId) {
+        this._actionText = "Delete Save " + slotId + "?";
+        this.refresh();
+      };
+
+      Window_SaveConfirm.prototype.windowWidth = function () {
+        return 360;
+      };
+
+      Window_SaveConfirm.prototype.windowHeight = function () {
+        // Question text line + gap + 2 command rows + padding
+        return this.fittingHeight(3) + 8;
+      };
+
+      Window_SaveConfirm.prototype.makeCommandList = function () {
+        this.addCommand("Yes", "confirm");
+        this.addCommand("No", "cancel");
+      };
+
+      Window_SaveConfirm.prototype.itemTextAlign = function () {
+        return "center";
+      };
+
+      Window_SaveConfirm.prototype.drawAllItems = function () {
+        // Draw the question text above the commands
+        var pad = this.textPadding();
+        this.drawText(
+          this._actionText || "",
+          pad,
+          0,
+          this.contentsWidth() - pad * 2,
+          "center",
+        );
+        // Draw commands below
+        for (var i = 0; i < this.maxItems(); i++) {
+          this.drawItem(i);
+        }
+      };
+
+      Window_SaveConfirm.prototype.itemRect = function (index) {
+        var rect = Window_Command.prototype.itemRect.call(this, index);
+        // Offset commands below the question text
+        rect.y += this.lineHeight() + 8;
+        return rect;
+      };
+
+      Window_SaveConfirm.prototype.numVisibleRows = function () {
+        return 2;
       };
     }
 
