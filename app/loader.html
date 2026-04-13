@@ -362,7 +362,7 @@
 
         <div class="progress-wrap" id="progress-wrap">
           <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
-          <div class="status" id="status">Preparing…</div>
+          <div class="status" id="status">Preparing...</div>
         </div>
 
         <p class="info">
@@ -441,7 +441,7 @@
         }
 
         const total = entries.length;
-        setStatus(`Loading 0 / ${total} files…`);
+        setStatus(`Loading 0 / ${total} files...`);
         setProgress(0, total);
 
         let done = 0;
@@ -455,15 +455,15 @@
           done++;
           setProgress(done, total);
           if (done % 20 === 0 || done === total) {
-            setStatus(`Loading ${done} / ${total} files…`);
+            setStatus(`Loading ${done} / ${total} files...`);
           }
         }
 
-        setStatus(`${total} files stored. Extracting language data…`, "ok");
+        setStatus(`${total} files stored. Extracting language data...`, "ok");
         await extractLangData(db);
-        setStatus("Registering service worker…", "ok");
+        setStatus("Registering service worker...", "ok");
         await registerSW();
-        setStatus("Ready! Launching game…", "ok");
+        setStatus("Ready! Launching game...", "ok");
         const fav = document.getElementById("favicon");
         fav.href = "icon/icon.png";
         fav.type = "image/png";
@@ -667,7 +667,7 @@
 
         $load.disabled = true;
         showProgress(true);
-        setStatus("Preparing…");
+        setStatus("Preparing...");
 
         const entries = Array.from(fileList)
           .map((file) => {

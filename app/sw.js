@@ -89,6 +89,74 @@ function getAsset(db, key) {
   });
 }
 
+/**
+ * Case-insensitive IDB lookup cache.
+ * Maps lowercase IDB key -> actual IDB key for directories already scanned.
+ * Populated lazily per directory prefix on first case-insensitive miss.
+ */
+const _ciCache = new Map();
+const _ciScannedDirs = new Set();
+
+/**
+ * Scan all IDB keys under a directory prefix and populate the CI cache.
+ * E.g. prefix "audio/se/" scans all keys starting with "audio/se/".
+ * Also handles mod-prefixed keys like "mod:id:audio/se/".
+ */
+function _ciScanDir(db, dirPrefix) {
+  if (_ciScannedDirs.has(dirPrefix)) return Promise.resolve();
+  _ciScannedDirs.add(dirPrefix);
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const range = IDBKeyRange.bound(
+        dirPrefix,
+        dirPrefix + "\uffff",
+        false,
+        false,
+      );
+      const req = tx.objectStore(STORE_NAME).openKeyCursor(range);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          _ciCache.set(cursor.key.toLowerCase(), cursor.key);
+          cursor.continue();
+        } else {
+          resolve();
+        }
+      };
+      req.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/**
+ * Case-insensitive asset lookup. Falls back to scanning the key's directory
+ * in IDB when the exact-case lookup returns null.
+ */
+async function getAssetCI(db, key) {
+  // Try exact match first (fast path)
+  const exact = await getAsset(db, key);
+  if (exact !== null) return { value: exact, actualKey: key };
+
+  // Determine the directory prefix to scan
+  const lastSlash = key.lastIndexOf("/");
+  const dirPrefix = lastSlash >= 0 ? key.substring(0, lastSlash + 1) : "";
+
+  // Scan the directory if not yet cached
+  await _ciScanDir(db, dirPrefix);
+
+  // Look up by lowercase key
+  const actualKey = _ciCache.get(key.toLowerCase());
+  if (actualKey && actualKey !== key) {
+    const val = await getAsset(db, actualKey);
+    if (val !== null) return { value: val, actualKey };
+  }
+
+  return null;
+}
+
 const DRM_CACHE_KEY = "__drm_cache__";
 
 /** Persist a built DRM Uint8Array to IDB so new SW instances can reuse it. */
@@ -700,22 +768,27 @@ async function serveFromIDB(logicalPath, request) {
   if (_activeMod) {
     const modPrefix = "mod:" + _activeMod + ":";
 
-    // M1. Direct path in mod
-    const modDirect = await getAsset(db, modPrefix + logicalPath);
-    if (modDirect !== null) {
-      const decrypted = dekit(modDirect, logicalPath);
+    // M1. Direct path in mod (case-insensitive: mod files may have different
+    //     casing than what the engine requests, e.g. Windows-authored mods)
+    const modDirectCI = await getAssetCI(db, modPrefix + logicalPath);
+    if (modDirectCI !== null) {
+      const keyForDecrypt = modDirectCI.actualKey.substring(modPrefix.length);
+      const decrypted = dekit(modDirectCI.value, keyForDecrypt);
       return new Response(decrypted, {
         status: 200,
         headers: { "Content-Type": mimeFor(logicalPath) },
       });
     }
 
-    // M2. Extension-stripped in mod
+    // M2. Extension-stripped in mod (case-insensitive)
     const modNoExt = logicalPath.replace(/\.[^./]+$/, "");
     if (modNoExt !== logicalPath) {
-      const modStripped = await getAsset(db, modPrefix + modNoExt);
-      if (modStripped !== null) {
-        const decrypted = dekit(modStripped, modNoExt);
+      const modStrippedCI = await getAssetCI(db, modPrefix + modNoExt);
+      if (modStrippedCI !== null) {
+        const keyForDecrypt = modStrippedCI.actualKey.substring(
+          modPrefix.length,
+        );
+        const decrypted = dekit(modStrippedCI.value, keyForDecrypt);
         return new Response(decrypted, {
           status: 200,
           headers: { "Content-Type": mimeFor(logicalPath) },
@@ -735,29 +808,29 @@ async function serveFromIDB(logicalPath, request) {
     }
   }
 
-  // 1. Direct path: engine JS, fonts, CSS, HTML, and any plain file the
-  //    user stored under its original name. Also handles extension-less
-  //    encrypted files (e.g. data/9c7050… the Lang data file) that are
-  //    stored under their hashed disk name: dekit() is a no-op when the
-  //    TCOAAL header is absent, so plain files are unaffected.
-  const direct = await getAsset(db, logicalPath);
-  if (direct !== null) {
-    const decrypted = dekit(direct, logicalPath);
+  // 1. Direct path (case-insensitive): engine JS, fonts, CSS, HTML, and any
+  //    plain file the user stored under its original name. Also handles
+  //    extension-less encrypted files (e.g. data/9c7050... the Lang data file)
+  //    that are stored under their hashed disk name: dekit() is a no-op when
+  //    the TCOAAL header is absent, so plain files are unaffected.
+  const directCI = await getAssetCI(db, logicalPath);
+  if (directCI !== null) {
+    const decrypted = dekit(directCI.value, directCI.actualKey);
     return new Response(decrypted, {
       status: 200,
       headers: { "Content-Type": mimeFor(logicalPath) },
     });
   }
 
-  // 2. Extension-stripped lookup.
+  // 2. Extension-stripped lookup (case-insensitive).
   //    Plugins compute SHA-256 client-side and append the extension before
   //    fetching ("91b682859f543183.png"). Files in IDB are stored without
   //    extension ("91b682859f543183"). Strip and decrypt.
   const noExt = logicalPath.replace(/\.[^./]+$/, "");
   if (noExt !== logicalPath) {
-    const stripped = await getAsset(db, noExt);
-    if (stripped !== null) {
-      const decrypted = dekit(stripped, noExt);
+    const strippedCI = await getAssetCI(db, noExt);
+    if (strippedCI !== null) {
+      const decrypted = dekit(strippedCI.value, strippedCI.actualKey);
       return new Response(decrypted, {
         status: 200,
         headers: { "Content-Type": mimeFor(logicalPath) },

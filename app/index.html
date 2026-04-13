@@ -39,7 +39,7 @@
     </style>
   </head>
   <body>
-    <div id="boot-splash">Loading…</div>
+    <div id="boot-splash">Loading...</div>
 
     <script>
       /**
@@ -279,11 +279,11 @@
         ];
 
         // Boot sequence
-        setSplash("Initializing…");
+        setSplash("Initializing...");
 
         ensureSW()
           .then(function () {
-            setSplash("Checking game files…");
+            setSplash("Checking game files...");
             return hasGameFiles();
           })
           .then(function (found) {
@@ -294,7 +294,7 @@
             }
 
             // Game files are in IDB and SW is active, load the game
-            setSplash("Starting game…");
+            setSplash("Starting game...");
 
             // Preload language data from IDB before loading scripts,
             // so browser-shim.js can serve it synchronously.

@@ -906,7 +906,7 @@
         if (this._helpWindow) {
           var hw = this._helpWindow;
           var labels = [
-            { text: "[E] Export", key: "saveExport" },
+            { text: "[O] Export", key: "saveExport" },
             { text: "[I] Import", key: "saveImport" },
             { text: "[Del] Delete", key: "delete" },
           ];
