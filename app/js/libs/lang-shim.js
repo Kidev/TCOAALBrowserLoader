@@ -802,9 +802,9 @@
 
     // Register extra keys in Input.keyMapper
     if (typeof Input !== "undefined") {
-      Input.keyMapper[16] = "shift"; // Shift key
+      Input.keyMapper[18] = "alt"; // Alt key
       Input.keyMapper[46] = "delete"; // Delete key
-      Input.keyMapper[69] = "saveExport"; // E key
+      Input.keyMapper[79] = "saveExport"; // O key
       Input.keyMapper[73] = "saveImport"; // I key
     }
 
@@ -1421,7 +1421,7 @@
 
     Scene_Mods.prototype._drawModsHints = function () {
       var hw = this._helpWindow;
-      var hints = "[Shift+Del] Delete local files";
+      var hints = "[Alt+Del] Delete local files";
       hw.contents.fontSize = 16;
       hw.contents.textColor = "#888888";
       var tw = hw.contents.measureTextWidth(hints);
@@ -1475,8 +1475,8 @@
         this._listWindow.active &&
         Input.isTriggered("delete")
       ) {
-        if (Input._currentState["shift"]) {
-          // Shift+Del: delete all local files
+        if (Input._currentState["alt"]) {
+          // Alt+Del: delete all local files
           this._showConfirm(
             "Delete ALL saves & local files?",
             "eraseAll",
@@ -1489,7 +1489,7 @@
           }
         }
       }
-      // [Shift+Del] hint click detection (only with mouse control enabled)
+      // [Alt+Del] hint click detection (only with mouse control enabled)
       if (
         isPluginActive("_mouseControl") &&
         this._eraseHintRect &&
