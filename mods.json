@@ -2,11 +2,12 @@
   "TCOAAR": {
     "name": "The Coffin of Andrew and Renee",
     "icon": "mods/TCOAAR/www/img/titles1/Book.png",
-    "author": "graveyardshiftpd",
+    "author": "GraveyardShiftGD",
     "lastUpdate": "2025-12-01",
     "repo": "https://github.com/graveyardshiftpd/tcoaar-project",
     "path": "mods/TCOAAR",
     "type": "overhaul",
+    "description": "A retelling of the original story in an alternate universe where one aspect of their childhood was changed",
     "langFile": "languages/english/dialogue.loc",
     "version": "eef769d",
     "files": [
@@ -1300,6 +1301,7 @@
     "name": "Mouse Control",
     "path": "mods/_mouseControl",
     "type": "built-in plugin",
+    "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
     "version": "6ebfe6d",
     "files": [

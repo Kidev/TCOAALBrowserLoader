@@ -211,6 +211,7 @@
           repo: entry.repo || entry.github || "",
           path: entry.path || "mods/" + keys[i],
           type: entry.type || MOD_TYPE_OVERHAUL,
+          description: entry.description || "",
         });
       }
     }
@@ -585,7 +586,7 @@
     var errors = 0;
     var wwwBase = "/" + basePath + "/www/";
 
-    onProgress({ percent: 0, message: "Installing " + total + " files..." });
+    onProgress({ percent: 0, message: "Installing... 0%" });
 
     openAssetsDb(function (db) {
       if (!db) {
@@ -631,7 +632,7 @@
                   if (stored % 20 === 0 || stored === total) {
                     onProgress({
                       percent: pct,
-                      message: "Installing... " + stored + "/" + total,
+                      message: "Installing... " + pct + "%",
                     });
                   }
                   pending--;
@@ -801,9 +802,10 @@
 
     // Register extra keys in Input.keyMapper
     if (typeof Input !== "undefined") {
+      Input.keyMapper[16] = "shift"; // Shift key
       Input.keyMapper[46] = "delete"; // Delete key
-      Input.keyMapper[83] = "saveExport"; // S key
-      Input.keyMapper[76] = "saveImport"; // L key
+      Input.keyMapper[69] = "saveExport"; // E key
+      Input.keyMapper[73] = "saveImport"; // I key
     }
 
     // Load default mod icon
@@ -873,7 +875,7 @@
       };
     }
 
-    // Save file management: export (S), import (L), delete (DEL)
+    // Save file management: export (E), import (I), delete (DEL)
     // Works on Scene_File (parent of Scene_Save and Scene_Load) so it
     // functions in both save and load screens, respecting mod key prefixes.
     if (
@@ -900,17 +902,72 @@
       var _orig_sceneFileStart = Scene_File.prototype.start;
       Scene_File.prototype.start = function () {
         _orig_sceneFileStart.call(this);
+        this._fileHintRects = {};
         if (this._helpWindow) {
           var hw = this._helpWindow;
-          var hints = "[S] Export   [L] Import   [Del] Delete";
+          var labels = [
+            { text: "[E] Export", key: "saveExport" },
+            { text: "[I] Import", key: "saveImport" },
+            { text: "[Del] Delete", key: "delete" },
+          ];
+          var separator = "   ";
+          var pad = hw.standardPadding();
           hw.contents.fontSize = 16;
           hw.contents.textColor = "#888888";
-          var tw = hw.contents.measureTextWidth(hints);
-          var x = hw.contentsWidth() - tw - hw.textPadding();
-          var y = (hw.contentsHeight() - 20) / 2;
-          hw.contents.drawText(hints, x, y, tw + 4, 20, "right");
+          // Measure total width to position from the right
+          var totalW = 0;
+          for (var li = 0; li < labels.length; li++) {
+            totalW += hw.contents.measureTextWidth(labels[li].text);
+            if (li < labels.length - 1)
+              totalW += hw.contents.measureTextWidth(separator);
+          }
+          var startX = hw.contentsWidth() - totalW - hw.textPadding();
+          var hy = (hw.contentsHeight() - 20) / 2;
+          var curX = startX;
+          for (var lj = 0; lj < labels.length; lj++) {
+            var lw = hw.contents.measureTextWidth(labels[lj].text);
+            hw.contents.drawText(labels[lj].text, curX, hy, lw + 4, 20);
+            // Store screen-space hit rect
+            this._fileHintRects[labels[lj].key] = {
+              x: hw.x + pad + curX,
+              y: hw.y + pad + hy,
+              w: lw + 4,
+              h: 20,
+            };
+            curX += lw;
+            if (lj < labels.length - 1)
+              curX += hw.contents.measureTextWidth(separator);
+          }
           hw.contents.fontSize = hw.standardFontSize();
           hw.resetTextColor();
+        }
+      };
+
+      // Click detection for hint labels in Scene_File
+      var _orig_sceneFileUpdate2 = Scene_File.prototype.update;
+      Scene_File.prototype.update = function () {
+        _orig_sceneFileUpdate2.call(this);
+        if (
+          isPluginActive("_mouseControl") &&
+          this._fileHintRects &&
+          this._listWindow &&
+          this._listWindow.active &&
+          !(this._saveConfirmWindow && this._saveConfirmWindow.visible) &&
+          TouchInput.isTriggered()
+        ) {
+          var tx = TouchInput.x;
+          var ty = TouchInput.y;
+          var savefileId = this._listWindow.index() + 1;
+          var rects = this._fileHintRects;
+          for (var rk in rects) {
+            var r = rects[rk];
+            if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+              if (rk === "saveExport") this._handleSaveExport(savefileId);
+              else if (rk === "saveImport") this._handleSaveImport(savefileId);
+              else if (rk === "delete") this._handleSaveDelete(savefileId);
+              break;
+            }
+          }
         }
       };
 
@@ -1204,6 +1261,41 @@
         };
       }
 
+      // Mouse wheel changes option values when mouse control plugin is active
+      var _orig_optProcessWheel = Window_Options.prototype.processWheel;
+      Window_Options.prototype.processWheel = function () {
+        if (isPluginActive("_mouseControl") && this.isOpenAndActive()) {
+          var threshold = 20;
+          if (TouchInput.wheelY >= threshold) {
+            // Scroll down = decrease value (like cursorLeft)
+            var sym = this.commandSymbol(this.index());
+            if (sym) {
+              if (this._input) {
+                this._input(-1, false);
+              } else {
+                this.cursorLeft(false);
+              }
+            }
+            return;
+          }
+          if (TouchInput.wheelY <= -threshold) {
+            // Scroll up = increase value (like cursorRight)
+            var sym2 = this.commandSymbol(this.index());
+            if (sym2) {
+              if (this._input) {
+                this._input(1, false);
+              } else {
+                this.cursorRight(false);
+              }
+            }
+            return;
+          }
+        }
+        if (_orig_optProcessWheel) {
+          _orig_optProcessWheel.call(this);
+        }
+      };
+
       var _orig_optSetConfigValue = Window_Options.prototype.setConfigValue;
       Window_Options.prototype.setConfigValue = function (symbol, value) {
         _orig_optSetConfigValue.call(this, symbol, value);
@@ -1211,6 +1303,13 @@
           Graphics._stretchEnabled = !!value;
           Graphics._updateAllElements();
         }
+      };
+    }
+
+    // Always enable Continue on the title screen so players can import saves
+    if (typeof Window_TitleCommand !== "undefined") {
+      Window_TitleCommand.prototype.isContinueEnabled = function () {
+        return true;
       };
     }
 
@@ -1317,49 +1416,29 @@
       var am = getActiveMod();
       this._helpWindow.setText(am ? "Mods | Active: " + am : "Mods");
       this.addWindow(this._helpWindow);
-      this._drawEraseButton();
+      this._drawModsHints();
     };
 
-    Scene_Mods.prototype._drawEraseButton = function () {
+    Scene_Mods.prototype._drawModsHints = function () {
       var hw = this._helpWindow;
+      var hints = "[Shift+Del] Delete local files";
+      hw.contents.fontSize = 16;
+      hw.contents.textColor = "#888888";
+      var tw = hw.contents.measureTextWidth(hints);
+      var x = hw.contentsWidth() - tw - hw.textPadding();
+      var y = (hw.contentsHeight() - 20) / 2;
+      hw.contents.drawText(hints, x, y, tw + 4, 20, "right");
+      hw.contents.fontSize = hw.standardFontSize();
+      hw.resetTextColor();
+
+      // Store hit area for mouse click detection
       var pad = hw.standardPadding();
-      var size = hw.contentsHeight();
-      var x = hw.contentsWidth() - size;
-      var self = this;
-
-      // Store hit area in screen coordinates for TouchInput comparison
-      this._eraseBtnRect = {
+      this._eraseHintRect = {
         x: hw.x + pad + x,
-        y: hw.y + pad,
-        w: size,
-        h: size,
+        y: hw.y + pad + y,
+        w: tw + 4,
+        h: 20,
       };
-
-      // Load broom sprite from character sheet (row 2, col 9, 48x96)
-      var bmp = ImageManager.loadNormalBitmap(
-        "img/characters/05a60f9a9844fd78.png",
-        0,
-      );
-      var sx = 8 * 48; // col 9 (0-indexed: 8)
-      var sy = 1 * 96; // row 2 (0-indexed: 1), row height = 2 * col width
-      var sw = 48;
-      var sh = 96;
-
-      function drawBroom() {
-        if (!hw.contents) return;
-        var scale = Math.min(size / sw, size / sh);
-        var dw = Math.floor(sw * scale);
-        var dh = Math.floor(sh * scale);
-        var dx = x + Math.floor((size - dw) / 2);
-        var dy = Math.floor((size - dh) / 2);
-        hw.contents.blt(bmp, sx, sy, sw, sh, dx, dy, dw, dh);
-      }
-
-      if (bmp.isReady()) {
-        drawBroom();
-      } else {
-        bmp.addLoadListener(drawBroom);
-      }
     };
 
     Scene_Mods.prototype.createListWindow = function () {
@@ -1396,18 +1475,28 @@
         this._listWindow.active &&
         Input.isTriggered("delete")
       ) {
-        var mod = this._listWindow.selectedMod();
-        if (mod && _modStatus[mod.key] && _modStatus[mod.key].installed) {
-          this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
+        if (Input._currentState["shift"]) {
+          // Shift+Del: delete all local files
+          this._showConfirm(
+            "Delete ALL saves & local files?",
+            "eraseAll",
+            null,
+          );
+        } else {
+          var mod = this._listWindow.selectedMod();
+          if (mod && _modStatus[mod.key] && _modStatus[mod.key].installed) {
+            this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
+          }
         }
       }
-      // Erase button click detection (only when confirm dialog is not showing)
+      // [Shift+Del] hint click detection (only with mouse control enabled)
       if (
-        this._eraseBtnRect &&
+        isPluginActive("_mouseControl") &&
+        this._eraseHintRect &&
         !this._pendingAction &&
         TouchInput.isTriggered()
       ) {
-        var r = this._eraseBtnRect;
+        var r = this._eraseHintRect;
         var tx = TouchInput.x;
         var ty = TouchInput.y;
         if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
@@ -1560,7 +1649,7 @@
           var wasPlugin = isPluginActive(mod.key);
           if (wasPlugin) setPluginActive(mod.key, false);
           uninstallMod(mod.key, function () {
-            if (wasActive || wasPlugin) {
+            if (wasActive) {
               AudioManager.stopAll();
               location.reload();
               return;
@@ -1723,6 +1812,8 @@
       }
 
       var availW = rect.width - (textX - rect.x);
+
+      // Line 1: mod name + "by author" (left), date (right)
       this.resetTextColor();
       var nameW = this.textWidth(mod.name);
       this.drawText(mod.name, textX, rect.y, availW);
@@ -1733,79 +1824,86 @@
       this.drawText(byText, byX, rect.y + 4, rect.width - (byX - rect.x));
       this.contents.fontSize = this.standardFontSize();
 
-      var typeLabel =
-        "[" +
-        (mod.type || "overhaul").replace(/\b\w/g, function (c) {
-          return c.toUpperCase();
-        }) +
-        "]";
-      this.contents.fontSize = 16;
-      this.contents.textColor = isPluginType(mod.type) ? "#88bbff" : "#ff8888";
-      this.drawText(typeLabel, rect.x, rect.y + 4, rect.width, "right");
-      this.contents.fontSize = this.standardFontSize();
+      if (mod.lastUpdate) {
+        this.contents.fontSize = 16;
+        this.resetTextColor();
+        this.drawText(mod.lastUpdate, rect.x, rect.y + 4, rect.width, "right");
+        this.contents.fontSize = this.standardFontSize();
+      }
 
       var status = _modStatus[mod.key];
       var installed = status && status.installed;
       var lineY = rect.y + lineHeight;
-      var smallLine = Math.floor(lineHeight * 0.75);
+      var smallLine = Math.floor(lineHeight * 0.7);
 
-      if (isBuiltIn(mod)) {
-        var active = isPluginActive(mod.key);
-        this.contents.textColor = active ? "#88ff88" : "#aaaaaa";
-        this.drawText(
-          active ? "Enabled" : "Disabled",
-          textX,
-          lineY + smallLine,
-          availW,
-        );
-      } else if (status && status._downloading) {
+      // Line 2: type label (left), installed status (right)
+      var rawType = (mod.type || "overhaul")
+        .replace(/^built-in\s+/i, "")
+        .replace(/\b\w/g, function (c) {
+          return c.toUpperCase();
+        });
+      var typeLabel = "[" + rawType + "]";
+      this.contents.fontSize = 16;
+      this.contents.textColor = isPluginType(mod.type) ? "#88bbff" : "#ff8888";
+      this.drawText(typeLabel, textX, lineY + 2, availW);
+
+      if (status && status._downloading) {
         this.contents.textColor = "#ffff88";
         this.drawText(
           status._progress || "Installing...",
-          textX,
-          lineY,
-          availW,
+          rect.x,
+          lineY + 2,
+          rect.width,
+          "right",
         );
       } else if (status && status._error) {
         this.contents.textColor = "#ff8888";
-        this.drawText("Error: " + status._error, textX, lineY, availW);
+        this.drawText(
+          "Error: " + status._error,
+          rect.x,
+          lineY + 2,
+          rect.width,
+          "right",
+        );
+      } else if (isBuiltIn(mod)) {
+        this.contents.textColor = "#88ff88";
+        this.drawText("Built-in", rect.x, lineY + 2, rect.width, "right");
       } else {
         this.contents.textColor = installed ? "#88ff88" : "#aaaaaa";
         this.drawText(
           installed ? "Installed" : "Not installed",
-          textX,
-          lineY,
-          availW,
-        );
-        if (installed) {
-          var isActive;
-          if (isPluginType(mod.type)) {
-            isActive = isPluginActive(mod.key);
-          } else {
-            isActive = getActiveMod() === mod.key;
-          }
-          this.contents.textColor = isActive ? "#88ff88" : "#aaaaaa";
-          this.drawText(
-            isActive ? "Enabled" : "Disabled",
-            textX,
-            lineY + smallLine,
-            availW,
-          );
-        }
-      }
-      this.resetTextColor();
-
-      if (mod.lastUpdate && !isBuiltIn(mod)) {
-        this.contents.fontSize = 18;
-        this.drawText(
-          mod.lastUpdate,
           rect.x,
-          rect.y + rect.height - lineHeight - 2,
+          lineY + 2,
           rect.width,
           "right",
         );
-        this.contents.fontSize = this.standardFontSize();
       }
+
+      // Line 3: description (left), enabled status (right)
+      if (mod.description) {
+        this.contents.textColor = "#cccccc";
+        this.drawText(mod.description, textX, lineY + smallLine + 2, availW);
+      }
+
+      if (isBuiltIn(mod) || installed) {
+        var isActive;
+        if (isPluginType(mod.type)) {
+          isActive = isPluginActive(mod.key);
+        } else {
+          isActive = getActiveMod() === mod.key;
+        }
+        this.contents.textColor = isActive ? "#88ff88" : "#aaaaaa";
+        this.drawText(
+          isActive ? "Enabled" : "Disabled",
+          rect.x,
+          lineY + smallLine + 2,
+          rect.width,
+          "right",
+        );
+      }
+
+      this.contents.fontSize = this.standardFontSize();
+      this.resetTextColor();
     };
 
     Window_ModList.prototype.playOkSound = function () {

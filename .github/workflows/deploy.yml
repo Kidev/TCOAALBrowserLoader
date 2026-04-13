@@ -26,14 +26,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-
-      - name: Generate mod manifests
-        run: node generate-manifests.js
-
       - name: Assemble site
         run: |
           mkdir _site
