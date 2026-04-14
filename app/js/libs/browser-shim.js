@@ -57,9 +57,22 @@
     return _langJSON;
   }
 
-  // Helper: does `p` refer to the CLD asset (data/9c7050ae76645487)?
+  // Helper: does `p` refer to a CLD / language data asset?
+  // Matches the base game's hashed CLD path (data/9c7050ae76645487)
+  // and any mod-specific langFile (e.g. data/dialogues).
   function isCLDPath(p) {
-    return typeof p === "string" && p.indexOf("9c7050ae76645487") !== -1;
+    if (typeof p !== "string") return false;
+    if (p.indexOf("9c7050ae76645487") !== -1) return true;
+    // Also match the active mod's langFile path (set by lang-shim.js)
+    if (window.__modLangFile) {
+      var np = normPath(p);
+      if (
+        np === window.__modLangFile ||
+        np.indexOf(window.__modLangFile) !== -1
+      )
+        return true;
+    }
+    return false;
   }
 
   // Helper: normalise path: strip leading .\ or ./, normalise separators
@@ -96,197 +109,274 @@
     }
   }
 
-  // Browser overrides appended to every decompressed DRM payload.
+  // Browser overrides for DRM payload globals.
   //
-  // These run in the same script context as the payload, AFTER all
-  // payload definitions, so they can freely reassign payload globals.
-  var BROWSER_OVERRIDES = [
-    "",
-    ";(function() {",
-    "  /* Browser overrides for DRM payload */",
-    "",
-    "  // Skip DRM hash check (reads a file from disk)",
-    "  Crypto.hashMatchDRM = function() { return true; };",
-    "",
-    "  // Steam: payload redefines with NW.js/greenworks checks; override back.",
-    "  // Must override all methods that access Steam.API (null in browser).",
-    "  Steam.init = function() { return true; };",
-    '  Steam.currentLanguage = function() { return "english"; };',
-    "  Steam.awardAchievement = function() {};",
-    "  Steam.clearAllAchievements = function() {};",
-    '  if (typeof Steam.isInitialized === "function") Steam.isInitialized = function() { return false; };',
-    '  if (typeof Steam.retryInit === "function") Steam.retryInit = function() { return false; };',
-    "",
-    "  // Non-blocking crash (prevent alert() freeze + nw.gui close)",
-    '  App.crash  = function(msg) { console.error("[DRM] CRITICAL:", msg); };',
-    "  App.close  = function() {};",
-    "  App.report = function() {};",
-    "",
-    "  // Lang.search: browser version. Discovers all available languages",
-    "  // via /languages-list.json (served by SW/server.js) and loads each",
-    "  // language's .loc data. Falls back to CLD for the base language.",
-    "  Lang.search = function() {",
-    "    try {",
-    "      var langList;",
-    "      try {",
-    "        var lx = new XMLHttpRequest();",
-    '        lx.open("GET", "/languages-list.json", false);',
-    "        lx.send();",
-    "        if (lx.status >= 200 && lx.status < 400) langList = JSON.parse(lx.responseText);",
-    "      } catch(e) {}",
-    '      if (!langList || !langList.length) langList = ["english"];',
-    "",
-    "      this.list = {};",
-    "      this.offc = langList;",
-    "      this.data = this.data || {};",
-    "",
-    "      for (var i = 0; i < langList.length; i++) {",
-    "        var lang = langList[i];",
-    '        this.list[lang] = "languages/" + lang + "/dialogue.loc";',
-    "        try {",
-    "          var data = null;",
-    "          // Try XHR first (SW serves mod files from IDB)",
-    "          try {",
-    "            var locXhr = new XMLHttpRequest();",
-    '            locXhr.open("GET", "languages/" + lang + "/dialogue.loc", false);',
-    "            locXhr.send();",
-    "            if (locXhr.status >= 200 && locXhr.status < 400 && locXhr.responseText) {",
-    "              var text = locXhr.responseText;",
-    '              var jsonStart = text.indexOf("{");',
-    "              if (jsonStart >= 0) data = JSON.parse(text.substring(jsonStart));",
-    "            }",
-    "          } catch(xe) {}",
-    "          // Fallback: use preloaded __langData (from IDB, mod-aware)",
-    "          if (!data && window.__langData) {",
-    "            try {",
-    "              var ld = window.__langData;",
-    '              if (typeof ld === "string") {',
-    '                var js = ld.indexOf("{");',
-    "                if (js >= 0) data = JSON.parse(ld.substring(js));",
-    "              }",
-    "            } catch(pe) {}",
-    "          }",
-    "          if (data) {",
-    "            data.imageLUT = data.imageLUT || {};",
-    "            this.data[lang] = data;",
-    "          }",
-    "        } catch(e) {",
-    '          console.warn("[Lang.search] Failed to load " + lang + ":", e);',
-    "        }",
-    "      }",
-    "    } catch(e) {",
-    '      console.warn("[browser-shim] Lang.search failed:", e);',
-    "    }",
-    "  };",
-    "",
-    "  // Lang.imgMapping: no translated images in browser mode",
-    "  Lang.imgMapping = function() {};",
-    "",
-    "  // Crypto.dekit: pass through (SW/server already decrypts assets)",
-    "  Crypto.dekit = function(data) { return data; };",
-    "",
-    "  // Crypto.resolveURL / resolvePath: fix for browser mode.",
-    "  // The DRM's originals check Utils.exists() before consulting the",
-    "  // Copylist hash map. Our fs.existsSync stub returns true for",
-    "  // everything, so the lookup is skipped and the logical URL is used.",
-    "  // The SW cannot resolve it because the base-game file may have a",
-    "  // different original name. Override to always consult the map.",
-    "  //",
-    "  // We load the Copylist ourselves from the mod's static path",
-    "  // (/mods/{id}/www/data/Copylist.txt) rather than calling the DRM's",
-    "  // loadUnencryptedToEncryptedFileHashMap, which does readFileSync to",
-    "  // data/Copylist.txt that path 404s because the SW may not have",
-    "  // _activeMod set yet or the IDB key uses mod: prefix.",
-    '  if (typeof Crypto.generateHashFromUnencryptedFilePath === "function") {',
-    "    var _copylistLoaded = false;",
-    "    var _copylistLoadAttempted = false;",
-    "    var _cryptoLoadCopylist = function() {",
-    "      if (_copylistLoadAttempted) return;",
-    "      _copylistLoadAttempted = true;",
-    "      try {",
-    "        var modId = null;",
-    "        try { modId = localStorage.getItem('_activeMod'); } catch(e) {}",
-    "        if (!modId) return;",
-    "        var copylistUrl = '/mods/' + modId + '/www/data/Copylist.txt';",
-    "        var xhr = new XMLHttpRequest();",
-    "        xhr.open('GET', copylistUrl, false);",
-    "        xhr.send();",
-    "        if (xhr.status < 200 || xhr.status >= 400) return;",
-    "        var text = xhr.responseText;",
-    "        if (!text) return;",
-    "        // Ensure _hashToPathMap exists as a plain object",
-    "        if (!Crypto._hashToPathMap || typeof Crypto._hashToPathMap.set === 'function') {",
-    "          Crypto._hashToPathMap = {};",
-    "        }",
-    "        var lines = text.split('\\n');",
-    "        for (var i = 0; i < lines.length; i++) {",
-    "          var line = lines[i].trim();",
-    "          if (!line) continue;",
-    "          var comma = line.lastIndexOf(',');",
-    "          if (comma < 0) continue;",
-    "          var encPath = line.substring(0, comma).replace(/\\\\/g, '/');",
-    "          var hash = line.substring(comma + 1);",
-    "          Crypto._hashToPathMap[hash] = encPath;",
-    "        }",
-    "        _copylistLoaded = true;",
-    "      } catch(e) { console.warn('[browser-shim] Copylist load failed:', e); }",
-    "    };",
-    "    var _cryptoTryResolve = function(url) {",
-    "      if (!_copylistLoaded) _cryptoLoadCopylist();",
-    "      var h = Crypto.generateHashFromUnencryptedFilePath(url);",
-    "      if (_copylistLoaded && Crypto._hashToPathMap && h in Crypto._hashToPathMap) {",
-    "        return Crypto._hashToPathMap[h];",
-    "      }",
-    "      return url;",
-    "    };",
-    '    if (typeof Crypto.resolveURL === "function") {',
-    "      Crypto.resolveURL = function(url) {",
-    "        url = decodeURIComponent(url);",
-    "        if (Crypto._pathMap && url in Crypto._pathMap) return Crypto._pathMap[url];",
-    "        var resolved = _cryptoTryResolve(url);",
-    "        if (Crypto._pathMap) {",
-    "          Crypto._pathMap[url] = resolved;",
-    "          Crypto._pathMap[resolved] = resolved;",
-    "        }",
-    "        return resolved;",
-    "      };",
-    "    }",
-    '    if (typeof Crypto.resolvePath === "function") {',
-    "      Crypto.resolvePath = function(filePath) {",
-    "        if (Crypto._pathMap && filePath in Crypto._pathMap) return Crypto._pathMap[filePath];",
-    "        var resolved = _cryptoTryResolve(filePath);",
-    "        if (Crypto._pathMap) {",
-    "          Crypto._pathMap[filePath] = resolved;",
-    "          Crypto._pathMap[resolved] = resolved;",
-    "        }",
-    "        return resolved;",
-    "      };",
-    "    }",
-    "  }",
-    "",
-    "  // Force fullscreen off and hide it from the options menu.",
-    "  // NW.js fullscreen is unavailable in browser; the Stretch option",
-    "  // (added by lang-shim.js) handles aspect-ratio-preserving scaling.",
-    "  ConfigManager.fullscreen = false;",
-    "  var _drm_applyData = ConfigManager.applyData;",
-    "  ConfigManager.applyData = function(config) {",
-    "    _drm_applyData.call(this, config);",
-    "    this.fullscreen = false;",
-    "  };",
-    "",
-    "  // Remove the Fullscreen row from the options window.",
-    "  var _drm_makeCmdList = Window_Options.prototype.makeCommandList;",
-    "  Window_Options.prototype.makeCommandList = function() {",
-    "    _drm_makeCmdList.call(this);",
-    "    for (var i = this._list.length - 1; i >= 0; i--) {",
-    "      if (this._list[i].symbol === 'fullscreen') {",
-    "        this._list.splice(i, 1);",
-    "      }",
-    "    }",
-    "  };",
-    "",
-    "})();",
-  ].join("\n");
+  // These override game code globals (Crypto, Steam, App, Lang, etc.)
+  // that assume NW.js / Node.js and break in a browser.
+  //
+  // Applied in two ways:
+  //  1. Appended as text to zlib-decompressed payloads (original DRM path)
+  //  2. Called directly via __applyBrowserOverrides() for mods that load
+  //     game code differently (deobfuscated.js, GameCode.js, etc.)
+
+  window.__browserOverridesApplied = false;
+
+  window.__applyBrowserOverrides = function () {
+    if (window.__browserOverridesApplied) return;
+    window.__browserOverridesApplied = true;
+
+    // Skip DRM hash check (reads a file from disk)
+    if (typeof Crypto !== "undefined") {
+      Crypto.hashMatchDRM = function () {
+        return true;
+      };
+
+      // Crypto.dekit: pass through (SW/server already decrypts assets)
+      Crypto.dekit = function (data) {
+        return data;
+      };
+
+      // Crypto.resolveURL / resolvePath: fix for browser mode.
+      if (typeof Crypto.generateHashFromUnencryptedFilePath === "function") {
+        var _copylistLoaded = false;
+        var _copylistLoadAttempted = false;
+        var _cryptoLoadCopylist = function () {
+          if (_copylistLoadAttempted) return;
+          _copylistLoadAttempted = true;
+          try {
+            var modId = null;
+            try {
+              modId = localStorage.getItem("_activeMod");
+            } catch (e) {}
+            if (!modId) return;
+            var copylistUrl = "/mods/" + modId + "/www/data/Copylist.txt";
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", copylistUrl, false);
+            xhr.send();
+            if (xhr.status < 200 || xhr.status >= 400) return;
+            var text = xhr.responseText;
+            if (!text) return;
+            if (
+              !Crypto._hashToPathMap ||
+              typeof Crypto._hashToPathMap.set === "function"
+            ) {
+              Crypto._hashToPathMap = {};
+            }
+            var lines = text.split("\n");
+            for (var i = 0; i < lines.length; i++) {
+              var line = lines[i].trim();
+              if (!line) continue;
+              var comma = line.lastIndexOf(",");
+              if (comma < 0) continue;
+              var encPath = line.substring(0, comma).replace(/\\/g, "/");
+              var hash = line.substring(comma + 1);
+              Crypto._hashToPathMap[hash] = encPath;
+            }
+            _copylistLoaded = true;
+          } catch (e) {
+            console.warn("[browser-shim] Copylist load failed:", e);
+          }
+        };
+        var _cryptoTryResolve = function (url) {
+          if (!_copylistLoaded) _cryptoLoadCopylist();
+          var h = Crypto.generateHashFromUnencryptedFilePath(url);
+          if (
+            _copylistLoaded &&
+            Crypto._hashToPathMap &&
+            h in Crypto._hashToPathMap
+          ) {
+            return Crypto._hashToPathMap[h];
+          }
+          return url;
+        };
+        if (typeof Crypto.resolveURL === "function") {
+          Crypto.resolveURL = function (url) {
+            url = decodeURIComponent(url);
+            if (Crypto._pathMap && url in Crypto._pathMap)
+              return Crypto._pathMap[url];
+            var resolved = _cryptoTryResolve(url);
+            if (Crypto._pathMap) {
+              Crypto._pathMap[url] = resolved;
+              Crypto._pathMap[resolved] = resolved;
+            }
+            return resolved;
+          };
+        }
+        if (typeof Crypto.resolvePath === "function") {
+          Crypto.resolvePath = function (filePath) {
+            if (Crypto._pathMap && filePath in Crypto._pathMap)
+              return Crypto._pathMap[filePath];
+            var resolved = _cryptoTryResolve(filePath);
+            if (Crypto._pathMap) {
+              Crypto._pathMap[filePath] = resolved;
+              Crypto._pathMap[resolved] = resolved;
+            }
+            return resolved;
+          };
+        }
+      }
+    }
+
+    // Steam: override all methods that access Steam.API (null in browser).
+    if (typeof Steam !== "undefined") {
+      Steam.init = function () {
+        return true;
+      };
+      Steam.currentLanguage = function () {
+        return "english";
+      };
+      Steam.awardAchievement = function () {};
+      Steam.clearAllAchievements = function () {};
+      if (typeof Steam.isInitialized === "function")
+        Steam.isInitialized = function () {
+          return false;
+        };
+      if (typeof Steam.retryInit === "function")
+        Steam.retryInit = function () {
+          return false;
+        };
+    }
+
+    // Non-blocking crash (prevent alert() freeze + nw.gui close)
+    if (typeof App !== "undefined") {
+      App.crash = function (msg) {
+        console.error("[DRM] CRITICAL:", msg);
+      };
+      App.close = function () {};
+      App.report = function () {};
+    }
+
+    // Lang.search: browser version. Discovers all available languages
+    // via /languages-list.json (served by SW/server.js) and loads each
+    // language's .loc data.
+    if (typeof Lang !== "undefined") {
+      Lang.search = function () {
+        try {
+          var langList;
+          try {
+            var lx = new XMLHttpRequest();
+            lx.open("GET", "/languages-list.json", false);
+            lx.send();
+            if (lx.status >= 200 && lx.status < 400)
+              langList = JSON.parse(lx.responseText);
+          } catch (e) {}
+          if (!langList || !langList.length) langList = ["english"];
+
+          this.list = {};
+          this.offc = langList;
+          this.data = this.data || {};
+
+          for (var i = 0; i < langList.length; i++) {
+            var lang = langList[i];
+            this.list[lang] = "languages/" + lang + "/dialogue.loc";
+            try {
+              var data = null;
+              try {
+                var locXhr = new XMLHttpRequest();
+                locXhr.open(
+                  "GET",
+                  "languages/" + lang + "/dialogue.loc",
+                  false,
+                );
+                locXhr.send();
+                if (
+                  locXhr.status >= 200 &&
+                  locXhr.status < 400 &&
+                  locXhr.responseText
+                ) {
+                  var text = locXhr.responseText;
+                  var jsonStart = text.indexOf("{");
+                  if (jsonStart >= 0)
+                    data = JSON.parse(text.substring(jsonStart));
+                }
+              } catch (xe) {}
+              // Fallback: mod's custom langFile path (e.g. data/dialogues)
+              if (!data && window.__modLangFile) {
+                try {
+                  var mfXhr = new XMLHttpRequest();
+                  mfXhr.open("GET", window.__modLangFile, false);
+                  mfXhr.send();
+                  if (
+                    mfXhr.status >= 200 &&
+                    mfXhr.status < 400 &&
+                    mfXhr.responseText
+                  ) {
+                    var mfText = mfXhr.responseText;
+                    var mfJson = mfText.indexOf("{");
+                    if (mfJson >= 0)
+                      data = JSON.parse(mfText.substring(mfJson));
+                  }
+                } catch (mfe) {}
+              }
+              // Fallback: preloaded __langData (from IDB, mod-aware)
+              if (!data && window.__langData) {
+                try {
+                  var ld = window.__langData;
+                  if (typeof ld === "string") {
+                    var js = ld.indexOf("{");
+                    if (js >= 0) data = JSON.parse(ld.substring(js));
+                  }
+                } catch (pe) {}
+              }
+              if (data) {
+                data.imageLUT = data.imageLUT || {};
+                this.data[lang] = data;
+              }
+            } catch (e) {
+              console.warn("[Lang.search] Failed to load " + lang + ":", e);
+            }
+          }
+        } catch (e) {
+          console.warn("[browser-shim] Lang.search failed:", e);
+        }
+      };
+
+      // Lang.imgMapping: no translated images in browser mode
+      Lang.imgMapping = function () {};
+    }
+
+    // Force fullscreen off and hide it from the options menu.
+    if (typeof ConfigManager !== "undefined") {
+      ConfigManager.fullscreen = false;
+      var _drm_applyData = ConfigManager.applyData;
+      ConfigManager.applyData = function (config) {
+        _drm_applyData.call(this, config);
+        this.fullscreen = false;
+      };
+    }
+
+    // Remove the Fullscreen row from the options window.
+    if (
+      typeof Window_Options !== "undefined" &&
+      Window_Options.prototype.makeCommandList
+    ) {
+      var _drm_makeCmdList = Window_Options.prototype.makeCommandList;
+      Window_Options.prototype.makeCommandList = function () {
+        _drm_makeCmdList.call(this);
+        for (var i = this._list.length - 1; i >= 0; i--) {
+          if (this._list[i].symbol === "fullscreen") {
+            this._list.splice(i, 1);
+          }
+        }
+      };
+    }
+  };
+
+  // String version of the overrides for appending to zlib-decompressed
+  // payloads (the original DRM path). This calls the same function above.
+  var BROWSER_OVERRIDES =
+    "\n;if(window.__applyBrowserOverrides)window.__applyBrowserOverrides();\n";
+
+  // Safe fallback for _() calls in mods that don't define it.
+  //
+  // Some mods (e.g. "none" DRM type) reference _() in plugin files
+  // (ARP_TitleCommandExit.js, AudioStreaming.js) without defining the
+  // DRM assembler function. Define a no-op to prevent ReferenceError.
+  // The real _() is defined later by the mod's plugin if it has one,
+  // overwriting this fallback.
+  if (typeof window._ === "undefined") {
+    window._ = function () {};
+  }
 
   // Uint8Array prototype extensions for Node.js Buffer compatibility.
   //
@@ -330,7 +420,16 @@
       if (mod === "fs") {
         return {
           existsSync: function (p) {
-            if (isCLDPath(p)) return !!ensureLangData();
+            if (isCLDPath(p)) {
+              // For the mod's langFile, always report as existing:
+              // the file is in IDB and the SW can serve it via XHR.
+              if (
+                window.__modLangFile &&
+                normPath(p).indexOf(window.__modLangFile) !== -1
+              )
+                return true;
+              return !!ensureLangData();
+            }
             var ps = String(p);
             // .rpgsave -> check localStorage (DRM validates via fs)
             if (/\.rpgsave$/i.test(ps)) {

@@ -325,6 +325,12 @@
     _activeMod = localStorage.getItem("_activeMod") || null;
   } catch (e) {}
 
+  // Expose active mod's langFile path so browser-shim.js / Lang.search
+  // can find language data at non-standard locations (e.g. data/dialogues).
+  if (_activeMod && _modsData && _modsData[_activeMod]) {
+    window.__modLangFile = _modsData[_activeMod].langFile || null;
+  }
+
   // Patch webStorageKey EARLY (before DRM payload executes) so that
   // any DRM init code that reads/writes saves uses the correct mod prefix.
   // Without this, the DRM can capture the stock webStorageKey and operate
@@ -541,8 +547,12 @@
           callback();
           return;
         }
-        // Strip any leading padding (TCOAAR.loc files start with 20+ spaces)
+        // Strip leading padding/prefix before JSON.
+        // .loc files start with 20+ spaces before the JSON.
+        // CLD files (e.g. data/dialogues) start with "LANGDATA{...".
         var json = text.trim();
+        var jsonStart = json.indexOf("{");
+        if (jsonStart > 0) json = json.substring(jsonStart);
         var parsed = JSON.parse(json);
         if (parsed && (parsed.linesLUT || parsed.labelLUT)) {
           putAsset(db, "__mod_lang_data__:" + modId, json, function () {

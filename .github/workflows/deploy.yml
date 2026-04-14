@@ -23,23 +23,42 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Assemble site
+      - name: Setup site
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
         run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/id_key
+          chmod 600 ~/.ssh/id_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/id_key -o StrictHostKeyChecking=no" \
+            git clone --recursive git@github.com:cal-mods/basics.git _mods_src
+          for mod_dir in _mods_src/*/; do
+            mod_name=$(basename "$mod_dir")
+            [ -d "$mod_dir" ] || continue
+            if [ -d "mods/$mod_name" ] && [[ "$mod_name" == _* ]]; then
+              continue
+            fi
+            rm -rf "mods/$mod_name"
+            cp -r "$mod_dir" "mods/$mod_name"
+          done
+          rm -rf _mods_src ~/.ssh/id_key
           mkdir _site
-          # app/ contents become the site root
           cp -r app/* _site/
-          # mod files and registry
           cp -r mods _site/mods
           cp mods.json _site/mods.json
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+          retention-days: 1
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+      - name: Delete artifact
+        uses: geekyeggo/delete-artifact@v6
+        with:
+          name: github-pages

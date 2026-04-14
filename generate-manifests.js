@@ -49,6 +49,79 @@ function walkDir(dir, base) {
   return results;
 }
 
+/**
+ * Detect the DRM / game-code delivery type for a mod.
+ *
+ * Returns one of:
+ *   "zlib"    Original DRM: _() assembles base64 fragments, zlib-decompresses,
+ *               injects as <script>. browser-shim.js intercepts inflateSync.
+ *   "script"  Deobfuscated: _() loads a separate JS file (e.g. deobfuscated.js)
+ *               via document.createElement('script').
+ *   "direct"  Game code shipped as a regular plugin file (e.g. GameCode.js).
+ *               Loaded by PluginManager like any other plugin.
+ *   "none"    No DRM payload. Standard RPG Maker MV without custom game code
+ *               layer. _() may be called but is undefined (no-op fallback).
+ */
+function detectDrmType(wwwDir) {
+  var pluginsDir = path.join(wwwDir, "js", "plugins");
+  var pluginsJs = path.join(wwwDir, "js", "plugins.js");
+
+  // Check if GameCode.js exists as a registered plugin
+  if (fs.existsSync(path.join(pluginsDir, "GameCode.js"))) {
+    try {
+      var pjs = fs.readFileSync(pluginsJs, "utf8");
+      if (/["']GameCode["']/.test(pjs)) return "direct";
+    } catch (e) {}
+  }
+
+  // Check if deobfuscated.js exists (loaded by _() via script tag)
+  if (fs.existsSync(path.join(pluginsDir, "deobfuscated.js"))) {
+    return "script";
+  }
+
+  // Check for zlib DRM pattern: a plugin file containing the _() assembler
+  // with base64/inflate patterns, or OrangeEventHitboxes.js with embedded
+  // compressed payload (>30KB).
+  var pluginFiles;
+  try {
+    pluginFiles = fs.readdirSync(pluginsDir);
+  } catch (e) {
+    return "none";
+  }
+
+  for (var i = 0; i < pluginFiles.length; i++) {
+    var pf = pluginFiles[i];
+    if (!pf.endsWith(".js")) continue;
+    var pfPath = path.join(pluginsDir, pf);
+    var stat;
+    try {
+      stat = fs.statSync(pfPath);
+    } catch (e) {
+      continue;
+    }
+
+    // Large OrangeEventHitboxes.js (>20KB) = embedded zlib DRM payload
+    if (pf === "OrangeEventHitboxes.js" && stat.size > 20000) {
+      return "zlib";
+    }
+
+    // Check YEP_RegionRestrictions.js for the base game DRM assembler
+    if (pf === "YEP_RegionRestrictions.js" && stat.size > 20000) {
+      try {
+        var content = fs.readFileSync(pfPath, "utf8");
+        if (
+          content.indexOf("decompressFromBase64") >= 0 ||
+          content.indexOf("inflateSync") >= 0
+        ) {
+          return "zlib";
+        }
+      } catch (e) {}
+    }
+  }
+
+  return "none";
+}
+
 function getModVersion(modDir) {
   var pkgPath = path.join(modDir, "package.json");
   if (fs.existsSync(pkgPath)) {
@@ -148,6 +221,11 @@ async function main() {
     var wwwDir = path.join(modDir, "www");
     var isBuiltin = modId.charAt(0) === "_";
 
+    // Ensure name, author, description always exist (default to empty)
+    if (!entry.name) entry.name = entry.name || "";
+    if (!entry.author) entry.author = entry.author || "";
+    if (!entry.description) entry.description = entry.description || "";
+
     // Built-in mods: prefix type, default author
     if (isBuiltin) {
       var baseType = (entry.type || "plugin").replace(/^built-in\s+/i, "");
@@ -155,16 +233,18 @@ async function main() {
       if (!entry.author) entry.author = "kidev";
     }
 
-    // External mods with a repo: fetch metadata from GitHub
+    // External mods with a repo: fetch metadata from GitHub.
+    // Author and description are never overwritten once set (casing may
+    // differ from GitHub). lastUpdate is always refreshed.
     if (!isBuiltin && entry.repo) {
       console.log("[github] Fetching metadata for " + modId + "...");
       var meta = await fetchGithubMeta(entry.repo);
       if (meta) {
-        if (meta.author) entry.author = meta.author;
+        if (!entry.author && meta.author) entry.author = meta.author;
         if (meta.lastUpdate) entry.lastUpdate = meta.lastUpdate;
         console.log(
           "  author: " +
-            (meta.author || "(unchanged)") +
+            (entry.author || "(none)") +
             ", lastUpdate: " +
             (meta.lastUpdate || "(unchanged)"),
         );
@@ -178,9 +258,11 @@ async function main() {
 
     var files = walkDir(wwwDir, "");
     var version = getModVersion(modDir);
+    var drmType = isBuiltin ? undefined : detectDrmType(wwwDir);
 
     entry.version = version;
     entry.files = files;
+    if (drmType) entry.drmType = drmType;
 
     console.log(
       "[manifest] " +
@@ -188,7 +270,8 @@ async function main() {
         ": " +
         files.length +
         " files" +
-        (version ? " (v" + version + ")" : ""),
+        (version ? " (v" + version + ")" : "") +
+        (drmType ? " [drm:" + drmType + "]" : ""),
     );
     count++;
   }

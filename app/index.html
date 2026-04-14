@@ -343,14 +343,63 @@
                 sentinel.src = URL.createObjectURL(blob);
                 sentinel.onload = function () {
                   URL.revokeObjectURL(sentinel.src);
-                  // Hook lang-shim into Scene_Boot AFTER DRM payload
-                  // has loaded (it overwrites Scene_Boot.prototype.start)
-                  if (window.__langShimHookBoot) window.__langShimHookBoot();
-                  delete window.onload;
-                  if (_bootOnload) {
-                    _bootOnload();
-                  } else if (typeof SceneManager !== "undefined") {
-                    SceneManager.run(Scene_Boot);
+
+                  // Finish boot: apply browser overrides then start game.
+                  function finishBoot() {
+                    // Apply browser overrides for non-zlib DRM types
+                    // (deobfuscated.js, GameCode.js, etc.). For zlib DRM,
+                    // the overrides were already applied via inflateSync
+                    // but __applyBrowserOverrides is idempotent.
+                    if (window.__applyBrowserOverrides)
+                      window.__applyBrowserOverrides();
+
+                    // Hook lang-shim into Scene_Boot AFTER DRM payload
+                    // has loaded (it overwrites Scene_Boot.prototype.start)
+                    if (window.__langShimHookBoot) window.__langShimHookBoot();
+                    delete window.onload;
+                    if (_bootOnload) {
+                      _bootOnload();
+                    } else if (typeof SceneManager !== "undefined") {
+                      SceneManager.run(Scene_Boot);
+                    }
+                  }
+
+                  // Some mods load game code via async <script> tags
+                  // (e.g. deobfuscated.js injected by _()), which may not
+                  // have executed yet. Detect and wait for them before
+                  // applying overrides and booting the game.
+                  var pendingGameCode = null;
+                  var scripts = document.getElementsByTagName("script");
+                  for (var si = 0; si < scripts.length; si++) {
+                    var src = scripts[si].getAttribute("src") || "";
+                    if (
+                      src.indexOf("deobfuscated") >= 0 ||
+                      src.indexOf("GameCode") >= 0
+                    ) {
+                      // Check if game globals exist (script already ran)
+                      if (
+                        typeof Lang === "undefined" &&
+                        typeof App === "undefined"
+                      ) {
+                        pendingGameCode = scripts[si];
+                      }
+                      break;
+                    }
+                  }
+
+                  if (pendingGameCode) {
+                    var _booted = false;
+                    function onceDone() {
+                      if (_booted) return;
+                      _booted = true;
+                      finishBoot();
+                    }
+                    pendingGameCode.addEventListener("load", onceDone);
+                    pendingGameCode.addEventListener("error", onceDone);
+                    // Safety timeout: don't block forever
+                    setTimeout(onceDone, 5000);
+                  } else {
+                    finishBoot();
                   }
                 };
                 document.body.appendChild(sentinel);
