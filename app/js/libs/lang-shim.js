@@ -647,18 +647,32 @@
                 return res.arrayBuffer();
               })
               .then(function (buf) {
-                putAsset(db, "mod:" + modId + ":" + relPath, buf, function () {
-                  stored++;
-                  var pct = Math.floor((stored / total) * 98);
-                  if (stored % 20 === 0 || stored === total) {
-                    onProgress({
-                      percent: pct,
-                      message: "Installing... " + pct + "%",
-                    });
-                  }
-                  pending--;
-                  if (pending <= 0) processBatch();
-                });
+                putAsset(
+                  db,
+                  "mod:" + modId + ":" + relPath,
+                  buf,
+                  function (putErr) {
+                    if (putErr) {
+                      console.warn(
+                        "[lang-shim] IDB write failed for:",
+                        relPath,
+                        putErr,
+                      );
+                      errors++;
+                    } else {
+                      stored++;
+                      var pct = Math.floor((stored / total) * 98);
+                      if (stored % 20 === 0 || stored === total) {
+                        onProgress({
+                          percent: pct,
+                          message: "Installing... " + pct + "%",
+                        });
+                      }
+                    }
+                    pending--;
+                    if (pending <= 0) processBatch();
+                  },
+                );
               })
               .catch(function () {
                 errors++;
