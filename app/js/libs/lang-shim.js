@@ -451,9 +451,36 @@
       }
     }
 
+    // Built-in plugins (path starts with "mods/_") are shipped with the app
+    // and should always be fetched from the network so updates take effect
+    // without requiring the user to erase and reinstall.
+    var builtIn = basePath.indexOf("mods/_") === 0;
+
     for (var j = 0; j < jsFiles.length; j++) {
       (function (relPath) {
         var idbKey = "mod:" + pluginId + ":" + relPath;
+
+        function fetchFromNetwork() {
+          var url = "/" + basePath + "/www/" + relPath;
+          var xhr = new XMLHttpRequest();
+          xhr.open("GET", url, true);
+          xhr.onload = function () {
+            if (xhr.status >= 200 && xhr.status < 400) {
+              execScript(xhr.responseText);
+            }
+            done();
+          };
+          xhr.onerror = function () {
+            done();
+          };
+          xhr.send();
+        }
+
+        if (builtIn) {
+          fetchFromNetwork();
+          return;
+        }
+
         openAssetsDb(function (db) {
           if (!db) {
             fetchFromNetwork();
@@ -474,22 +501,6 @@
             }
           });
         });
-
-        function fetchFromNetwork() {
-          var url = "/" + basePath + "/www/" + relPath;
-          var xhr = new XMLHttpRequest();
-          xhr.open("GET", url, true);
-          xhr.onload = function () {
-            if (xhr.status >= 200 && xhr.status < 400) {
-              execScript(xhr.responseText);
-            }
-            done();
-          };
-          xhr.onerror = function () {
-            done();
-          };
-          xhr.send();
-        }
       })(jsFiles[j]);
     }
   }
@@ -908,7 +919,8 @@
         }
       };
 
-      // Draw key hints on the right side of the help window
+      // Draw key hints in the help window (centered when mouse control
+      // is active so Back button can sit on the right, else right-aligned)
       var _orig_sceneFileStart = Scene_File.prototype.start;
       Scene_File.prototype.start = function () {
         _orig_sceneFileStart.call(this);
@@ -924,14 +936,14 @@
           var pad = hw.standardPadding();
           hw.contents.fontSize = 16;
           hw.contents.textColor = "#888888";
-          // Measure total width to position from the right
+          // Measure total width
           var totalW = 0;
           for (var li = 0; li < labels.length; li++) {
             totalW += hw.contents.measureTextWidth(labels[li].text);
             if (li < labels.length - 1)
               totalW += hw.contents.measureTextWidth(separator);
           }
-          var startX = hw.contentsWidth() - totalW - hw.textPadding();
+          var startX = Math.floor((hw.contentsWidth() - totalW) / 2);
           var hy = (hw.contentsHeight() - 20) / 2;
           var curX = startX;
           for (var lj = 0; lj < labels.length; lj++) {
@@ -1435,9 +1447,9 @@
       hw.contents.fontSize = 16;
       hw.contents.textColor = "#888888";
       var tw = hw.contents.measureTextWidth(hints);
-      var x = hw.contentsWidth() - tw - hw.textPadding();
+      var x = Math.floor((hw.contentsWidth() - tw) / 2);
       var y = (hw.contentsHeight() - 20) / 2;
-      hw.contents.drawText(hints, x, y, tw + 4, 20, "right");
+      hw.contents.drawText(hints, x, y, tw + 4, 20);
       hw.contents.fontSize = hw.standardFontSize();
       hw.resetTextColor();
 
@@ -1565,14 +1577,23 @@
         return;
       }
 
-      if (getActiveMod() && getActiveMod() !== mod.key) {
-        SoundManager.playBuzzer();
-        this._listWindow.activate();
-        return;
-      }
-
       if (getActiveMod() === mod.key) {
         this._showConfirm("Disable " + mod.name + "?", "disableOverhaul", mod);
+      } else if (getActiveMod()) {
+        var currentMod = getActiveMod();
+        var currentName = currentMod;
+        var mods = getModList();
+        for (var i = 0; i < mods.length; i++) {
+          if (mods[i].key === currentMod) {
+            currentName = mods[i].name;
+            break;
+          }
+        }
+        this._showConfirm(
+          "Enable " + mod.name + "? This will disable " + currentName,
+          "switchOverhaul",
+          mod,
+        );
       } else {
         this._showConfirm("Enable " + mod.name + "?", "enableOverhaul", mod);
       }
@@ -1641,6 +1662,13 @@
           });
           break;
 
+        case "switchOverhaul":
+          setActiveMod(mod.key, function () {
+            AudioManager.stopAll();
+            location.reload();
+          });
+          break;
+
         case "disableOverhaul":
           setActiveMod(null, function () {
             AudioManager.stopAll();
@@ -1701,6 +1729,11 @@
     };
 
     Window_ModConfirm.prototype.windowWidth = function () {
+      if (this._message) {
+        var textW =
+          this.textWidth(this._message) + this.standardPadding() * 2 + 24;
+        return Math.max(360, Math.min(textW, Graphics.boxWidth - 40));
+      }
       return 360;
     };
     Window_ModConfirm.prototype.windowHeight = function () {
@@ -1714,6 +1747,9 @@
 
     Window_ModConfirm.prototype.setMessage = function (msg) {
       this._message = msg;
+      this.width = this.windowWidth();
+      this.updatePlacement();
+      this.createContents();
       this.refresh();
     };
 

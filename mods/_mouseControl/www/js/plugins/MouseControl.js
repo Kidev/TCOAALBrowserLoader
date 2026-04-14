@@ -137,12 +137,21 @@
     _mouseY = Graphics.pageToCanvasY(e.pageY);
   });
 
-  // 3. Cursor management: crosshair on map, pointer on menus
+  // 3. Cursor management + hover-to-select (unified per-frame pass)
   //
   // PIXI's InteractionManager resets interactionDOMElement.style.cursor
   // every frame to 'inherit' (no PIXI display objects set cursor styles).
   // The UpperCanvas (z-index 3) sits on top of the GameCanvas (z-index 1)
   // so we must style BOTH, and suppress PIXI's per-frame reset.
+  //
+  // Cursor rules:
+  //   Map (free movement)  -> crosshair
+  //   Map (message/choice) -> pointer on clickable item, default otherwise
+  //   Menu window          -> pointer on a selectable item, default otherwise
+  //   Hint buttons         -> pointer
+  //   Back button          -> pointer
+  //   Outside popup menu   -> pointer (click to go back)
+  //   Non-interactive      -> default (arrow)
 
   var _pixiOverridden = false;
 
@@ -156,33 +165,231 @@
     _pixiOverridden = true;
   }
 
-  function updateMouseCursor() {
+  function setCursor(cur) {
     var canvases = document.querySelectorAll("canvas");
-    if (!canvases.length) return;
-    if (typeof SceneManager === "undefined" || !SceneManager._scene) return;
-    var scene = SceneManager._scene;
-    var cur;
-    if (typeof Scene_Map !== "undefined" && scene instanceof Scene_Map) {
-      cur =
-        typeof $gameMessage !== "undefined" && $gameMessage.isBusy()
-          ? "pointer"
-          : "crosshair";
-    } else {
-      cur = "pointer";
-    }
     for (var i = 0; i < canvases.length; i++) {
       canvases[i].style.cursor = cur;
     }
-    // Also set on body in case any gap between canvases
     document.body.style.cursor = cur;
+  }
+
+  // Check if the mouse is over any hint rect stored on the scene
+  // (e.g. _fileHintRects, _eraseHintRect, _mcBackRect)
+  function isOverHintRect(scene) {
+    // Scene_File hint rects (Export, Import, Delete)
+    if (scene._fileHintRects) {
+      for (var rk in scene._fileHintRects) {
+        var r = scene._fileHintRects[rk];
+        if (
+          _mouseX >= r.x && _mouseX <= r.x + r.w &&
+          _mouseY >= r.y && _mouseY <= r.y + r.h
+        ) return true;
+      }
+    }
+    // Scene_Mods erase hint rect
+    if (scene._eraseHintRect) {
+      var er = scene._eraseHintRect;
+      if (
+        _mouseX >= er.x && _mouseX <= er.x + er.w &&
+        _mouseY >= er.y && _mouseY <= er.y + er.h
+      ) return true;
+    }
+    // Back button rect
+    if (scene._mcBackRect) {
+      var br = scene._mcBackRect;
+      if (
+        _mouseX >= br.x && _mouseX <= br.x + br.w &&
+        _mouseY >= br.y && _mouseY <= br.y + br.h
+      ) return true;
+    }
+    return false;
+  }
+
+  // Check if scene is a non-fullscreen popup menu (centered window, not
+  // covering the full screen). These get click-outside-to-cancel.
+  function isPopupScene(scene) {
+    return (
+      (typeof Scene_Options !== "undefined" &&
+        scene instanceof Scene_Options) ||
+      (typeof Scene_GameEnd !== "undefined" &&
+        scene instanceof Scene_GameEnd)
+    );
+  }
+
+  // Check if the mouse is outside ALL visible windows in the scene
+  function isOutsideAllWindows(scene) {
+    var children = scene.children;
+    if (!children) return true;
+    for (var i = 0; i < children.length; i++) {
+      var layer = children[i];
+      if (!layer || !layer.children) continue;
+      var windows = layer.children;
+      for (var j = 0; j < windows.length; j++) {
+        var win = windows[j];
+        if (!(win instanceof Window_Base)) continue;
+        if (!win.visible || win.openness < 255) continue;
+        var lx = win.canvasToLocalX(_mouseX);
+        var ly = win.canvasToLocalY(_mouseY);
+        if (lx >= 0 && ly >= 0 && lx < win.width && ly < win.height) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // Returns true if the mouse is over a clickable item in any open window.
+  // Also performs hover-to-select as a side effect.
+  function updateHoverAndHitTest() {
+    if (typeof Window_Selectable === "undefined") return false;
+    var scene = SceneManager._scene;
+    if (!scene) return false;
+    var children = scene.children;
+    if (!children) return false;
+    var hovering = false;
+    for (var i = 0; i < children.length; i++) {
+      var layer = children[i];
+      if (!layer || !layer.children) continue;
+      var windows = layer.children;
+      for (var j = 0; j < windows.length; j++) {
+        var win = windows[j];
+        if (!(win instanceof Window_Selectable)) continue;
+        if (!win.isOpenAndActive()) continue;
+        var lx = win.canvasToLocalX(_mouseX);
+        var ly = win.canvasToLocalY(_mouseY);
+        var hitIndex = win.hitTest(lx, ly);
+        if (hitIndex >= 0) {
+          hovering = true;
+          if (hitIndex !== win.index() && win.isCursorMovable()) {
+            win.select(hitIndex);
+            SoundManager.playCursor();
+          }
+        }
+      }
+    }
+    return hovering;
+  }
+
+  // Handle click-outside-to-cancel for popup scenes
+  function handleClickOutside() {
+    if (!TouchInput.isTriggered()) return;
+    var scene = SceneManager._scene;
+    if (!scene || !isPopupScene(scene)) return;
+    if (!isOutsideAllWindows(scene)) return;
+    // Find the active window with a cancel handler and trigger cancel
+    var children = scene.children;
+    if (!children) return;
+    for (var i = 0; i < children.length; i++) {
+      var layer = children[i];
+      if (!layer || !layer.children) continue;
+      var windows = layer.children;
+      for (var j = 0; j < windows.length; j++) {
+        var win = windows[j];
+        if (
+          win instanceof Window_Selectable &&
+          win.isOpenAndActive() &&
+          win.isCancelEnabled()
+        ) {
+          win.processCancel();
+          return;
+        }
+      }
+    }
+  }
+
+  // Handle click on the Back button drawn on fullscreen scenes
+  function handleBackClick() {
+    if (!TouchInput.isTriggered()) return;
+    var scene = SceneManager._scene;
+    if (!scene || !scene._mcBackRect) return;
+    var br = scene._mcBackRect;
+    var tx = TouchInput.x;
+    var ty = TouchInput.y;
+    if (tx >= br.x && tx <= br.x + br.w && ty >= br.y && ty <= br.y + br.h) {
+      SoundManager.playCancel();
+      SceneManager.pop();
+    }
+  }
+
+  // Draw a "Back" button on the top-right of the help window for
+  // fullscreen scenes. Called once after the scene's help window is ready.
+  function drawBackButton(scene) {
+    if (!scene._helpWindow) return;
+    if (scene._mcBackRect) return; // already drawn
+    var hw = scene._helpWindow;
+    var label = "\u2190 Back"; // ← Back
+    var fontSize = hw.standardFontSize(); // 28: same as the title on the left
+    hw.contents.fontSize = fontSize;
+    hw.contents.textColor = hw.normalColor();
+    var tw = hw.contents.measureTextWidth(label);
+    var pad = hw.standardPadding();
+    var textPad = hw.textPadding();
+    var x = hw.contentsWidth() - tw - textPad;
+    var lineHeight = hw.contents.fontSize + 4;
+    var y = Math.floor((hw.contentsHeight() - lineHeight) / 2);
+    hw.contents.drawText(label, x, y, tw + 4, lineHeight);
+    hw.contents.fontSize = hw.standardFontSize();
+    hw.resetTextColor();
+    scene._mcBackRect = {
+      x: hw.x + pad + x,
+      y: hw.y + pad + y,
+      w: tw + 4,
+      h: lineHeight,
+    };
+  }
+
+  // Detect fullscreen scenes that should get a Back button
+  function isFullscreenScene(scene) {
+    return (
+      (typeof Scene_File !== "undefined" && scene instanceof Scene_File) ||
+      (typeof Scene_Mods !== "undefined" && scene instanceof Scene_Mods)
+    );
+  }
+
+  function updateFrame() {
+    if (typeof SceneManager === "undefined" || !SceneManager._scene) return;
+    applyCursorOverride();
+
+    var scene = SceneManager._scene;
+    var onMap =
+      typeof Scene_Map !== "undefined" && scene instanceof Scene_Map;
+    var messageBusy =
+      onMap && typeof $gameMessage !== "undefined" && $gameMessage.isBusy();
+
+    // Draw Back button on fullscreen scenes (once)
+    if (isFullscreenScene(scene)) {
+      drawBackButton(scene);
+    }
+
+    var hoveringItem = updateHoverAndHitTest();
+    var hoveringHint = !onMap && isOverHintRect(scene);
+    var popup = isPopupScene(scene);
+    var outsidePopup = popup && isOutsideAllWindows(scene);
+
+    // Handle clicks
+    handleBackClick();
+    handleClickOutside();
+
+    var cur;
+    if (onMap && !messageBusy) {
+      cur = "crosshair";
+    } else if (hoveringItem || hoveringHint) {
+      cur = "pointer";
+    } else if (outsidePopup) {
+      cur = "pointer";
+    } else if (messageBusy) {
+      cur = "pointer";
+    } else {
+      cur = "default";
+    }
+    setCursor(cur);
   }
 
   if (typeof SceneManager !== "undefined") {
     var _orig_updateScene = SceneManager.updateScene;
     SceneManager.updateScene = function () {
       _orig_updateScene.call(this);
-      applyCursorOverride();
-      updateMouseCursor();
+      updateFrame();
     };
   }
 
@@ -404,6 +611,7 @@
         }
       }
     };
+
   }
 
   // 8. Choice windows: hover-to-select + click-to-confirm
