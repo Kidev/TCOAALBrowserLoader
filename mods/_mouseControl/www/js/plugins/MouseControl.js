@@ -181,26 +181,37 @@
       for (var rk in scene._fileHintRects) {
         var r = scene._fileHintRects[rk];
         if (
-          _mouseX >= r.x && _mouseX <= r.x + r.w &&
-          _mouseY >= r.y && _mouseY <= r.y + r.h
-        ) return true;
+          _mouseX >= r.x &&
+          _mouseX <= r.x + r.w &&
+          _mouseY >= r.y &&
+          _mouseY <= r.y + r.h
+        )
+          return true;
       }
     }
-    // Scene_Mods erase hint rect
-    if (scene._eraseHintRect) {
-      var er = scene._eraseHintRect;
-      if (
-        _mouseX >= er.x && _mouseX <= er.x + er.w &&
-        _mouseY >= er.y && _mouseY <= er.y + er.h
-      ) return true;
+    // Scene_Mods hint rects (Uninstall, Install/Enable/Disable)
+    if (scene._modHintRects) {
+      for (var mk in scene._modHintRects) {
+        var mr = scene._modHintRects[mk];
+        if (
+          _mouseX >= mr.x &&
+          _mouseX <= mr.x + mr.w &&
+          _mouseY >= mr.y &&
+          _mouseY <= mr.y + mr.h
+        )
+          return true;
+      }
     }
     // Back button rect
     if (scene._mcBackRect) {
       var br = scene._mcBackRect;
       if (
-        _mouseX >= br.x && _mouseX <= br.x + br.w &&
-        _mouseY >= br.y && _mouseY <= br.y + br.h
-      ) return true;
+        _mouseX >= br.x &&
+        _mouseX <= br.x + br.w &&
+        _mouseY >= br.y &&
+        _mouseY <= br.y + br.h
+      )
+        return true;
     }
     return false;
   }
@@ -211,8 +222,7 @@
     return (
       (typeof Scene_Options !== "undefined" &&
         scene instanceof Scene_Options) ||
-      (typeof Scene_GameEnd !== "undefined" &&
-        scene instanceof Scene_GameEnd)
+      (typeof Scene_GameEnd !== "undefined" && scene instanceof Scene_GameEnd)
     );
   }
 
@@ -351,8 +361,7 @@
     applyCursorOverride();
 
     var scene = SceneManager._scene;
-    var onMap =
-      typeof Scene_Map !== "undefined" && scene instanceof Scene_Map;
+    var onMap = typeof Scene_Map !== "undefined" && scene instanceof Scene_Map;
     var messageBusy =
       onMap && typeof $gameMessage !== "undefined" && $gameMessage.isBusy();
 
@@ -611,7 +620,6 @@
         }
       }
     };
-
   }
 
   // 8. Choice windows: hover-to-select + click-to-confirm

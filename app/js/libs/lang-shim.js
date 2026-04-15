@@ -1457,24 +1457,39 @@
 
     Scene_Mods.prototype._drawModsHints = function () {
       var hw = this._helpWindow;
-      var hints = "[Alt+Del] Delete local files";
+      var labels = [
+        { text: "[Del] Uninstall mod", key: "hintUninstall" },
+        { text: "[Enter] Install/Enable/Disable mod", key: "hintInstall" },
+      ];
+      var separator = "   ";
+      var pad = hw.standardPadding();
       hw.contents.fontSize = 16;
       hw.contents.textColor = "#888888";
-      var tw = hw.contents.measureTextWidth(hints);
-      var x = Math.floor((hw.contentsWidth() - tw) / 2);
+      var totalW = 0;
+      for (var li = 0; li < labels.length; li++) {
+        totalW += hw.contents.measureTextWidth(labels[li].text);
+        if (li < labels.length - 1)
+          totalW += hw.contents.measureTextWidth(separator);
+      }
+      var startX = Math.floor((hw.contentsWidth() - totalW) / 2);
       var y = (hw.contentsHeight() - 20) / 2;
-      hw.contents.drawText(hints, x, y, tw + 4, 20);
+      var curX = startX;
+      this._modHintRects = {};
+      for (var li = 0; li < labels.length; li++) {
+        var tw = hw.contents.measureTextWidth(labels[li].text);
+        hw.contents.drawText(labels[li].text, curX, y, tw + 4, 20);
+        this._modHintRects[labels[li].key] = {
+          x: hw.x + pad + curX,
+          y: hw.y + pad + y,
+          w: tw + 4,
+          h: 20,
+        };
+        curX += tw;
+        if (li < labels.length - 1)
+          curX += hw.contents.measureTextWidth(separator);
+      }
       hw.contents.fontSize = hw.standardFontSize();
       hw.resetTextColor();
-
-      // Store hit area for mouse click detection
-      var pad = hw.standardPadding();
-      this._eraseHintRect = {
-        x: hw.x + pad + x,
-        y: hw.y + pad + y,
-        w: tw + 4,
-        h: 20,
-      };
     };
 
     Scene_Mods.prototype.createListWindow = function () {
@@ -1512,7 +1527,7 @@
         Input.isTriggered("delete")
       ) {
         if (Input._currentState["alt"]) {
-          // Alt+Del: delete all local files
+          // Alt+Del: delete all local files (hidden shortcut)
           this._showConfirm(
             "Delete ALL saves & local files?",
             "eraseAll",
@@ -1520,27 +1535,70 @@
           );
         } else {
           var mod = this._listWindow.selectedMod();
-          if (mod && _modStatus[mod.key] && _modStatus[mod.key].installed) {
+          if (mod && isBuiltIn(mod) && isPluginType(mod.type)) {
+            // Built-in plugin: disable instead of uninstall
+            if (isPluginActive(mod.key)) {
+              this._showConfirm(
+                "Disable " + mod.name + "?",
+                "disablePlugin",
+                mod,
+              );
+            }
+          } else if (
+            mod &&
+            _modStatus[mod.key] &&
+            _modStatus[mod.key].installed
+          ) {
             this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
           }
         }
       }
-      // [Alt+Del] hint click detection (only with mouse control enabled)
+      // Hint button click detection (only with mouse control enabled)
       if (
         isPluginActive("_mouseControl") &&
-        this._eraseHintRect &&
+        this._modHintRects &&
+        this._listWindow &&
+        this._listWindow.active &&
         !this._pendingAction &&
         TouchInput.isTriggered()
       ) {
-        var r = this._eraseHintRect;
         var tx = TouchInput.x;
         var ty = TouchInput.y;
-        if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
-          this._showConfirm(
-            "Delete ALL saves & local files?",
-            "eraseAll",
-            null,
-          );
+        var rUninstall = this._modHintRects.hintUninstall;
+        var rInstall = this._modHintRects.hintInstall;
+        if (
+          rUninstall &&
+          tx >= rUninstall.x &&
+          tx <= rUninstall.x + rUninstall.w &&
+          ty >= rUninstall.y &&
+          ty <= rUninstall.y + rUninstall.h
+        ) {
+          // Click on [Del] Uninstall mod
+          var mod = this._listWindow.selectedMod();
+          if (mod && isBuiltIn(mod) && isPluginType(mod.type)) {
+            if (isPluginActive(mod.key)) {
+              this._showConfirm(
+                "Disable " + mod.name + "?",
+                "disablePlugin",
+                mod,
+              );
+            }
+          } else if (
+            mod &&
+            _modStatus[mod.key] &&
+            _modStatus[mod.key].installed
+          ) {
+            this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
+          }
+        } else if (
+          rInstall &&
+          tx >= rInstall.x &&
+          tx <= rInstall.x + rInstall.w &&
+          ty >= rInstall.y &&
+          ty <= rInstall.y + rInstall.h
+        ) {
+          // Click on [Enter] Install/Enable mod
+          this.onModOk();
         }
       }
     };
@@ -1564,6 +1622,24 @@
 
       var status = _modStatus[mod.key];
       var installed = status && status.installed;
+
+      if (!installed && isBuiltIn(mod) && isPluginType(mod.type)) {
+        // Built-in plugin: always say "Enable" (already available, no install)
+        if (!isPluginActive(mod.key)) {
+          setPluginActive(mod.key, true);
+          SoundManager.playOk();
+          var self = this;
+          loadPluginMod(mod.key, function () {
+            self._listWindow.refresh();
+            self._listWindow.activate();
+          });
+          this._listWindow.refresh();
+          this._listWindow.activate();
+        } else {
+          this._listWindow.activate();
+        }
+        return;
+      }
 
       if (!installed) {
         if (this._installing) {
