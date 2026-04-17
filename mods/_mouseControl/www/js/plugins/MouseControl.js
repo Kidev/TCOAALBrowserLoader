@@ -129,12 +129,22 @@
   });
 
   // 2. Track mouse position (for hover-to-select in choice windows)
+  //
+  // Hover-to-select is paused whenever the user presses any key, so keyboard
+  // navigation isn't instantly overridden by the cursor sitting on an item.
+  // Any mouse movement (even 1px) resumes it: intent follows the input device
+  // actually being used.
 
   var _mouseX = 0,
     _mouseY = 0;
+  var _hoverPaused = false;
   document.addEventListener("mousemove", function (e) {
     _mouseX = Graphics.pageToCanvasX(e.pageX);
     _mouseY = Graphics.pageToCanvasY(e.pageY);
+    _hoverPaused = false;
+  });
+  document.addEventListener("keydown", function () {
+    _hoverPaused = true;
   });
 
   // 3. Cursor management + hover-to-select (unified per-frame pass)
@@ -270,7 +280,11 @@
         var hitIndex = win.hitTest(lx, ly);
         if (hitIndex >= 0) {
           hovering = true;
-          if (hitIndex !== win.index() && win.isCursorMovable()) {
+          if (
+            !_hoverPaused &&
+            hitIndex !== win.index() &&
+            win.isCursorMovable()
+          ) {
             win.select(hitIndex);
             SoundManager.playCursor();
           }
@@ -630,7 +644,7 @@
         var lx = this.canvasToLocalX(_mouseX);
         var ly = this.canvasToLocalY(_mouseY);
         var hitIndex = this.hitTest(lx, ly);
-        if (hitIndex >= 0 && hitIndex !== this.index()) {
+        if (!_hoverPaused && hitIndex >= 0 && hitIndex !== this.index()) {
           this.select(hitIndex);
           SoundManager.playCursor();
         }

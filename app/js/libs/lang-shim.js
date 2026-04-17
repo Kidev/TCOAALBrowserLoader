@@ -918,6 +918,21 @@
       typeof StorageManager !== "undefined" &&
       typeof DataManager !== "undefined"
     ) {
+      // Tag every new save payload with the active mod id so cross-mod
+      // imports can be rejected. Native desktop saves won't carry this tag;
+      // absence is treated as "base game" with a filename-prefix fallback.
+      // `_modId` lives alongside system/screen/etc. in the contents object.
+      // `extractSaveContents` only reads known keys, so the extra field is
+      // harmless on load (desktop included).
+      if (DataManager.makeSaveContents) {
+        var _orig_makeSaveContents = DataManager.makeSaveContents;
+        DataManager.makeSaveContents = function () {
+          var contents = _orig_makeSaveContents.call(this);
+          contents._modId = getActiveMod() || null;
+          return contents;
+        };
+      }
+
       var _orig_sceneFileUpdate = Scene_File.prototype.update;
       Scene_File.prototype.update = function () {
         _orig_sceneFileUpdate.call(this);
@@ -1007,9 +1022,14 @@
         }
       };
 
-      // Export: download save data as .json file
+      // Export: download save data as .rpgsave file (native RPG Maker MV format:
+      // LZString-compressed base64 of the JSON payload). Interchangeable with the
+      // desktop game's save/fileN.rpgsave files.
+      // Slot-emptiness is checked via StorageManager.exists (uncached localStorage
+      // read) rather than DataManager.isThisGameFile because the DRM payload
+      // overrides the latter with a cached view that goes stale after delete.
       Scene_File.prototype._handleSaveExport = function (savefileId) {
-        if (!DataManager.isThisGameFile(savefileId)) {
+        if (!StorageManager.exists(savefileId)) {
           SoundManager.playBuzzer();
           return;
         }
@@ -1019,17 +1039,16 @@
             SoundManager.playBuzzer();
             return;
           }
-          var info = DataManager.loadSavefileInfo(savefileId);
-          var exportData = { savefileId: savefileId, info: info, data: json };
-          var blob = new Blob([JSON.stringify(exportData)], {
-            type: "application/json",
+          var rpgsave = LZString.compressToBase64(json);
+          var blob = new Blob([rpgsave], {
+            type: "application/octet-stream",
           });
           var url = URL.createObjectURL(blob);
           var a = document.createElement("a");
           var mod = getActiveMod();
           var prefix = mod ? mod + "_" : "";
           a.href = url;
-          a.download = prefix + "save_" + savefileId + ".json";
+          a.download = prefix + "file" + savefileId + ".rpgsave";
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -1041,42 +1060,102 @@
         }
       };
 
-      // Import: load a .json save file into an empty slot
+      // Display name for a save origin (null = base game).
+      function modDisplayName(modId) {
+        if (!modId) return "the base game";
+        var entry = _modsData && _modsData[modId];
+        var name = entry && entry.name ? entry.name : modId;
+        return "the '" + name + "' mod";
+      }
+
+      // Extract the origin mod id from an imported save. Prefers the
+      // payload tag; falls back to filename prefix against known mod keys.
+      // Returns a mod id string or null (= base game).
+      function detectSaveOrigin(contents, filename) {
+        if (contents && typeof contents._modId !== "undefined") {
+          return contents._modId || null;
+        }
+        if (filename && _modsData) {
+          var keys = Object.keys(_modsData);
+          for (var i = 0; i < keys.length; i++) {
+            if (filename.indexOf(keys[i] + "_") === 0) return keys[i];
+          }
+        }
+        return null;
+      }
+
+      // Import: load a save file into an empty slot. Accepts:
+      //   - .rpgsave (native RPG Maker MV: LZString base64 of the JSON payload)
+      //   - .json    (legacy web export: { savefileId, info, data } wrapper)
+      // Format is detected from content, not extension. Rejects imports
+      // whose origin (base game vs mod) does not match the active context.
+      // Occupancy check uses StorageManager.exists, not isThisGameFile: the
+      // DRM-overridden isThisGameFile stays "true" after a delete until reload.
       Scene_File.prototype._handleSaveImport = function (savefileId) {
-        if (DataManager.isThisGameFile(savefileId)) {
+        if (StorageManager.exists(savefileId)) {
           SoundManager.playBuzzer();
           return;
         }
         var self = this;
         var input = document.createElement("input");
         input.type = "file";
-        input.accept = ".json";
+        input.accept = ".rpgsave,.json";
         input.style.display = "none";
         input.addEventListener("change", function () {
           if (!input.files || !input.files[0]) return;
+          var file = input.files[0];
+          var filename = file.name || "";
           var reader = new FileReader();
           reader.onload = function (e) {
             try {
-              var parsed = JSON.parse(e.target.result);
-              if (!parsed || !parsed.data) {
+              var raw = (e.target.result || "").toString().trim();
+              var json = null;
+              var importedInfo = null;
+              if (raw.charAt(0) === "{") {
+                // Legacy wrapped JSON export
+                var parsed = JSON.parse(raw);
+                if (!parsed || !parsed.data) {
+                  SoundManager.playBuzzer();
+                  return;
+                }
+                json = parsed.data;
+                importedInfo = parsed.info || null;
+              } else {
+                // .rpgsave: native LZString base64 payload
+                json = LZString.decompressFromBase64(raw);
+              }
+              if (!json) {
                 SoundManager.playBuzzer();
                 return;
               }
               // Validate the save data parses correctly
-              var contents = JsonEx.parse(parsed.data);
+              var contents = JsonEx.parse(json);
               if (!contents) {
                 SoundManager.playBuzzer();
                 return;
               }
+              // Origin check: block cross-context imports (base <-> mod, mod <-> mod)
+              var saveModId = detectSaveOrigin(contents, filename);
+              var currentModId = getActiveMod() || null;
+              if (saveModId !== currentModId) {
+                SoundManager.playBuzzer();
+                var src = modDisplayName(saveModId);
+                self._showSaveInfoPopup([
+                  "Cannot import. Save is from " + src + ".",
+                  "Switch to " + src + " to import it.",
+                ]);
+                return;
+              }
               // Write the save data
-              StorageManager.save(savefileId, parsed.data);
+              StorageManager.save(savefileId, json);
               // Update global info
               var globalInfo = DataManager.loadGlobalInfo() || [];
-              if (parsed.info) {
+              if (importedInfo) {
                 // Use the exported info but update timestamp
-                parsed.info.timestamp = Date.now();
-                globalInfo[savefileId] = parsed.info;
+                importedInfo.timestamp = Date.now();
+                globalInfo[savefileId] = importedInfo;
               } else {
+                // .rpgsave has no info wrapper: synthesize a minimal entry
                 globalInfo[savefileId] = {
                   globalId: DataManager._globalId,
                   title: $dataSystem.gameTitle,
@@ -1094,16 +1173,17 @@
               SoundManager.playBuzzer();
             }
           };
-          reader.readAsText(input.files[0]);
+          reader.readAsText(file);
         });
         document.body.appendChild(input);
         input.click();
         document.body.removeChild(input);
       };
 
-      // Delete: remove save after confirmation
+      // Delete: remove save after confirmation. Same DRM-staleness avoidance
+      // as import/export: check actual storage, not DataManager.isThisGameFile.
       Scene_File.prototype._handleSaveDelete = function (savefileId) {
-        if (!DataManager.isThisGameFile(savefileId)) {
+        if (!StorageManager.exists(savefileId)) {
           SoundManager.playBuzzer();
           return;
         }
@@ -1230,6 +1310,102 @@
 
       Window_SaveConfirm.prototype.numVisibleRows = function () {
         return 2;
+      };
+
+      // Info popup (single OK button) for import rejection, etc.
+      Scene_File.prototype._showSaveInfoPopup = function (lines) {
+        if (!this._saveInfoWindow) this._createSaveInfoWindow();
+        this._saveInfoWindow.setMessage(lines);
+        this._saveInfoWindow.x =
+          (Graphics.boxWidth - this._saveInfoWindow.width) / 2;
+        this._saveInfoWindow.y =
+          (Graphics.boxHeight - this._saveInfoWindow.height) / 2;
+        if (this._listWindow) this._listWindow.deactivate();
+        this._saveInfoWindow.show();
+        this._saveInfoWindow.open();
+        this._saveInfoWindow.activate();
+        this._saveInfoWindow.select(0);
+      };
+
+      Scene_File.prototype._createSaveInfoWindow = function () {
+        this._saveInfoWindow = new Window_SaveInfo(0, 0);
+        var onClose = this._onSaveInfoOk.bind(this);
+        this._saveInfoWindow.setHandler("ok", onClose);
+        this._saveInfoWindow.setHandler("cancel", onClose);
+        this._saveInfoWindow.hide();
+        this._saveInfoWindow.close();
+        this.addWindow(this._saveInfoWindow);
+      };
+
+      Scene_File.prototype._onSaveInfoOk = function () {
+        this._saveInfoWindow.close();
+        this._saveInfoWindow.hide();
+        if (this._listWindow) this._listWindow.activate();
+      };
+
+      // Info dialog window with a multi-line message and a single OK button.
+      window.Window_SaveInfo = function () {
+        this.initialize.apply(this, arguments);
+      };
+
+      Window_SaveInfo.prototype = Object.create(Window_Command.prototype);
+      Window_SaveInfo.prototype.constructor = Window_SaveInfo;
+
+      Window_SaveInfo.prototype.initialize = function (x, y) {
+        this._messageLines = [];
+        Window_Command.prototype.initialize.call(this, x, y);
+        this.openness = 0;
+      };
+
+      Window_SaveInfo.prototype.setMessage = function (lines) {
+        this._messageLines = Array.isArray(lines) ? lines : [String(lines)];
+        this.refresh();
+      };
+
+      Window_SaveInfo.prototype.windowWidth = function () {
+        return 520;
+      };
+
+      Window_SaveInfo.prototype.windowHeight = function () {
+        // 2 message lines + gap + 1 command row + padding
+        return this.fittingHeight(3) + 8;
+      };
+
+      Window_SaveInfo.prototype.makeCommandList = function () {
+        this.addCommand("OK", "ok");
+      };
+
+      Window_SaveInfo.prototype.itemTextAlign = function () {
+        return "center";
+      };
+
+      Window_SaveInfo.prototype.drawAllItems = function () {
+        var pad = this.textPadding();
+        var lines = this._messageLines || [];
+        var lh = this.lineHeight();
+        for (var i = 0; i < Math.min(lines.length, 2); i++) {
+          this.drawText(
+            lines[i] || "",
+            pad,
+            i * lh,
+            this.contentsWidth() - pad * 2,
+            "center",
+          );
+        }
+        for (var j = 0; j < this.maxItems(); j++) {
+          this.drawItem(j);
+        }
+      };
+
+      Window_SaveInfo.prototype.itemRect = function (index) {
+        var rect = Window_Command.prototype.itemRect.call(this, index);
+        // Offset command below the 2 message lines
+        rect.y += this.lineHeight() * 2 + 8;
+        return rect;
+      };
+
+      Window_SaveInfo.prototype.numVisibleRows = function () {
+        return 1;
       };
     }
 
