@@ -47,6 +47,11 @@ jobs:
           cp -r app/* _site/
           cp -r mods _site/mods
           cp mods.json _site/mods.json
+          mkdir -p _site/img
+          curl -fsSL -o _site/img/achievement-unlocked.jpg \
+            https://cdn.fastly.steamstatic.com/steamcommunity/public/images/apps/2378900/55f956539371a92bd5d24a0a72d84cf983eb4b82.jpg
+          curl -fsSL -o _site/img/achievement-locked.jpg \
+            https://cdn.fastly.steamstatic.com/steamcommunity/public/images/apps/2378900/8909a9950e3deb1c38afce9a4b427d5f7dfb461b.jpg
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5

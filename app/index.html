@@ -275,6 +275,7 @@
           "js/rpg_windows.js",
           "js/plugins.js",
           "js/libs/lang-shim.js",
+          "js/libs/achievements-shim.js",
           "js/main.js",
         ];
 
@@ -356,6 +357,7 @@
                     // Hook lang-shim into Scene_Boot AFTER DRM payload
                     // has loaded (it overwrites Scene_Boot.prototype.start)
                     if (window.__langShimHookBoot) window.__langShimHookBoot();
+                    if (window.__achvShimHookBoot) window.__achvShimHookBoot();
                     delete window.onload;
                     if (_bootOnload) {
                       _bootOnload();

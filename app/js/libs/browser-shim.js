@@ -218,6 +218,7 @@
     }
 
     // Steam: override all methods that access Steam.API (null in browser).
+    // Achievement calls dispatch to achievements-shim.js (if loaded).
     if (typeof Steam !== "undefined") {
       Steam.init = function () {
         return true;
@@ -225,15 +226,23 @@
       Steam.currentLanguage = function () {
         return "english";
       };
-      Steam.awardAchievement = function () {};
+      Steam.awardAchievement = function (id) {
+        if (typeof window.__achvUnlock === "function") window.__achvUnlock(id);
+      };
+      Steam.activateAchievement = function (id) {
+        if (typeof window.__achvUnlock === "function") window.__achvUnlock(id);
+      };
+      Steam.setAchievement = function (id) {
+        if (typeof window.__achvUnlock === "function") window.__achvUnlock(id);
+      };
       Steam.clearAllAchievements = function () {};
       if (typeof Steam.isInitialized === "function")
         Steam.isInitialized = function () {
-          return false;
+          return true;
         };
       if (typeof Steam.retryInit === "function")
         Steam.retryInit = function () {
-          return false;
+          return true;
         };
     }
 
@@ -835,15 +844,24 @@
       isInBigPicture: function () {
         return false;
       },
-      activateAchievement: function () {},
-      getAchievement: function () {
-        return false;
+      activateAchievement: function (id) {
+        if (typeof window.__achvUnlock === "function") window.__achvUnlock(id);
+      },
+      awardAchievement: function (id) {
+        if (typeof window.__achvUnlock === "function") window.__achvUnlock(id);
+      },
+      getAchievement: function (id) {
+        return typeof window.__achvIsUnlocked === "function"
+          ? window.__achvIsUnlocked(id)
+          : false;
       },
       clearAchievement: function () {},
       getStatInt: function () {
         return 0;
       },
-      setAchievement: function () {},
+      setAchievement: function (id) {
+        if (typeof window.__achvUnlock === "function") window.__achvUnlock(id);
+      },
       storeStats: function () {},
       currentLanguage: function () {
         return "english";

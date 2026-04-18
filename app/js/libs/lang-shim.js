@@ -2257,5 +2257,195 @@
     };
   }
 
+  // Drag-and-drop save loading. A .rpgsave (native) or .json (legacy web
+  // export) dropped anywhere on the window loads instantly and jumps to
+  // the map, provided the save's origin matches the active mod context
+  // (base game <-> mod, mod <-> mod must match). Mismatched, malformed,
+  // or unsupported drops are silently ignored per spec.
+  (function installSaveDnD() {
+    function dtHasFiles(dt) {
+      if (!dt || !dt.types) return false;
+      for (var i = 0; i < dt.types.length; i++) {
+        if (dt.types[i] === "Files") return true;
+      }
+      return false;
+    }
+
+    function gameReady() {
+      return (
+        typeof DataManager !== "undefined" &&
+        typeof SceneManager !== "undefined" &&
+        typeof Scene_Map !== "undefined" &&
+        typeof Scene_Base !== "undefined" &&
+        typeof $dataSystem !== "undefined" &&
+        $dataSystem &&
+        DataManager.isDatabaseLoaded() &&
+        SceneManager._scene &&
+        !(SceneManager._scene instanceof Scene_Boot) &&
+        !SceneManager.isSceneChanging()
+      );
+    }
+
+    // Lazy-defined one-shot transition scene. Running extractSaveContents
+    // directly from a live Scene_Map's context crashes: $gameMap is replaced
+    // from the save while $dataMap still belongs to the outgoing map, so the
+    // next refreshIfNeeded tick hits null entries in $dataMap.events. By
+    // routing through a Scene_Base subclass, the extraction runs only after
+    // the previous scene has terminated, and the following Scene_Map
+    // instance loads a matching $dataMap before its own update runs.
+    var _Scene_DropLoad = null;
+    function getDropLoadScene() {
+      if (_Scene_DropLoad) return _Scene_DropLoad;
+      if (typeof Scene_Base === "undefined") return null;
+
+      function Scene_DropLoad() {
+        this.initialize.apply(this, arguments);
+      }
+      Scene_DropLoad.prototype = Object.create(Scene_Base.prototype);
+      Scene_DropLoad.prototype.constructor = Scene_DropLoad;
+      Scene_DropLoad._pendingContents = null;
+
+      Scene_DropLoad.prototype.initialize = function () {
+        Scene_Base.prototype.initialize.call(this);
+        this._loadSuccess = false;
+      };
+
+      Scene_DropLoad.prototype.create = function () {
+        Scene_Base.prototype.create.call(this);
+      };
+
+      // Extraction runs here, not in create(). By the time start() fires,
+      // the previous scene has fully terminated (no live Scene_Map update
+      // can race us on $gameMap), and our own fadeOut sequencing mirrors
+      // Scene_Load so Scene_Map.needsFadeIn works normally.
+      Scene_DropLoad.prototype.start = function () {
+        Scene_Base.prototype.start.call(this);
+        var contents = Scene_DropLoad._pendingContents;
+        Scene_DropLoad._pendingContents = null;
+        if (!contents) {
+          SceneManager.goto(Scene_Title);
+          return;
+        }
+        try {
+          DataManager.createGameObjects();
+          DataManager.extractSaveContents(contents);
+          this._loadSuccess = true;
+          SoundManager.playLoad();
+          this.fadeOutAll();
+          SceneManager.goto(Scene_Map);
+        } catch (e) {
+          console.error("[lang-shim] DnD save load failed:", e);
+          SceneManager.goto(Scene_Title);
+        }
+      };
+
+      Scene_DropLoad.prototype.terminate = function () {
+        Scene_Base.prototype.terminate.call(this);
+        if (
+          this._loadSuccess &&
+          typeof $gameSystem !== "undefined" &&
+          $gameSystem
+        ) {
+          $gameSystem.onAfterLoad();
+        }
+      };
+
+      _Scene_DropLoad = Scene_DropLoad;
+
+      // Scene_Map.needsFadeIn() only fades in from Scene_Battle/Scene_Load,
+      // so arriving from our transition scene would leave the screen black
+      // after the outgoing fadeOutAll. Extend it to treat Scene_DropLoad
+      // the same way.
+      if (typeof Scene_Map !== "undefined" && Scene_Map.prototype.needsFadeIn) {
+        var _orig_needsFadeIn = Scene_Map.prototype.needsFadeIn;
+        Scene_Map.prototype.needsFadeIn = function () {
+          return (
+            _orig_needsFadeIn.call(this) ||
+            SceneManager.isPreviousScene(Scene_DropLoad)
+          );
+        };
+      }
+
+      return _Scene_DropLoad;
+    }
+
+    function detectOrigin(contents, filename) {
+      if (contents && typeof contents._modId !== "undefined") {
+        return contents._modId || null;
+      }
+      if (filename && _modsData) {
+        var keys = Object.keys(_modsData);
+        for (var i = 0; i < keys.length; i++) {
+          if (filename.indexOf(keys[i] + "_") === 0) return keys[i];
+        }
+      }
+      return null;
+    }
+
+    function parseDroppedSave(raw) {
+      var text = (raw || "").toString().trim();
+      if (!text) return null;
+      try {
+        var json;
+        if (text.charAt(0) === "{") {
+          var parsed = JSON.parse(text);
+          if (!parsed || !parsed.data) return null;
+          json = parsed.data;
+        } else {
+          json = LZString.decompressFromBase64(text);
+        }
+        if (!json) return null;
+        return JsonEx.parse(json);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function loadContentsAndStart(contents) {
+      var SceneCls = getDropLoadScene();
+      if (!SceneCls) return;
+      SceneCls._pendingContents = contents;
+      SceneManager.goto(SceneCls);
+    }
+
+    function handleDroppedFile(file) {
+      if (!file || !gameReady()) return;
+      var name = (file.name || "").toLowerCase();
+      if (!/\.(rpgsave|json)$/.test(name)) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var contents = parseDroppedSave(e.target.result);
+        if (!contents) return;
+        var saveModId = detectOrigin(contents, file.name);
+        var currentModId = getActiveMod() || null;
+        if (saveModId !== currentModId) return;
+        loadContentsAndStart(contents);
+      };
+      reader.onerror = function () {};
+      reader.readAsText(file);
+    }
+
+    function onDragOver(e) {
+      if (!dtHasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        e.dataTransfer.dropEffect = "copy";
+      } catch (_) {}
+    }
+
+    function onDrop(e) {
+      if (!dtHasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var files = e.dataTransfer.files;
+      if (files && files.length > 0) handleDroppedFile(files[0]);
+    }
+
+    window.addEventListener("dragenter", onDragOver, false);
+    window.addEventListener("dragover", onDragOver, false);
+    window.addEventListener("drop", onDrop, false);
+  })();
+
   window.__langShimHookBoot = hookSceneBoot;
 })();
