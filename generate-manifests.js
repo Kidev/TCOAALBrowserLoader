@@ -23,6 +23,11 @@ var https = require("https");
 var MODS_JSON = path.join(__dirname, "mods.json");
 var MODS_DIR = path.join(__dirname, "mods");
 
+var TRANSLATIONS_BASE =
+  "https://play-tcoaal-translations.kidev.org/translations";
+var TRANSLATIONS_LANGS_URL = TRANSLATIONS_BASE + "/langs.txt";
+var TRANSLATION_AUTHOR = "TCOAAL Translation Project";
+
 function walkDir(dir, base) {
   var results = [];
   var entries;
@@ -177,6 +182,204 @@ function ghApiFetch(apiPath) {
   });
 }
 
+/** Fetch a URL as text. Resolves to null on non-2xx or network error. */
+function httpGetText(url) {
+  return new Promise(function (resolve) {
+    https
+      .get(url, { headers: { "User-Agent": "TCOAAL-Mods" } }, function (res) {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          res.resume();
+          resolve(null);
+          return;
+        }
+        var body = "";
+        res.setEncoding("utf8");
+        res.on("data", function (c) {
+          body += c;
+        });
+        res.on("end", function () {
+          resolve(body);
+        });
+      })
+      .on("error", function () {
+        resolve(null);
+      });
+  });
+}
+
+/** HEAD request; resolves to the Last-Modified header as YYYY-MM-DD or null. */
+function httpHeadLastModified(url) {
+  return new Promise(function (resolve) {
+    var u;
+    try {
+      u = new URL(url);
+    } catch (_) {
+      resolve(null);
+      return;
+    }
+    var options = {
+      method: "HEAD",
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      headers: { "User-Agent": "TCOAAL-Mods" },
+    };
+    var req = https.request(options, function (res) {
+      res.resume();
+      var lm = res.headers["last-modified"];
+      if (!lm) {
+        resolve(null);
+        return;
+      }
+      var d = new Date(lm);
+      if (isNaN(d.getTime())) {
+        resolve(null);
+        return;
+      }
+      resolve(d.toISOString().substring(0, 10));
+    });
+    req.on("error", function () {
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
+/** Title-case a language slug: "french" -> "French", "brazilian_pt" -> "Brazilian Pt". */
+function titleCaseLang(slug) {
+  return slug
+    .split(/[_\s-]+/)
+    .map(function (w) {
+      return w.length ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+    })
+    .join(" ");
+}
+
+/**
+ * Fetch the translations index and each language's manifest.json.
+ * Writes translation mod entries into modsData keyed as "translation_<lang>".
+ * Existing entries for other mod types are left untouched.
+ */
+async function syncTranslations(modsData) {
+  console.log("[translations] Fetching " + TRANSLATIONS_LANGS_URL);
+  var langsTxt = await httpGetText(TRANSLATIONS_LANGS_URL);
+  if (!langsTxt) {
+    console.warn("[translations] Failed to fetch langs.txt");
+    return 0;
+  }
+  var langs = langsTxt
+    .split(/\r?\n/)
+    .map(function (s) {
+      return s.trim();
+    })
+    .filter(function (s) {
+      return s.length > 0 && !/^#/.test(s);
+    });
+
+  if (langs.length === 0) {
+    console.warn("[translations] langs.txt is empty");
+    return 0;
+  }
+
+  // Prune stale translation entries that no longer appear in langs.txt.
+  var wantKeys = {};
+  for (var i = 0; i < langs.length; i++) {
+    wantKeys["translation_" + langs[i]] = true;
+  }
+  var existingKeys = Object.keys(modsData);
+  for (var k = 0; k < existingKeys.length; k++) {
+    var key = existingKeys[k];
+    var entry = modsData[key];
+    if (
+      key.indexOf("translation_") === 0 &&
+      entry &&
+      entry.type === "translation" &&
+      !wantKeys[key]
+    ) {
+      console.log("[translations] Removing stale entry: " + key);
+      delete modsData[key];
+    }
+  }
+
+  var count = 0;
+  for (var j = 0; j < langs.length; j++) {
+    var lang = langs[j];
+    var modId = "translation_" + lang;
+    var baseUrl = TRANSLATIONS_BASE + "/" + lang;
+    var manifestUrl = baseUrl + "/manifest.json";
+
+    console.log("[translations] " + lang + ": fetching manifest");
+    var manifestText = await httpGetText(manifestUrl);
+    if (!manifestText) {
+      console.warn("[translations] " + lang + ": manifest.json unreachable");
+      continue;
+    }
+    var manifest;
+    try {
+      manifest = JSON.parse(manifestText);
+    } catch (e) {
+      console.warn("[translations] " + lang + ": invalid manifest.json");
+      continue;
+    }
+    var files = Array.isArray(manifest.files) ? manifest.files.slice() : [];
+    if (files.length === 0) {
+      console.warn("[translations] " + lang + ": manifest has no files");
+      continue;
+    }
+
+    var lastUpdate = await httpHeadLastModified(manifestUrl);
+
+    var existing = modsData[modId] || {};
+    var displayName = manifest.name || titleCaseLang(lang);
+    // Preserve a curated description already in mods.json (e.g. the endonym
+    // "한국어" / "日本語") over whatever the remote manifest supplies: the
+    // remote default is a generic "<Lang> translation" string that would
+    // clobber hand-picked values on every regeneration.
+    var description =
+      existing.description ||
+      manifest.description ||
+      titleCaseLang(lang) + " translation";
+    var author = manifest.author || existing.author || TRANSLATION_AUTHOR;
+
+    // Pick the dialogue source file actually shipped in the manifest.
+    // .csv and .txt are both supported by lang-shim's parser.
+    var langFile = null;
+    if (files.indexOf("dialogue.csv") >= 0) langFile = "dialogue.csv";
+    else if (files.indexOf("dialogue.txt") >= 0) langFile = "dialogue.txt";
+    if (!langFile) {
+      console.warn(
+        "[translations] " +
+          lang +
+          ": no dialogue.csv/.txt in manifest; text will not translate",
+      );
+    }
+
+    modsData[modId] = {
+      name: displayName,
+      icon: baseUrl + "/icon.png",
+      author: author,
+      lastUpdate: lastUpdate || existing.lastUpdate || "",
+      path: baseUrl,
+      type: "translation",
+      description: description,
+      langFile: langFile,
+      version: manifest.version || lastUpdate || "",
+      files: files,
+    };
+
+    console.log(
+      "[translations] " +
+        lang +
+        ": " +
+        files.length +
+        " files" +
+        (lastUpdate ? " (" + lastUpdate + ")" : ""),
+    );
+    count++;
+  }
+
+  return count;
+}
+
 /** Fetch author and last update date from a GitHub repo. */
 async function fetchGithubMeta(repoUrl) {
   var gh = parseGithubUrl(repoUrl);
@@ -211,11 +414,24 @@ async function main() {
     process.exit(1);
   }
 
+  // Sync translation mods (hosted remotely) before walking local mod dirs.
+  var translationCount = await syncTranslations(modsData);
+  if (translationCount > 0) {
+    console.log(
+      "[translations] Updated " + translationCount + " translation entry(ies)",
+    );
+  }
+
   var count = 0;
   var keys = Object.keys(modsData);
   for (var i = 0; i < keys.length; i++) {
     var modId = keys[i];
     var entry = modsData[modId];
+    // Translation mods are remote-only; skip the local walk/author/DRM logic.
+    if (entry && entry.type === "translation") {
+      count++;
+      continue;
+    }
     var modPath = entry.path || "mods/" + modId;
     var modDir = path.join(__dirname, modPath);
     var wwwDir = path.join(modDir, "www");

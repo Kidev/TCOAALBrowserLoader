@@ -266,93 +266,80 @@ function dekit(arrayBuffer, hashedRelPath) {
   return out.buffer;
 }
 
-/**
- * Enumerate available language directories from IDB keys.
- * Scans for keys matching "languages/{name}/{hash}" and extracts unique
- * directory names. Returns an array of language names (e.g. ["english","french"]).
- */
-function enumerateLanguages(db) {
-  return new Promise((resolve) => {
-    const langs = new Set();
-    // Scan base game language keys (languages/english/...)
-    const scanBase = new Promise((res) => {
-      try {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
-        const range = IDBKeyRange.bound(
-          "languages/",
-          "languages/\uffff",
-          false,
-          false,
-        );
-        const req = store.openKeyCursor(range);
-        req.onsuccess = () => {
-          const cursor = req.result;
-          if (cursor) {
-            const parts = cursor.key.split("/");
-            if (parts.length >= 3 && parts[1]) langs.add(parts[1]);
-            cursor.continue();
-          } else {
-            res();
-          }
-        };
-        req.onerror = () => res();
-      } catch {
-        res();
-      }
-    });
-
-    // Also scan mod-prefixed language keys (mod:ID:languages/lang/...)
-    const scanMod = _activeMod
-      ? new Promise((res) => {
-          try {
-            const prefix = "mod:" + _activeMod + ":languages/";
-            const tx = db.transaction(STORE_NAME, "readonly");
-            const store = tx.objectStore(STORE_NAME);
-            const range = IDBKeyRange.bound(
-              prefix,
-              prefix + "\uffff",
-              false,
-              false,
-            );
-            const req = store.openKeyCursor(range);
-            req.onsuccess = () => {
-              const cursor = req.result;
-              if (cursor) {
-                // Key: "mod:ID:languages/english/dialogue.loc"
-                const afterPrefix = cursor.key.substring(prefix.length);
-                const lang = afterPrefix.split("/")[0];
-                if (lang) langs.add(lang);
-                cursor.continue();
-              } else {
-                res();
-              }
-            };
-            req.onerror = () => res();
-          } catch {
-            res();
-          }
-        })
-      : Promise.resolve();
-
-    Promise.all([scanBase, scanMod]).then(() => resolve(Array.from(langs)));
-  });
-}
-
 // Language data merging for mod support
 
 /**
- * Merge base and mod language data objects.
- * Both have { labelLUT, linesLUT, sysMenus, sysLabel }.
- * Mod values take priority over base values on conflict.
+ * Merge base and mod language data objects into a CLD that satisfies every
+ * known Lang.isValid variant.
+ *
+ * Different DRM payloads across mods require different newData() shapes:
+ *   - Base zlib DRM:  { langName, langInfo, fontFace, fontSize, fontFile,
+ *                       imgFiles, sysLabel, sysMenus, labelLUT, linesLUT }
+ *   - TCOAALili DRM:  { langName, langInfo, fontFace, fontSize,
+ *                       sysLabel, sysMenus, labelLUT, linesLUT, imageLUT }
+ *
+ * isValid checks `key in data` for every newData key plus type parity, so the
+ * merged output must include the UNION of both shapes. Extra fields are
+ * harmless (isValid iterates its own template, not the input). Missing fields
+ * cause loadCLD to throw, which makes Lang.select hit the "Default language
+ * missing" crash path with ConfigManager.language = ''.
  */
 function mergeLangData(base, mod) {
-  const result = { labelLUT: {}, linesLUT: {}, sysMenus: {}, sysLabel: {} };
-  const fields = ["labelLUT", "linesLUT", "sysMenus", "sysLabel"];
-  for (const f of fields) {
-    if (base && base[f]) Object.assign(result[f], base[f]);
-    if (mod && mod[f]) Object.assign(result[f], mod[f]);
+  const result = Object.assign({}, base || {});
+
+  // Dict fields present in any DRM variant. Base entries stay as fallbacks,
+  // mod entries win on the same key.
+  const dictFields = [
+    "labelLUT",
+    "linesLUT",
+    "sysMenus",
+    "sysLabel",
+    "imgFiles", // base zlib DRM
+    "imageLUT", // TCOAALili-style DRM
+  ];
+  for (const f of dictFields) {
+    result[f] = Object.assign(
+      {},
+      (base && base[f]) || {},
+      (mod && mod[f]) || {},
+    );
   }
+
+  if (mod) {
+    // NOTE: langVers is intentionally excluded. The DRM uses langVers as a
+    // version/signature of the base CLD; a mod CLD claiming a different
+    // version breaks loadCLD's validation. Keep the base's langVers.
+    const scalars = [
+      "langName",
+      "langInfo",
+      "fontFace",
+      "fontSize",
+      "fontFile",
+    ];
+    for (const s of scalars) {
+      if (mod[s] !== undefined && mod[s] !== null && mod[s] !== "") {
+        result[s] = mod[s];
+      }
+    }
+  }
+
+  // Guarantee every required scalar is present so isValid's `key in data` and
+  // typeof checks pass even when base is null or partially populated. These
+  // defaults match newData()'s zero values across both DRM variants.
+  if (typeof result.langName !== "string" || !result.langName.trim()) {
+    result.langName = "English";
+  }
+  if (!Array.isArray(result.langInfo) || result.langInfo.length < 3) {
+    result.langInfo = ["", "", ""];
+  }
+  if (typeof result.fontFace !== "string" || !result.fontFace.trim()) {
+    result.fontFace = "GameFont";
+  }
+  if (typeof result.fontSize !== "number" || result.fontSize < 1) {
+    result.fontSize = 28;
+  }
+  if (!("fontFile" in result)) result.fontFile = null;
+
   return result;
 }
 
@@ -580,12 +567,13 @@ self.addEventListener("activate", (e) =>
 // also persisted in IDB (key '__active_mod__') so it survives SW restarts.
 
 let _activeMod = null;
-let _activeModLoaded = false;
+let _activeModLoadPromise = null;
 
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "setActiveMod") {
     _activeMod = event.data.id || null;
-    _activeModLoaded = true;
+    // Mark as resolved so parallel fetches skip the IDB read.
+    _activeModLoadPromise = Promise.resolve();
     // Persist to IDB
     openDB()
       .then((db) => {
@@ -600,16 +588,21 @@ self.addEventListener("message", (event) => {
   }
 });
 
-/** Load the active mod from IDB (once, on first request). */
-async function ensureActiveModLoaded(db) {
-  if (_activeModLoaded) return;
-  _activeModLoaded = true;
-  try {
-    const val = await getAsset(db, "__active_mod__");
-    if (val && typeof val === "string") {
-      _activeMod = val;
-    }
-  } catch {}
+/**
+ * Load the active mod from IDB (once, on first request).
+ * Returns a shared promise so concurrent fetches all await the same read
+ * and see the resolved _activeMod: without this, fetch B can see an
+ * in-flight "loaded" flag but still read null, skipping mod lookups.
+ */
+function ensureActiveModLoaded(db) {
+  if (_activeModLoadPromise) return _activeModLoadPromise;
+  _activeModLoadPromise = (async () => {
+    try {
+      const val = await getAsset(db, "__active_mod__");
+      if (val && typeof val === "string") _activeMod = val;
+    } catch {}
+  })();
+  return _activeModLoadPromise;
 }
 
 // Fetch interception
@@ -722,19 +715,6 @@ async function serveFromIDB(logicalPath, request) {
     return fetch(request);
   }
 
-  // 0b. Available languages list: enumerate language directories from IDB keys.
-  if (logicalPath === "languages-list.json") {
-    const langs = await enumerateLanguages(db);
-    if (langs.length > 0) {
-      return new Response(JSON.stringify(langs), {
-        status: 200,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      });
-    }
-    // No languages in IDB: fall through to network (server.js mode)
-    return fetch(request);
-  }
-
   // 0c. Synthetic DRM inject: assembled from plugin fragments in IDB.
   if (logicalPath === "js/drm-inject.js") {
     if (!_drmAttempted) {
@@ -805,6 +785,57 @@ async function serveFromIDB(logicalPath, request) {
         status: 200,
         headers: { "Content-Type": mimeFor(logicalPath) },
       });
+    }
+
+    // M3b. Hashed path in mod preserving the logical extension.
+    //      Translation mods ship files at "img/pictures/<hash>.png" rather
+    //      than the base game's extension-less layout, so keys look like
+    //      "mod:ID:img/pictures/<hash>.png". Try that variant.
+    const extMatch = logicalPath.match(/\.[^./]+$/);
+    if (extMatch) {
+      const modHashedExt = await getAsset(
+        db,
+        modPrefix + modHashed + extMatch[0],
+      );
+      if (modHashedExt !== null) {
+        const decrypted = dekit(modHashedExt, modHashed);
+        return new Response(decrypted, {
+          status: 200,
+          headers: { "Content-Type": mimeFor(logicalPath) },
+        });
+      }
+    }
+
+    // M4. Pre-hashed extension-less media path override in mod.
+    //      When the base game's DRM has already resolved a logical path to
+    //      its disk-hashed form (e.g. "img/pictures/057974b069d30654"), the
+    //      engine requests it without an extension. Translation mods ship
+    //      the replacement as "img/pictures/057974b069d30654.png" (the same
+    //      hashed name with a real image extension, since mod PNGs are not
+    //      TCOAAL-encrypted). Try appending common media extensions directly
+    //      to the incoming logicalPath and looking up in the mod store.
+    //      Scoped to media top-dirs only (img/audio/movies) to avoid
+    //      interfering with data/ CLD lookups.
+    if (!extMatch) {
+      const MOD_EXT_GUESS = {
+        img: [".png", ".jpg"],
+        audio: [".ogg", ".m4a"],
+        movies: [".webm", ".mp4"],
+      };
+      const modTopDir = logicalPath.split("/")[0];
+      const modExts = MOD_EXT_GUESS[modTopDir];
+      if (modExts) {
+        for (const ext of modExts) {
+          const modGuess = await getAsset(db, modPrefix + logicalPath + ext);
+          if (modGuess !== null) {
+            const decrypted = dekit(modGuess, logicalPath);
+            return new Response(decrypted, {
+              status: 200,
+              headers: { "Content-Type": mimeFor(logicalPath + ext) },
+            });
+          }
+        }
+      }
     }
   }
 

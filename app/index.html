@@ -128,69 +128,80 @@
           });
         }
 
-        // Step 2b: preload language data from IDB into a global so
-        // browser-shim.js can serve it synchronously to the DRM payload.
-        // This avoids sync XHR which may not be intercepted by the SW.
+        // Step 2b: preload language data into a global so browser-shim.js
+        // can serve it synchronously to the DRM payload.
+        //
+        // When a mod is active the CLD served to the DRM must be the MERGE of
+        // base + mod data: the mod's own CSV-parsed data is missing required
+        // CLD fields (langInfo, imgFiles, fontFile, etc.). The SW implements
+        // that merge on /lang-data.json, so we fetch through it instead of
+        // reading IDB directly. Reading __mod_lang_data__ from IDB would hand
+        // the DRM a mod-only CLD and fail validation ("Missing field: langInfo").
+        //
+        // Without an active mod we prefer the pre-extracted __lang_data__ in
+        // IDB (fastest path), then fall back to /lang-data.json.
         function preloadLangData() {
           return new Promise(function (resolve) {
+            var activeMod = null;
             try {
-              var activeMod = null;
-              try {
-                activeMod = localStorage.getItem("_activeMod") || null;
-              } catch (e) {}
+              activeMod = localStorage.getItem("_activeMod") || null;
+            } catch (e) {}
 
+            function fromLangDataJson() {
+              try {
+                fetch("/lang-data.json", { cache: "no-store" })
+                  .then(function (res) {
+                    return res.ok ? res.text() : null;
+                  })
+                  .then(function (text) {
+                    if (text && typeof text === "string") {
+                      window.__langData = text;
+                    }
+                    resolve();
+                  })
+                  .catch(function () {
+                    resolve();
+                  });
+              } catch (ex) {
+                resolve();
+              }
+            }
+
+            if (activeMod) {
+              // Mod active: SW merges base + mod lang data.
+              fromLangDataJson();
+              return;
+            }
+
+            // No mod: fast path via pre-extracted __lang_data__ in IDB.
+            try {
               var req = indexedDB.open(DB_NAME, DB_VERSION);
               req.onsuccess = function (e) {
                 var db = e.target.result;
-
-                function loadKey(key, cb) {
-                  try {
-                    var tx = db.transaction(STORE_NAME, "readonly");
-                    var get = tx.objectStore(STORE_NAME).get(key);
-                    get.onsuccess = function () {
-                      cb(get.result);
-                    };
-                    get.onerror = function () {
-                      cb(null);
-                    };
-                  } catch (ex) {
-                    cb(null);
-                  }
-                }
-
-                function setResult(data) {
-                  if (data && typeof data === "string") {
-                    window.__langData = data;
-                    /*console.log(
-                      "[boot] Preloaded lang data (" +
-                        data.length +
-                        " chars" +
-                        (activeMod ? ", mod: " + activeMod : "") +
-                        ")",
-                    );*/
-                  }
-                  resolve();
-                }
-
-                if (activeMod) {
-                  // Try mod-specific cached lang data first
-                  loadKey("__mod_lang_data__:" + activeMod, function (modData) {
-                    if (modData) {
-                      setResult(modData);
+                try {
+                  var tx = db.transaction(STORE_NAME, "readonly");
+                  var get = tx.objectStore(STORE_NAME).get("__lang_data__");
+                  get.onsuccess = function () {
+                    var data = get.result;
+                    if (data && typeof data === "string") {
+                      window.__langData = data;
+                      resolve();
                       return;
                     }
-                    // Fallback to base game lang data
-                    loadKey("__lang_data__", setResult);
-                  });
-                } else {
-                  loadKey("__lang_data__", setResult);
+                    fromLangDataJson();
+                  };
+                  get.onerror = function () {
+                    fromLangDataJson();
+                  };
+                } catch (ex) {
+                  fromLangDataJson();
                 }
               };
               req.onerror = function () {
-                resolve();
+                fromLangDataJson();
               };
             } catch (ex) {
-              resolve();
+              fromLangDataJson();
             }
           });
         }

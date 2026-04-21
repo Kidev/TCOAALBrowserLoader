@@ -191,9 +191,29 @@
   loadModsData();
 
   var MOD_TYPE_OVERHAUL = "overhaul";
+  var MOD_TYPE_TRANSLATION = "translation";
 
   function isPluginType(type) {
     return type && type.indexOf("plugin") >= 0;
+  }
+
+  function isTranslationType(type) {
+    return type === MOD_TYPE_TRANSLATION;
+  }
+
+  /**
+   * Translation mods share overhaul semantics on the client: exactly one
+   * active at a time, require reload when switched, save-isolation by mod
+   * id. The difference is only how files are fetched (remote URL vs local
+   * /mods/{id}/www/) and how dialogue text is built (CSV -> LUT).
+   */
+  function isOverhaulLike(type) {
+    return !isPluginType(type);
+  }
+
+  /** True when path is an absolute URL (translation mods host files remotely). */
+  function isRemotePath(path) {
+    return typeof path === "string" && /^https?:\/\//i.test(path);
   }
 
   function getModList() {
@@ -327,8 +347,16 @@
 
   // Expose active mod's langFile path so browser-shim.js / Lang.search
   // can find language data at non-standard locations (e.g. data/dialogues).
+  // Translation mods (dialogue.csv / dialogue.txt) are pre-parsed into
+  // /lang-data.json at install time; the DRM only reads the base CLD path.
+  // Exposing a bare filename like "dialogue.csv" would cause browser-shim's
+  // isCLDPath substring match to misidentify DRM overlay probes
+  // (languages/<lang>/dialogue.csv) as CLD reads, breaking language load.
   if (_activeMod && _modsData && _modsData[_activeMod]) {
-    window.__modLangFile = _modsData[_activeMod].langFile || null;
+    var _activeEntry = _modsData[_activeMod];
+    if (_activeEntry.type !== MOD_TYPE_TRANSLATION) {
+      window.__modLangFile = _activeEntry.langFile || null;
+    }
   }
 
   // Patch webStorageKey EARLY (before DRM payload executes) so that
@@ -526,9 +554,308 @@
   // Mod installation (same-origin fetch from /mods/{id}/)
 
   /**
+   * Parse a single CSV line into an array of fields. Handles RFC 4180
+   * double-quote escaping: "" inside a quoted field -> literal ".
+   */
+  function parseCsvLine(line) {
+    var out = [];
+    var buf = "";
+    var i = 0;
+    var inQ = false;
+    while (i < line.length) {
+      var c = line.charAt(i);
+      if (inQ) {
+        if (c === '"') {
+          if (line.charAt(i + 1) === '"') {
+            buf += '"';
+            i += 2;
+            continue;
+          }
+          inQ = false;
+          i++;
+          continue;
+        }
+        buf += c;
+        i++;
+        continue;
+      }
+      if (c === '"') {
+        inQ = true;
+        i++;
+        continue;
+      }
+      if (c === ",") {
+        out.push(buf);
+        buf = "";
+        i++;
+        continue;
+      }
+      buf += c;
+      i++;
+    }
+    out.push(buf);
+    return out;
+  }
+
+  /**
+   * Parse a TCOAAL translator dialogue.csv into a lang-data object matching
+   * the CLD schema ({ sysLabel, sysMenus, labelLUT, linesLUT }).
+   *
+   * The CSV is sectioned: each section begins after a blank row with a
+   * header row naming the section, and rows inside the section describe
+   * key -> translation mappings. We only consume sections that map cleanly
+   * onto the CLD LUTs; other sections (Version, Language, Credits,
+   * Descriptions, etc.) are ignored. Untranslated rows (empty translation
+   * column) are skipped so the SW merge falls back to the base game.
+   */
+  function parseDialogueCsv(text) {
+    var out = { sysLabel: {}, sysMenus: {}, labelLUT: {}, linesLUT: {} };
+    if (!text) return out;
+    // Normalize newlines, then walk logical CSV records (quotes can span lines).
+    text = text.replace(/\r\n?/g, "\n");
+
+    var records = [];
+    var buf = "";
+    var inQ = false;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charAt(i);
+      if (c === '"') {
+        inQ = !inQ;
+        buf += c;
+        continue;
+      }
+      if (c === "\n" && !inQ) {
+        records.push(buf);
+        buf = "";
+        continue;
+      }
+      buf += c;
+    }
+    if (buf.length) records.push(buf);
+
+    var section = null; // "labels" | "menus" | "items" | "lines" | "language" | "version" | null
+    for (var r = 0; r < records.length; r++) {
+      var raw = records[r];
+      if (!raw || raw.replace(/,+$/g, "").trim() === "") {
+        section = null;
+        continue;
+      }
+      var cells = parseCsvLine(raw);
+      var c0 = (cells[0] || "").trim();
+      // Section headers: only recognised at section boundaries (after
+      // a blank line resets section=null). Otherwise "Language, Langue"
+      // inside the Menus block would be mistaken for a header.
+      if (section === null) {
+        if (c0 === "Labels") {
+          section = "labels";
+          continue;
+        }
+        if (c0 === "Menus") {
+          section = "menus";
+          continue;
+        }
+        if (c0 === "Speakers" || c0 === "Items") {
+          section = "items";
+          continue;
+        }
+        if (c0 === "Descriptions") {
+          section = "lines";
+          continue;
+        }
+        if (c0 === "Language") {
+          section = "language";
+          continue;
+        }
+        if (c0 === "Version") {
+          section = "version";
+          continue;
+        }
+        if (c0 === "Section") {
+          section = "lines";
+          continue;
+        }
+      }
+      if (section === "language") {
+        // row shape: <langName>, <fontFile>, <fontSize>, ...
+        if (!out.langName && c0) out.langName = c0;
+        var ff = (cells[1] || "").trim();
+        if (ff && !out.fontFace) out.fontFace = ff;
+        var fs = parseInt((cells[2] || "").trim(), 10);
+        if (!isNaN(fs) && !out.fontSize) out.fontSize = fs;
+        section = null;
+        continue;
+      }
+      if (section === "version") {
+        if (!out.langVers && c0) out.langVers = c0;
+        section = null;
+        continue;
+      }
+      // Inside "Section" the following row is a column header (ID,Source,...)
+      if (section === "lines" && c0 === "ID") continue;
+
+      switch (section) {
+        case "labels": {
+          // key, English, Translation
+          var lk = c0;
+          var lt = (cells[2] || "").trim();
+          if (lk && lt) out.sysLabel[lk] = lt;
+          break;
+        }
+        case "menus": {
+          // key, Translation, ...
+          var mk = c0;
+          var mt = (cells[1] || "").trim();
+          if (mk && mt) out.sysMenus[mk] = mt;
+          break;
+        }
+        case "items": {
+          // hash, English, Translation
+          var ik = c0;
+          var it = (cells[2] || "").trim();
+          if (ik && it) out.labelLUT[ik] = it;
+          break;
+        }
+        case "lines": {
+          // hash, Speaker, English, Translation
+          var sh = c0;
+          var tr = cells[3];
+          if (!sh || tr == null || tr === "") break;
+          if (!out.linesLUT[sh]) out.linesLUT[sh] = [];
+          out.linesLUT[sh].push(tr);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Parse a TCOAAL translator dialogue.txt into a lang-data object. The
+   * format uses [SECTION] headers followed by "key : value" lines; map
+   * file sections ([CommonEvents.json], [Map###.json]) use "#hash (Speaker)"
+   * block headers with one or more ": text" continuation lines. Blank
+   * values skip the row so the SW merge falls back to the base game.
+   */
+  function parseDialogueTxt(text) {
+    var out = { sysLabel: {}, sysMenus: {}, labelLUT: {}, linesLUT: {} };
+    if (!text) return out;
+    text = text.replace(/\r\n?/g, "\n");
+    var lines = text.split("\n");
+
+    var section = null; // "labels" | "menus" | "items" | "choices" | "lines" | "language" | "font" | null
+    var curHash = null;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line === "") {
+        curHash = null;
+        continue;
+      }
+      // Section header
+      var m = line.match(/^\[([^\]]+)\]\s*$/);
+      if (m) {
+        curHash = null;
+        var name = m[1];
+        if (name === "LABELS") section = "labels";
+        else if (name === "MENUS") section = "menus";
+        else if (name === "SPEAKERS" || name === "ITEMS") section = "items";
+        else if (name === "CHOICES" || /\.json$/i.test(name)) section = "lines";
+        else if (name === "DESCRIPTIONS") section = "lines";
+        else if (name === "LANGUAGE") section = "language";
+        else if (name === "FONT") section = "font";
+        else if (name === "VERSION") section = "version";
+        else section = null;
+        continue;
+      }
+
+      if (section === "language") {
+        // Single free-form line = language display name
+        if (!out.langName) out.langName = line.trim();
+        continue;
+      }
+
+      if (section === "version") {
+        if (!out.langVers) out.langVers = line.trim();
+        continue;
+      }
+
+      if (section === "font") {
+        var fkv = line.match(/^\s*([^:]+?)\s*:\s*(.*)$/);
+        if (fkv) {
+          var fk = fkv[1].trim().toLowerCase();
+          var fv = fkv[2].trim();
+          // "File" in dialogue.txt is the font face name (matches
+          // the base CLD's fontFace field, e.g. "GameFont").
+          if (fk === "file" || fk === "face" || fk === "name") {
+            if (fv) out.fontFace = fv;
+          } else if (fk === "size") {
+            var n = parseInt(fv, 10);
+            if (!isNaN(n)) out.fontSize = n;
+          }
+        }
+        continue;
+      }
+
+      if (section === "lines") {
+        // "#hash (Speaker)" opens a multi-line record with ": text" continuations.
+        // "#hash : text" is a single-line record (common in CHOICES).
+        var inline = line.match(/^#([^\s(:]+)\s*:\s?(.*)$/);
+        if (inline) {
+          var ih = inline[1];
+          var iv = inline[2];
+          if (iv !== "") {
+            if (!out.linesLUT[ih]) out.linesLUT[ih] = [];
+            out.linesLUT[ih].push(iv);
+          }
+          curHash = null;
+          continue;
+        }
+        var hdr = line.match(/^#([^\s(]+)\s*(?:\([^)]*\))?\s*$/);
+        if (hdr) {
+          curHash = hdr[1];
+          if (!out.linesLUT[curHash]) out.linesLUT[curHash] = [];
+          continue;
+        }
+        var cont = line.match(/^:\s?(.*)$/);
+        if (cont && curHash) {
+          out.linesLUT[curHash].push(cont[1]);
+          continue;
+        }
+        continue;
+      }
+
+      // Key/value sections: "#hash : value" or "key : value"
+      var kv = line.match(/^\s*#?([^:]+?)\s*:\s*(.*)$/);
+      if (!kv) continue;
+      var key = kv[1].trim();
+      var val = kv[2].trim();
+      if (!key || !val) continue;
+
+      switch (section) {
+        case "labels":
+          out.sysLabel[key] = val;
+          break;
+        case "menus":
+          out.sysMenus[key] = val;
+          break;
+        case "items":
+          out.labelLUT[key] = val;
+          break;
+      }
+    }
+    return out;
+  }
+
+  /**
    * After mod installation, extract language data from the mod's langFile
    * (if specified in mods.json) and cache as __mod_lang_data__:{modId}.
    * This lets the SW serve /lang-data.json for the mod without parsing at runtime.
+   *
+   * Accepted formats:
+   *   - .loc / .json  plain JSON CLD (linesLUT/labelLUT/sysMenus/sysLabel)
+   *   - CLD binary    "LANGDATA" + JSON
+   *   - .csv          TCOAAL translator dialogue.csv (parsed to CLD schema)
+   *   - .txt          TCOAAL translator dialogue.txt (parsed to CLD schema)
    */
   function extractModLangData(db, modId, modEntry, callback) {
     var langFile = modEntry && modEntry.langFile;
@@ -558,22 +885,28 @@
           callback();
           return;
         }
-        // Strip leading padding/prefix before JSON.
-        // .loc files start with 20+ spaces before the JSON.
-        // CLD files (e.g. data/dialogues) start with "LANGDATA{...".
-        var json = text.trim();
-        var jsonStart = json.indexOf("{");
-        if (jsonStart > 0) json = json.substring(jsonStart);
-        var parsed = JSON.parse(json);
-        if (parsed && (parsed.linesLUT || parsed.labelLUT)) {
+
+        var isCsv = /\.csv$/i.test(langFile);
+        var isTxt = /\.txt$/i.test(langFile);
+        var parsed;
+        var json;
+        if (isCsv) {
+          parsed = parseDialogueCsv(text);
+          json = JSON.stringify(parsed);
+        } else if (isTxt) {
+          parsed = parseDialogueTxt(text);
+          json = JSON.stringify(parsed);
+        } else {
+          // Strip leading padding/prefix before JSON.
+          // .loc files start with 20+ spaces before the JSON.
+          // CLD files (e.g. data/dialogues) start with "LANGDATA{...".
+          json = text.trim();
+          var jsonStart = json.indexOf("{");
+          if (jsonStart > 0) json = json.substring(jsonStart);
+          parsed = JSON.parse(json);
+        }
+        if (parsed && (parsed.linesLUT || parsed.labelLUT || parsed.sysMenus)) {
           putAsset(db, "__mod_lang_data__:" + modId, json, function () {
-            /*console.log(
-              "[lang-shim] Cached lang data for mod " +
-                modId +
-                " (" +
-                json.length +
-                " chars)",
-            );*/
             callback();
           });
           return;
@@ -605,7 +938,11 @@
     var total = files.length;
     var stored = 0;
     var errors = 0;
-    var wwwBase = "/" + basePath + "/www/";
+    // Remote-hosted mods (translations) give an absolute URL as their path
+    // and serve files directly under that URL. Local mods keep the www/ layout.
+    var wwwBase = isRemotePath(basePath)
+      ? basePath.replace(/\/$/, "") + "/"
+      : "/" + basePath + "/www/";
 
     onProgress({ percent: 0, message: "Installing... 0%" });
 
@@ -1525,6 +1862,23 @@
       };
     }
 
+    // Strip the DRM payload's "Language" entry from the title command list.
+    // Language selection is driven by the active translation mod instead.
+    if (typeof Window_TitleCommand !== "undefined") {
+      var _pre_makeCmdList_lang = Window_TitleCommand.prototype.makeCommandList;
+      Window_TitleCommand.prototype.makeCommandList = function () {
+        _pre_makeCmdList_lang.call(this);
+        for (var i = this._list.length - 1; i >= 0; i--) {
+          var it = this._list[i];
+          var sym = (it.symbol || "").toString().toLowerCase();
+          var nm = (it.name || "").toString().toLowerCase();
+          if (sym === "language" || nm === "language") {
+            this._list.splice(i, 1);
+          }
+        }
+      };
+    }
+
     // The DRM payload defines its own makeCommandList that filters
     // commands to a strict ordered set (MenuOptions.labels()). We wrap
     // it to append "Mods" after that filtering.
@@ -2194,7 +2548,16 @@
       // Line 3: description (left), enabled status (right)
       if (mod.description) {
         this.contents.textColor = "#cccccc";
+        // GameFont ships CJK Unified Ideographs glyphs but no Hangul/Thai/etc.
+        // Canvas 2D falls back per-codepoint when the font-family list has
+        // more than one entry, so append system fallbacks to cover scripts
+        // the base font lacks (notably Korean for "한국어").
+        var _prevFace = this.contents.fontFace;
+        this.contents.fontFace =
+          _prevFace +
+          ', "Noto Sans CJK KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
         this.drawText(mod.description, textX, lineY + smallLine + 2, availW);
+        this.contents.fontFace = _prevFace;
       }
 
       if (isBuiltIn(mod) || installed) {

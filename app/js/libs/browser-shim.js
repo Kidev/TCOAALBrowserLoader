@@ -75,9 +75,25 @@
     return false;
   }
 
-  // Helper: normalise path: strip leading .\ or ./, normalise separators
+  // Helper: normalise path: strip leading .\ or ./, normalise separators,
+  // collapse repeated slashes (NW.js sometimes produces paths like
+  // `.\languages\\english\dialogue.txt` whose `\\` becomes `//` after swap).
   function normPath(p) {
-    return String(p).replace(/\\/g, "/").replace(/^\.\//, "");
+    return String(p)
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "")
+      .replace(/\/+/g, "/");
+  }
+
+  // Helper: is `p` a dialogue.txt or dialogue.csv custom-translation overlay?
+  // We never serve these in the browser (the merged CLD already carries the
+  // active translation). Any probe for them should fail cleanly so the DRM
+  // doesn't try to parse an empty XHR response.
+  function isLangOverlayProbe(p) {
+    return (
+      typeof p === "string" &&
+      /languages\/[^/]*\/?dialogue\.(txt|csv)$/i.test(normPath(p))
+    );
   }
 
   // Helper: does `p` refer to a language dialogue.loc file?
@@ -255,85 +271,44 @@
       App.report = function () {};
     }
 
-    // Lang.search: browser version. Discovers all available languages
-    // via /languages-list.json (served by SW/server.js) and loads each
-    // language's .loc data.
+    // Lang.search: single-language browser variant. The SW synthesises
+    // /lang-data.json by merging the base CLD with any active translation
+    // mod, so we don't enumerate languages client-side; one entry is enough.
+    //
+    // Key choice: native Lang.search keys this.list by the LANGUAGE FOLDER
+    // NAME ("english"), not data.langName: Lang.select then iterates
+    // [arg, steamLang, LANG_LOC="english", LANG_TXT, LANG_CSV] and only
+    // matches list entries under those exact keys. Using langName (e.g.
+    // "English" capitalised, or a mod's localised label) as the list key
+    // would make Lang.select fall through to the "Default languages
+    // missing." crash path and clear ConfigManager.language.
     if (typeof Lang !== "undefined") {
       Lang.search = function () {
         try {
-          var langList;
-          try {
-            var lx = new XMLHttpRequest();
-            lx.open("GET", "/languages-list.json", false);
-            lx.send();
-            if (lx.status >= 200 && lx.status < 400)
-              langList = JSON.parse(lx.responseText);
-          } catch (e) {}
-          if (!langList || !langList.length) langList = ["english"];
-
-          this.list = {};
-          this.offc = langList;
-          this.data = this.data || {};
-
-          for (var i = 0; i < langList.length; i++) {
-            var lang = langList[i];
-            this.list[lang] = "languages/" + lang + "/dialogue.loc";
+          var data = null;
+          var json = ensureLangData();
+          if (json) {
             try {
-              var data = null;
-              try {
-                var locXhr = new XMLHttpRequest();
-                locXhr.open(
-                  "GET",
-                  "languages/" + lang + "/dialogue.loc",
-                  false,
-                );
-                locXhr.send();
-                if (
-                  locXhr.status >= 200 &&
-                  locXhr.status < 400 &&
-                  locXhr.responseText
-                ) {
-                  var text = locXhr.responseText;
-                  var jsonStart = text.indexOf("{");
-                  if (jsonStart >= 0)
-                    data = JSON.parse(text.substring(jsonStart));
-                }
-              } catch (xe) {}
-              // Fallback: mod's custom langFile path (e.g. data/dialogues)
-              if (!data && window.__modLangFile) {
-                try {
-                  var mfXhr = new XMLHttpRequest();
-                  mfXhr.open("GET", window.__modLangFile, false);
-                  mfXhr.send();
-                  if (
-                    mfXhr.status >= 200 &&
-                    mfXhr.status < 400 &&
-                    mfXhr.responseText
-                  ) {
-                    var mfText = mfXhr.responseText;
-                    var mfJson = mfText.indexOf("{");
-                    if (mfJson >= 0)
-                      data = JSON.parse(mfText.substring(mfJson));
-                  }
-                } catch (mfe) {}
-              }
-              // Fallback: preloaded __langData (from IDB, mod-aware)
-              if (!data && window.__langData) {
-                try {
-                  var ld = window.__langData;
-                  if (typeof ld === "string") {
-                    var js = ld.indexOf("{");
-                    if (js >= 0) data = JSON.parse(ld.substring(js));
-                  }
-                } catch (pe) {}
-              }
-              if (data) {
-                data.imageLUT = data.imageLUT || {};
-                this.data[lang] = data;
-              }
-            } catch (e) {
-              console.warn("[Lang.search] Failed to load " + lang + ":", e);
-            }
+              var js = json.indexOf("{");
+              if (js >= 0) data = JSON.parse(json.substring(js));
+            } catch (e) {}
+          }
+
+          // Fixed key matching LANG_LOC / the english/ folder: what every
+          // DRM variant's Lang.select looks up as its baseline fallback.
+          var LIST_KEY = "english";
+          this.list = {};
+          this.list[LIST_KEY] = "languages/" + LIST_KEY + "/dialogue.loc";
+          this.offc = [LIST_KEY];
+          this.data = this.data || {};
+          if (data) {
+            // TCOAALili-style DRM requires imageLUT; base DRM requires
+            // imgFiles. Guarantee both so Lang.isValid passes.
+            if (!data.imageLUT || typeof data.imageLUT !== "object")
+              data.imageLUT = {};
+            if (!data.imgFiles || typeof data.imgFiles !== "object")
+              data.imgFiles = {};
+            this.data[LIST_KEY] = data;
           }
         } catch (e) {
           console.warn("[browser-shim] Lang.search failed:", e);
@@ -447,6 +422,12 @@
             }
             // .settings -> not in browser
             if (/\.settings$/i.test(ps)) return false;
+            // Block dialogue.txt / dialogue.csv custom-overlay probes: the
+            // merged CLD (served via dialogue.loc) already contains the
+            // active translation. If these probes returned true, the DRM
+            // would readFileSync them via XHR, get an empty buffer, and
+            // fail to parse: corrupting language data.
+            if (isLangOverlayProbe(ps)) return false;
             // Save directory (CoffinAndyLeyley) -> report as existing
             if (ps.indexOf("CoffinAndyLeyley") !== -1) return true;
             // Return true for all game-related paths.
@@ -479,6 +460,13 @@
                 if (encoding) return locContent;
                 return window.Buffer.from(locContent, "utf8");
               }
+            }
+            // Dialogue overlay probes: throw ENOENT rather than return an
+            // empty buffer (which the DRM would try to parse and error on).
+            if (isLangOverlayProbe(p)) {
+              var lerr = new Error("ENOENT: no such file or directory");
+              lerr.code = "ENOENT";
+              throw lerr;
             }
             // .rpgsave -> read from localStorage (DRM reads saves via fs)
             var ps = String(p);
@@ -557,6 +545,14 @@
                 },
               };
             }
+            // Dialogue overlay probes: throw ENOENT so the DRM skips them
+            // instead of treating the path as an existing file and reading
+            // an empty XHR response.
+            if (isLangOverlayProbe(p)) {
+              var err = new Error("ENOENT: no such file or directory");
+              err.code = "ENOENT";
+              throw err;
+            }
             // Use file extension to determine type:
             // paths with extensions are files, others are directories
             var hasExt = /\.[a-z0-9]{1,6}$/i.test(String(p));
@@ -571,21 +567,16 @@
           },
           readdirSync: function (p) {
             var np = normPath(p);
-            // DRM scans languages/ for language folders.
-            // Fetch the list from the server/SW.
+            // DRM scans languages/ for language folders. The browser port
+            // collapses multi-language discovery into a single virtual
+            // "english" entry backed by the merged CLD (which contains the
+            // active translation's labels/lines). Using a fixed key avoids
+            // the DRM treating the active language as a "custom translation"
+            // and probing for overlay files we can't serve.
             if (/languages\/?$/i.test(np)) {
-              try {
-                var lx = new XMLHttpRequest();
-                lx.open("GET", "/languages-list.json", false);
-                lx.send();
-                if (lx.status >= 200 && lx.status < 400) {
-                  var list = JSON.parse(lx.responseText);
-                  if (list && list.length) return list;
-                }
-              } catch (e) {}
               return ensureLangData() ? ["english"] : [];
             }
-            // Return dialogue.loc for language subfolder
+            // Language subfolder: one virtual dialogue.loc backed by /lang-data.json
             if (/languages\/[^/]+\/?$/i.test(np)) {
               return ["dialogue.loc"];
             }
