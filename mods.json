@@ -6,8 +6,23 @@
     "type": "built-in plugin",
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
-    "version": "9003985",
-    "files": ["img/icon.png", "js/plugins/MouseControl.js"]
+    "version": "5106aa4",
+    "files": [
+      "img/icon.png",
+      "js/plugins/MouseControl.js"
+    ]
+  },
+  "_unlockAll": {
+    "name": "Unlocker",
+    "path": "mods/_unlockAll",
+    "icon": "mods/_unlockAll/www/img/icon.png",
+    "type": "built-in plugin",
+    "description": "While enabled, the vision room, visions, stars are all available",
+    "author": "kidev",
+    "version": "5106aa4",
+    "files": [
+      "js/plugins/UnlockAll.js"
+    ]
   },
   "TCOAAR": {
     "name": "The Coffin of Andrew and Renee",
@@ -1853,7 +1868,7 @@
       "mods/The coffin of Andy and July/mod.json",
       "package.json"
     ],
-    "version": "9003985",
+    "version": "5106aa4",
     "drmType": "none"
   },
   "TCOAALili": {
@@ -2304,7 +2319,7 @@
       "languages/english/dialogue.loc",
       "package.json"
     ],
-    "version": "9003985",
+    "version": "5106aa4",
     "drmType": "script"
   },
   "TLCOAAA": {
@@ -3085,7 +3100,7 @@
       "js/rpg_windows.js",
       "package.json"
     ],
-    "version": "9003985",
+    "version": "5106aa4",
     "drmType": "direct"
   },
   "TDOAAL": {
@@ -3096,7 +3111,7 @@
     "description": "Adds voice acting to Chapter 1 (FenrirtheWulf, iamyourmagician, Adoxographist, PatchumiVT, Shami, WesternShadow, Zombi)",
     "lastUpdate": "2025-09-15",
     "author": "6ExtraOrdinary9",
-    "version": "9003985",
+    "version": "5106aa4",
     "files": [
       "audio/bgm/Sexy Raidish/1/Voice/A1",
       "audio/bgm/Sexy Raidish/1/Voice/A10",
@@ -4743,7 +4758,10 @@
     "description": "Português / Brasil",
     "langFile": "dialogue.txt",
     "version": "2026-04-21",
-    "files": ["dialogue.txt", "icon.png"]
+    "files": [
+      "dialogue.txt",
+      "icon.png"
+    ]
   },
   "translation_russian": {
     "name": "Russian",
@@ -4895,7 +4913,10 @@
     "description": "Türkçe",
     "langFile": "dialogue.txt",
     "version": "2026-04-21",
-    "files": ["dialogue.txt", "icon.png"]
+    "files": [
+      "dialogue.txt",
+      "icon.png"
+    ]
   },
   "translation_ukrainian": {
     "name": "Ukrainian",

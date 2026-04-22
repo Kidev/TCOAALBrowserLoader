@@ -1955,6 +1955,50 @@
         this._commandWindow.close();
         SceneManager.push(Scene_Mods);
       };
+
+      // O key on the title screen only: download the active mod's (or base
+      // game's) global.rpgsave. Same file format as Scene_File's per-slot
+      // export (LZString-compressed base64), so it round-trips via the
+      // desktop game's save folder.
+      var _orig_title_update = Scene_Title.prototype.update;
+      Scene_Title.prototype.update = function () {
+        _orig_title_update.call(this);
+        if (
+          typeof Input !== "undefined" &&
+          Input.isTriggered("saveExport") &&
+          SceneManager._scene === this
+        ) {
+          exportGlobalSave();
+        }
+      };
+    }
+
+    function exportGlobalSave() {
+      try {
+        var json = StorageManager.load(0);
+        if (!json) {
+          SoundManager.playBuzzer();
+          return;
+        }
+        var rpgsave = LZString.compressToBase64(json);
+        var blob = new Blob([rpgsave], {
+          type: "application/octet-stream",
+        });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        var mod = getActiveMod();
+        var prefix = mod ? mod + "_" : "";
+        a.href = url;
+        a.download = prefix + "global.rpgsave";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        SoundManager.playSave();
+      } catch (e) {
+        console.error("[lang-shim] Global save export failed:", e);
+        SoundManager.playBuzzer();
+      }
     }
 
     // Scene_Mods: mod selection screen
@@ -1980,7 +2024,15 @@
     Scene_Mods.prototype.createHelpWindow = function () {
       this._helpWindow = new Window_Help(1);
       var am = getActiveMod();
-      this._helpWindow.setText(am ? "Mods | Active: " + am : "Mods");
+      var amLabel = am;
+      if (am && _modsData && _modsData[am]) {
+        var amEntry = _modsData[am];
+        var amName = amEntry.name || am;
+        amLabel = isTranslationType(amEntry.type)
+          ? amName + " translation"
+          : amName;
+      }
+      this._helpWindow.setText(am ? "Mods | Active: " + amLabel : "Mods");
       this.addWindow(this._helpWindow);
       this._drawModsHints();
     };
@@ -2154,7 +2206,7 @@
       var installed = status && status.installed;
 
       if (!installed && isBuiltIn(mod) && isPluginType(mod.type)) {
-        // Built-in plugin: always say "Enable" (already available, no install)
+        // Built-in plugin: toggle enable/disable (no install step: shipped with app)
         if (!isPluginActive(mod.key)) {
           setPluginActive(mod.key, true);
           SoundManager.playOk();
@@ -2166,7 +2218,7 @@
           this._listWindow.refresh();
           this._listWindow.activate();
         } else {
-          this._listWindow.activate();
+          this._showConfirm("Disable " + mod.name + "?", "disablePlugin", mod);
         }
         return;
       }
@@ -2442,6 +2494,18 @@
       return Math.floor(innerHeight / this.maxVisibleItems());
     };
 
+    Window_ModList.prototype._itemGap = function () {
+      return 6;
+    };
+
+    Window_ModList.prototype.itemRect = function (index) {
+      var rect = Window_Selectable.prototype.itemRect.call(this, index);
+      var gap = this._itemGap();
+      rect.y += Math.floor(gap / 2);
+      rect.height -= gap;
+      return rect;
+    };
+
     Window_ModList.prototype.selectedMod = function () {
       var idx = this.index();
       return idx >= 0 && idx < this._mods.length ? this._mods[idx] : null;
@@ -2457,6 +2521,38 @@
       var rect = this.itemRectForText(index);
       var lineHeight = this.lineHeight();
       var pad = rect.x;
+
+      var isActive = isPluginType(mod.type)
+        ? isPluginActive(mod.key)
+        : getActiveMod() === mod.key;
+
+      if (isActive) {
+        var bgRect = this.itemRect(index);
+        var borderColor = "#88ff88";
+        var t = 2;
+        this.contents.fillRect(bgRect.x, bgRect.y, bgRect.width, t, borderColor);
+        this.contents.fillRect(
+          bgRect.x,
+          bgRect.y + bgRect.height - t,
+          bgRect.width,
+          t,
+          borderColor,
+        );
+        this.contents.fillRect(
+          bgRect.x,
+          bgRect.y,
+          t,
+          bgRect.height,
+          borderColor,
+        );
+        this.contents.fillRect(
+          bgRect.x + bgRect.width - t,
+          bgRect.y,
+          t,
+          bgRect.height,
+          borderColor,
+        );
+      }
 
       var iconH = rect.height - pad * 2;
       var iconW = Math.floor((iconH * 16) / 9);
@@ -2510,7 +2606,11 @@
         });
       var typeLabel = "[" + rawType + "]";
       this.contents.fontSize = 16;
-      this.contents.textColor = isPluginType(mod.type) ? "#88bbff" : "#ff8888";
+      this.contents.textColor = isPluginType(mod.type)
+        ? "#88bbff"
+        : isTranslationType(mod.type)
+          ? "#ffcc66"
+          : "#ff8888";
       this.drawText(typeLabel, textX, lineY + 2, availW);
 
       if (status && status._downloading) {
@@ -2532,8 +2632,7 @@
           "right",
         );
       } else if (isBuiltIn(mod)) {
-        this.contents.textColor = "#88ff88";
-        this.drawText("Built-in", rect.x, lineY + 2, rect.width, "right");
+        // Built-in plugins: no status label on the right.
       } else {
         this.contents.textColor = installed ? "#88ff88" : "#aaaaaa";
         this.drawText(
@@ -2561,12 +2660,6 @@
       }
 
       if (isBuiltIn(mod) || installed) {
-        var isActive;
-        if (isPluginType(mod.type)) {
-          isActive = isPluginActive(mod.key);
-        } else {
-          isActive = getActiveMod() === mod.key;
-        }
         this.contents.textColor = isActive ? "#88ff88" : "#aaaaaa";
         this.drawText(
           isActive ? "Enabled" : "Disabled",
