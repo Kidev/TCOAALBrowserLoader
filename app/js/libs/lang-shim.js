@@ -425,6 +425,29 @@
     } catch (e) {}
   }
 
+  // Chrome treats wheel listeners on document as passive by default, so
+  // TouchInput._onWheel's preventDefault() call is blocked and spams
+  // "[Intervention] Unable to preventDefault inside passive event listener"
+  // on every scroll. Re-register _setupEventHandlers with {passive: false}
+  // for the wheel listener. This must run before SceneManager.initInput()
+  // (triggered on window.onload via main.js), so it's patched eagerly here
+  // rather than in applyPatches (which runs at Scene_Boot.start, too late).
+  if (typeof TouchInput !== "undefined" && typeof Utils !== "undefined") {
+    TouchInput._setupEventHandlers = function () {
+      var isSupportPassive = Utils.isSupportPassiveEvent();
+      var passiveFalse = isSupportPassive ? { passive: false } : false;
+      document.addEventListener("mousedown", this._onMouseDown.bind(this));
+      document.addEventListener("mousemove", this._onMouseMove.bind(this));
+      document.addEventListener("mouseup", this._onMouseUp.bind(this));
+      document.addEventListener("wheel", this._onWheel.bind(this), passiveFalse);
+      document.addEventListener("touchstart", this._onTouchStart.bind(this), passiveFalse);
+      document.addEventListener("touchmove", this._onTouchMove.bind(this), passiveFalse);
+      document.addEventListener("touchend", this._onTouchEnd.bind(this));
+      document.addEventListener("touchcancel", this._onTouchCancel.bind(this));
+      document.addEventListener("pointerdown", this._onPointerDown.bind(this));
+    };
+  }
+
   function isPluginActive(modId) {
     return _activePlugins.indexOf(modId) >= 0;
   }
