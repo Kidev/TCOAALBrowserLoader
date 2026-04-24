@@ -17,7 +17,7 @@
     "path": "mods/_unlockAll",
     "icon": "mods/_unlockAll/www/img/icon.png",
     "type": "built-in plugin",
-    "description": "While enabled, the vision room, visions, stars are all available",
+    "description": "While enabled, the vision room, visions and stars are all available",
     "author": "kidev",
     "version": "1b1acad",
     "files": [
@@ -45,7 +45,7 @@
     "path": "mods/_MessageBacklog",
     "icon": "mods/_MessageBacklog/www/img/icon.png",
     "type": "built-in plugin",
-    "description": "Add a message backlog function to the game's message system. Toggle it with the PageUp key",
+    "description": "Add a message backlog function to the game's message system (PageUp key)",
     "author": "Yanfly",
     "version": "1b1acad",
     "lastUpdate": "2024-03-29",
