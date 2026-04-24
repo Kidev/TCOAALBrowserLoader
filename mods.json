@@ -6,7 +6,7 @@
     "type": "built-in plugin",
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
-    "version": "5106aa4",
+    "version": "1b1acad",
     "files": [
       "img/icon.png",
       "js/plugins/MouseControl.js"
@@ -19,16 +19,47 @@
     "type": "built-in plugin",
     "description": "While enabled, the vision room, visions, stars are all available",
     "author": "kidev",
-    "version": "5106aa4",
+    "version": "1b1acad",
     "files": [
+      "img/icon.png",
       "js/plugins/UnlockAll.js"
     ]
+  },
+  "AnalogMove": {
+    "name": "Analog Move",
+    "path": "mods/_AnalogMove",
+    "icon": "mods/_AnalogMove/www/img/icon.png",
+    "type": "built-in plugin",
+    "description": "Changes party character movement to dot movement that does not depend on tiles",
+    "author": "Sanshiro",
+    "version": "1b1acad",
+    "lastUpdate": "2024-03-29",
+    "files": [
+      "img/icon.png",
+      "js/plugins/SAN_AnalogMove.js"
+    ],
+    "drmType": "none"
+  },
+  "MessageBacklog": {
+    "name": "Message Backlog",
+    "path": "mods/_MessageBacklog",
+    "icon": "mods/_MessageBacklog/www/img/icon.png",
+    "type": "built-in plugin",
+    "description": "Add a message backlog function to the game's message system. Toggle it with the PageUp key",
+    "author": "Yanfly",
+    "version": "1b1acad",
+    "lastUpdate": "2024-03-29",
+    "files": [
+      "img/icon.png",
+      "js/plugins/YEP_X_MessageBacklog.js"
+    ],
+    "drmType": "none"
   },
   "TCOAAR": {
     "name": "The Coffin of Andrew and Renee",
     "icon": "mods/TCOAAR/www/img/titles1/Book.png",
     "author": "Graveyard Shift",
-    "lastUpdate": "2025-12-01",
+    "lastUpdate": "2026-04-15",
     "repo": "https://github.com/graveyardshiftpd/tcoaar-project",
     "path": "mods/TCOAAR",
     "type": "overhaul",
@@ -1868,7 +1899,7 @@
       "mods/The coffin of Andy and July/mod.json",
       "package.json"
     ],
-    "version": "5106aa4",
+    "version": "1b1acad",
     "drmType": "none"
   },
   "TCOAALili": {
@@ -2319,7 +2350,7 @@
       "languages/english/dialogue.loc",
       "package.json"
     ],
-    "version": "5106aa4",
+    "version": "1b1acad",
     "drmType": "script"
   },
   "TLCOAAA": {
@@ -3100,7 +3131,7 @@
       "js/rpg_windows.js",
       "package.json"
     ],
-    "version": "5106aa4",
+    "version": "1b1acad",
     "drmType": "direct"
   },
   "TDOAAL": {
@@ -3111,7 +3142,7 @@
     "description": "Adds voice acting to Chapter 1 (FenrirtheWulf, iamyourmagician, Adoxographist, PatchumiVT, Shami, WesternShadow, Zombi)",
     "lastUpdate": "2025-09-15",
     "author": "6ExtraOrdinary9",
-    "version": "5106aa4",
+    "version": "1b1acad",
     "files": [
       "audio/bgm/Sexy Raidish/1/Voice/A1",
       "audio/bgm/Sexy Raidish/1/Voice/A10",
