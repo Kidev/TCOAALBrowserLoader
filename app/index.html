@@ -463,6 +463,55 @@
           });
         }
 
+        // Healthcheck against the canonical manifest. If anything is
+        // missing, kick the user over to /loader.html so they land on the
+        // manage UI (with the missing-files warning + Play button).
+        // Bugged installs no longer need to know the loader URL to
+        // recover; clean installs go straight into the game.
+        // Resolves true when complete (or when the manifest can't be
+        // loaded: we don't gate boot on a missing manifest).
+        function healthcheckOk(db) {
+          return fetch("/expected-files.json", { cache: "no-cache" })
+            .then(function (r) {
+              return r.ok ? r.json() : null;
+            })
+            .catch(function () {
+              return null;
+            })
+            .then(function (manifest) {
+              if (!manifest || !Array.isArray(manifest.files)) return true;
+              return new Promise(function (resolve) {
+                try {
+                  var req = db
+                    .transaction("assets", "readonly")
+                    .objectStore("assets")
+                    .getAllKeys();
+                  req.onsuccess = function () {
+                    var keys = req.result || [];
+                    var present = new Set();
+                    for (var i = 0; i < keys.length; i++) {
+                      if (typeof keys[i] === "string") {
+                        present.add(keys[i].toLowerCase());
+                      }
+                    }
+                    for (var j = 0; j < manifest.files.length; j++) {
+                      if (!present.has(manifest.files[j].toLowerCase())) {
+                        resolve(false);
+                        return;
+                      }
+                    }
+                    resolve(true);
+                  };
+                  req.onerror = function () {
+                    resolve(true);
+                  };
+                } catch (e) {
+                  resolve(true);
+                }
+              });
+            });
+        }
+
         // Check whether server.js mode is serving the game (no IDB needed).
         function checkServer() {
           return fetch("js/rpg_core.js", { method: "HEAD" })
@@ -726,7 +775,25 @@
                 );
                 return null;
               }
-              return { db: db, files: files, server: false };
+              // Manifest healthcheck: if files are missing, send the user
+              // to /loader.html (manage UI shows the report + a Play
+              // button so they can still launch if they want).
+              // Skip when the user has already acknowledged the missing
+              // files via the loader's Play button: otherwise we'd loop
+              // them right back here on every navigation.
+              var acknowledged = false;
+              try {
+                acknowledged =
+                  localStorage.getItem("_healthcheckAcknowledged") === "1";
+              } catch (e) {}
+              if (acknowledged) return { db: db, files: files, server: false };
+              return healthcheckOk(db).then(function (ok) {
+                if (!ok) {
+                  location.replace("/loader.html");
+                  return null;
+                }
+                return { db: db, files: files, server: false };
+              });
             });
           })
           .then(function (ctx) {

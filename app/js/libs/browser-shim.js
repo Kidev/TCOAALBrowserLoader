@@ -267,8 +267,19 @@
       App.crash = function (msg) {
         console.error("[DRM] CRITICAL:", msg);
       };
-      App.close = function () {};
+      // Quit Game (title menu) -> back to the loader so the user lands
+      // on the manage UI instead of an inert tab. window.close() (which
+      // stock SceneManager.terminate calls) is a no-op for tabs the user
+      // opened themselves, so the original code path was a dead end.
+      App.close = function () {
+        window.location.href = "/loader.html";
+      };
       App.report = function () {};
+    }
+    if (typeof SceneManager !== "undefined") {
+      SceneManager.terminate = function () {
+        window.location.href = "/loader.html";
+      };
     }
 
     // Lang.search: single-language browser variant. The SW synthesises
@@ -801,9 +812,13 @@
         dataPath: "",
         argv: [],
         manifest: {},
-        quit: function () {},
+        quit: function () {
+          window.location.href = "/loader.html";
+        },
         crash: function () {},
-        closeAllWindows: function () {},
+        closeAllWindows: function () {
+          window.location.href = "/loader.html";
+        },
       },
       Window: {
         get: function () {
@@ -811,7 +826,9 @@
             title: "",
             x: 0,
             y: 0,
-            close: function () {},
+            close: function () {
+              window.location.href = "/loader.html";
+            },
             hide: function () {},
             show: function () {},
             focus: function () {},

@@ -1185,64 +1185,6 @@
     });
   }
 
-  function eraseAllClientData() {
-    // 1. Delete both IDB databases (assets + saves)
-    var dbNames = [ASSETS_DB_NAME, SAVE_DB_NAME];
-    var deleted = 0;
-    function afterDelete() {
-      deleted++;
-      if (deleted < dbNames.length) return;
-      // 2. Clear localStorage
-      try {
-        localStorage.clear();
-      } catch (e) {}
-      // 3. Unregister all service workers, then reload to loader
-      if (navigator.serviceWorker) {
-        navigator.serviceWorker
-          .getRegistrations()
-          .then(function (regs) {
-            var p = regs.map(function (r) {
-              return r.unregister();
-            });
-            return Promise.all(p);
-          })
-          .then(function () {
-            window.location.href = "/loader.html";
-          })
-          .catch(function () {
-            window.location.href = "/loader.html";
-          });
-      } else {
-        window.location.href = "/loader.html";
-      }
-    }
-    // Close cached DB handles so deleteDatabase succeeds
-    if (_assetsDb) {
-      try {
-        _assetsDb.close();
-      } catch (e) {}
-      _assetsDb = null;
-    }
-    if (_saveDb) {
-      try {
-        _saveDb.close();
-      } catch (e) {}
-      _saveDb = null;
-    }
-    for (var i = 0; i < dbNames.length; i++) {
-      (function (name) {
-        try {
-          var req = indexedDB.deleteDatabase(name);
-          req.onsuccess = afterDelete;
-          req.onerror = afterDelete;
-          req.onblocked = afterDelete;
-        } catch (e) {
-          afterDelete();
-        }
-      })(dbNames[i]);
-    }
-  }
-
   function checkModInstalled(modId, callback) {
     openAssetsDb(function (db) {
       if (!db) {
@@ -2253,31 +2195,22 @@
         this._listWindow.active &&
         Input.isTriggered("delete")
       ) {
-        if (Input._currentState["alt"]) {
-          // Alt+Del: delete all local files (hidden shortcut)
-          this._showConfirm(
-            "Delete ALL saves & local files?",
-            "eraseAll",
-            null,
-          );
-        } else {
-          var mod = this._listWindow.selectedMod();
-          if (mod && isBuiltIn(mod) && isPluginType(mod.type)) {
-            // Built-in plugin: disable instead of uninstall
-            if (isPluginActive(mod.key)) {
-              this._showConfirm(
-                "Disable " + mod.name + "?",
-                "disablePlugin",
-                mod,
-              );
-            }
-          } else if (
-            mod &&
-            _modStatus[mod.key] &&
-            _modStatus[mod.key].installed
-          ) {
-            this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
+        var mod = this._listWindow.selectedMod();
+        if (mod && isBuiltIn(mod) && isPluginType(mod.type)) {
+          // Built-in plugin: disable instead of uninstall
+          if (isPluginActive(mod.key)) {
+            this._showConfirm(
+              "Disable " + mod.name + "?",
+              "disablePlugin",
+              mod,
+            );
           }
+        } else if (
+          mod &&
+          _modStatus[mod.key] &&
+          _modStatus[mod.key].installed
+        ) {
+          this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
         }
       }
       // Hint button click detection (only with mouse control enabled)
@@ -2512,10 +2445,6 @@
             self._listWindow.refresh();
             self._listWindow.activate();
           });
-          break;
-
-        case "eraseAll":
-          eraseAllClientData();
           break;
 
         default:

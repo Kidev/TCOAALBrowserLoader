@@ -331,6 +331,91 @@
         justify-content: center;
       }
 
+      /* Already-imported management panel (Play / Clear data / healthcheck) */
+      .manage-panel {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.5vmax;
+        max-width: 600px;
+        width: 90%;
+      }
+      .manage-panel.visible {
+        display: flex;
+      }
+      .manage-actions {
+        display: flex;
+        gap: 1.2vmax;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .manage-actions .action-btn.play {
+        background: var(--purple);
+        color: var(--black);
+      }
+      .manage-actions .action-btn.play:hover:not(:disabled) {
+        filter: brightness(1.1);
+      }
+
+      /* Healthcheck / missing-files report */
+      .health-panel {
+        display: none;
+        flex-direction: column;
+        gap: 0.7vmax;
+        width: 100%;
+        padding: 1.2vmax 1.5vmax;
+        background: rgba(20, 20, 20, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 6px;
+      }
+      .health-panel.visible {
+        display: flex;
+      }
+      .health-panel.warn {
+        border-color: rgba(238, 234, 114, 0.5);
+      }
+      .health-panel.ok {
+        border-color: rgba(134, 211, 122, 0.5);
+      }
+      .health-summary {
+        font-size: 0.9vmax;
+        color: rgba(255, 255, 255, 0.75);
+      }
+      .health-summary.ok {
+        color: var(--green);
+      }
+      .health-summary.warn {
+        color: var(--yellow);
+      }
+      .missing-list {
+        display: none;
+        max-height: 18vmax;
+        overflow-y: auto;
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.75vmax;
+        color: #c8a;
+        background: rgba(0, 0, 0, 0.4);
+        padding: 0.5vmax 0.7vmax;
+        border-radius: 4px;
+        white-space: pre;
+        text-align: left;
+      }
+      .missing-list.visible {
+        display: block;
+      }
+      .health-toggle {
+        font-size: 0.75vmax;
+        color: rgba(255, 255, 255, 0.55);
+        cursor: pointer;
+        text-decoration: underline;
+        background: none;
+        border: 0;
+        padding: 0;
+        font-family: inherit;
+        align-self: flex-start;
+      }
+
       /* Bottom note + Steam widget */
       .bottom-note {
         display: flex;
@@ -397,6 +482,48 @@
           Import Game
         </button>
 
+        <!-- Already-imported management panel: Play / Clear data + healthcheck.
+             Hidden by default; revealed on init when IDB already has assets. -->
+        <div class="manage-panel" id="manage-panel">
+          <div class="manage-actions">
+            <button
+              class="action-btn play"
+              id="btn-play"
+              onclick="goToGame()"
+            >
+              Play
+            </button>
+            <button
+              class="action-btn secondary"
+              id="btn-clear"
+              onclick="clearAndReimport()"
+            >
+              Clear data
+            </button>
+            <button
+              class="action-btn secondary"
+              id="btn-reimport"
+              onclick="loadGameFiles()"
+            >
+              Re-import
+            </button>
+          </div>
+          <div class="health-panel" id="health-panel">
+            <div class="health-summary" id="health-summary">
+              Scanning...
+            </div>
+            <button
+              class="health-toggle"
+              id="health-toggle"
+              onclick="toggleMissingList()"
+              style="display:none"
+            >
+              Show missing files
+            </button>
+            <div class="missing-list" id="missing-list"></div>
+          </div>
+        </div>
+
         <div class="progress-wrap" id="progress-wrap">
           <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
           <div class="status" id="status">Preparing...</div>
@@ -422,7 +549,7 @@
           </div>
         </div>
 
-        <p class="info">
+        <p class="info" id="info-fresh">
           Load your owned copy of the game into this browser.<br />
           Your files stay on your device and are never uploaded anywhere.
         </p>
@@ -586,6 +713,8 @@
           if (!present) missing.push(key);
         }
         if (missing.length > 0) {
+          // Required files (engine, plugin registry, CLD) ARE fatal: the
+          // game can't boot without them. Block and explain.
           const labels = missing
             .map((k) => "  - " + (REQUIRED_LABELS[k] || k))
             .join("\n");
@@ -600,10 +729,6 @@
           return false;
         }
 
-        // Surface non-required skipped files. They're not fatal, but the
-        // user should know an incomplete import landed in IDB so they can
-        // re-import if a needed plugin/asset went missing. Common cause
-        // on mobile: transient memory pressure during File.arrayBuffer().
         if (skipped.length > 0) {
           const preview = skipped
             .slice(0, 5)
@@ -635,6 +760,25 @@
         }
         setStatus("Registering service worker...", "ok");
         await registerSW();
+
+        // Healthcheck: compare imported files against the expected list
+        // (parse-tree.js -> expected-files.json). Anything missing is
+        // surfaced to the user but does NOT block: mods, partial copies,
+        // and version drift are all valid reasons for some files to be
+        // absent. The user can choose to play anyway or re-import.
+        setStatus("Running healthcheck...", "ok");
+        const health = await runHealthcheck(db);
+        if (health && health.missing.length > 0) {
+          showImportWarning(health);
+          return true;
+        }
+
+        // Clean import: clear any stale acknowledgement so future visits
+        // run the healthcheck honestly.
+        try {
+          localStorage.removeItem("_healthcheckAcknowledged");
+        } catch (e) {}
+
         setStatus("Ready! Launching game...", "ok");
         const fav = document.getElementById("favicon");
         fav.href = "icon/icon.png";
@@ -643,6 +787,133 @@
           window.location.href = "/index.html";
         }, 600);
         return true;
+      }
+
+      // Healthcheck: scan IDB against the expected file manifest.
+      // Returns { expected, present, missing, percent } or null if the
+      // manifest can't be loaded (then we silently skip the check).
+      var _expectedManifestCache = null;
+      async function loadExpectedManifest() {
+        if (_expectedManifestCache) return _expectedManifestCache;
+        try {
+          const r = await fetch("/expected-files.json", {
+            cache: "no-cache",
+          });
+          if (!r.ok) return null;
+          const j = await r.json();
+          _expectedManifestCache = j;
+          return j;
+        } catch (e) {
+          console.warn("[loader] expected-files.json fetch failed:", e);
+          return null;
+        }
+      }
+
+      async function getAllKeys(db) {
+        return new Promise((resolve) => {
+          try {
+            const req = db
+              .transaction(STORE_NAME, "readonly")
+              .objectStore(STORE_NAME)
+              .getAllKeys();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => resolve([]);
+          } catch {
+            resolve([]);
+          }
+        });
+      }
+
+      async function runHealthcheck(db) {
+        const manifest = await loadExpectedManifest();
+        if (!manifest || !Array.isArray(manifest.files)) return null;
+
+        const keys = await getAllKeys(db);
+        const present = new Set();
+        for (const k of keys) {
+          if (typeof k === "string") present.add(k.toLowerCase());
+        }
+
+        const missing = [];
+        for (const path of manifest.files) {
+          if (!present.has(path.toLowerCase())) missing.push(path);
+        }
+
+        const total = manifest.files.length;
+        const found = total - missing.length;
+        return {
+          total: total,
+          found: found,
+          missing: missing,
+          percent: total > 0 ? Math.round((found / total) * 100) : 100,
+        };
+      }
+
+      // Render healthcheck result into the manage-panel's health section.
+      function renderHealthcheck(health) {
+        const $hp = document.getElementById("health-panel");
+        const $sum = document.getElementById("health-summary");
+        const $tog = document.getElementById("health-toggle");
+        const $list = document.getElementById("missing-list");
+        if (!$hp) return;
+
+        $hp.classList.add("visible");
+        $hp.classList.remove("ok", "warn");
+        $sum.classList.remove("ok", "warn");
+
+        if (!health) {
+          $sum.textContent =
+            "Healthcheck unavailable (could not load expected-files.json).";
+          $tog.style.display = "none";
+          $list.classList.remove("visible");
+          return;
+        }
+        if (health.missing.length === 0) {
+          $hp.classList.add("ok");
+          $sum.classList.add("ok");
+          $sum.textContent =
+            "All " + health.total + " expected files present.";
+          $tog.style.display = "none";
+          $list.classList.remove("visible");
+          return;
+        }
+        $hp.classList.add("warn");
+        $sum.classList.add("warn");
+        $sum.textContent =
+          health.missing.length +
+          " file(s) missing out of " +
+          health.total +
+          " (" +
+          health.percent +
+          "% present). The game may still run; mods or version drift can cause this.";
+        $list.textContent = health.missing.join("\n");
+        $tog.style.display = "";
+        $tog.textContent =
+          "Show missing files (" + health.missing.length + ")";
+      }
+
+      function toggleMissingList() {
+        const $list = document.getElementById("missing-list");
+        const $tog = document.getElementById("health-toggle");
+        const visible = $list.classList.toggle("visible");
+        $tog.textContent = visible
+          ? "Hide missing files"
+          : "Show missing files (" +
+            $list.textContent.split("\n").filter(Boolean).length +
+            ")";
+      }
+
+      // Shown after a partial import completes: warn the user, render
+      // the missing list, and let them choose Play / Re-import.
+      function showImportWarning(health) {
+        showProgress(false);
+        setStatus("");
+        const $managePanel = document.getElementById("manage-panel");
+        const $info = document.getElementById("info-fresh");
+        if ($info) $info.style.display = "none";
+        if ($load) $load.style.display = "none";
+        if ($managePanel) $managePanel.classList.add("visible");
+        renderHealthcheck(health);
       }
 
       // CLD (Compiled Language Data) extraction
@@ -937,6 +1208,10 @@
         }
 
         $load.disabled = true;
+        // Re-import from manage UI: hide manage panel so the progress bar
+        // is visible and the page doesn't read as both states at once.
+        const $managePanel = document.getElementById("manage-panel");
+        if ($managePanel) $managePanel.classList.remove("visible");
         showProgress(true);
         setStatus("Preparing...");
 
@@ -964,10 +1239,74 @@
         }
       }
 
-      // Init: wire up file input + auto-redirect if files already loaded.
-      // No "Play now" button: if files are present we go straight to the
-      // game, no extra click needed. If something on the game page fails
-      // it shows its own error UI with a "clear data" button.
+      // "Play": jump back to the game. SW/IDB are intact already.
+      function goToGame() {
+        const fav = document.getElementById("favicon");
+        if (fav) {
+          fav.href = "icon/icon.png";
+          fav.type = "image/png";
+        }
+        // Acknowledge any missing-files state so index.html's healthcheck
+        // skips the redirect-back-to-loader. Cleared by clearAndReimport
+        // (localStorage.clear()) and on a successful clean import.
+        try {
+          localStorage.setItem("_healthcheckAcknowledged", "1");
+        } catch (e) {}
+        window.location.href = "/index.html";
+      }
+
+      // "Clear data": wipe IDB/SW/caches and stay on the loader so the
+      // user can re-import. Mirrors resetAndRetry but stays on /loader.html.
+      async function clearAndReimport() {
+        const $btnClear = document.getElementById("btn-clear");
+        if ($btnClear) {
+          $btnClear.disabled = true;
+          $btnClear.textContent = "Clearing...";
+        }
+
+        if ("serviceWorker" in navigator) {
+          try {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister()));
+          } catch (e) {}
+        }
+        if ("caches" in self) {
+          try {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k)));
+          } catch (e) {}
+        }
+        try {
+          localStorage.clear();
+        } catch (e) {}
+
+        function dropDb(name) {
+          return new Promise((resolve) => {
+            try {
+              const req = indexedDB.deleteDatabase(name);
+              req.onsuccess = resolve;
+              req.onerror = resolve;
+              req.onblocked = resolve;
+            } catch {
+              resolve();
+            }
+          });
+        }
+        await dropDb("tcoaal");
+        await dropDb("tcoaal-saves");
+
+        location.replace("/loader.html");
+      }
+
+      // Init: dual-mode UI.
+      //   Empty IDB  -> show import button (default state).
+      //   Populated  -> show manage panel (Play / Clear / Re-import) +
+      //                 healthcheck against expected-files.json.
+      //
+      // We never auto-redirect away from /loader.html anymore: the user
+      // landed here on purpose (manage their install) or got redirected
+      // from index.html (no IDB, fresh visit). index.html handles the
+      // fresh-visit redirect to here.
 
       (async () => {
         document
@@ -984,12 +1323,17 @@
           return;
         }
 
-        if (await hasAnyAsset(db)) {
-          // Game files already imported -> straight to game.
-          // index.html validates the import and shows its own
-          // recovery UI if anything's wrong.
-          location.replace("/index.html");
-        }
+        if (!(await hasAnyAsset(db))) return; // fresh: default UI shows
+
+        // Already-imported: show manage panel and run healthcheck.
+        const $managePanel = document.getElementById("manage-panel");
+        const $info = document.getElementById("info-fresh");
+        if ($info) $info.style.display = "none";
+        if ($load) $load.style.display = "none";
+        if ($managePanel) $managePanel.classList.add("visible");
+
+        const health = await runHealthcheck(db);
+        renderHealthcheck(health);
       })();
     </script>
   </body>

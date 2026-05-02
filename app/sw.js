@@ -638,6 +638,7 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "js/libs/browser-shim.js" ||
     logicalPath === "js/libs/lang-shim.js" ||
     logicalPath === "mods.json" ||
+    logicalPath === "expected-files.json" ||
     logicalPath === "favicon.ico" ||
     logicalPath === "img/mods.png"
   ) {
