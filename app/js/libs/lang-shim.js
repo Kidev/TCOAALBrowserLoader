@@ -33,25 +33,29 @@
   //      them as inline <script> tags in the original order. Inline scripts
   //      cannot abort mid-load and execute synchronously when appended, so
   //      ordering is preserved without relying on async=false semantics.
-  //      A network failure produces an explicit console.error with the URL
-  //      *before* PluginManager.checkErrors throws.
   //   2. window.__pluginsLoaded is exposed as a Promise so the bootstrap can
   //      hold off on the boot sentinel until every plugin has executed.
+  //   3. checkErrors logs and clears _errorUrls instead of throwing. Stock
+  //      RPG Maker treats any failed plugin as fatal, but on the browser
+  //      build a user's imported www/ may legitimately omit a plugin that
+  //      plugins.js still lists (game version drift, regional builds, etc.).
+  //      Critical failures (DRM fragments, AudioStreaming) surface their
+  //      own errors downstream, so swallowing the throw here only affects
+  //      truly optional plugins.
   if (
     typeof PluginManager !== "undefined" &&
     typeof window.__pluginsLoaded === "undefined"
   ) {
-    var _origCheckErrors = PluginManager.checkErrors;
     PluginManager.checkErrors = function () {
       if (this._errorUrls && this._errorUrls.length) {
         console.error(
           "[PluginManager] " +
             this._errorUrls.length +
-            " plugin(s) failed to load:\n  " +
+            " plugin(s) failed to load (continuing without them):\n  " +
             this._errorUrls.join("\n  "),
         );
+        this._errorUrls = [];
       }
-      return _origCheckErrors.call(this);
     };
 
     PluginManager.onError = function (e) {

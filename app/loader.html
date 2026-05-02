@@ -540,11 +540,30 @@
         setStatus(`Loading 0 / ${total} files...`);
         setProgress(0, total);
 
+        // Read with retry. iOS Safari and Android Chrome can throw
+        // transient OOM/IO errors mid-batch on File.arrayBuffer() when
+        // many files are read in quick succession. A short delay and a
+        // retry attempt almost always succeeds: the alternative is a
+        // silently incomplete IDB (file in the picker, not in IDB) that
+        // surfaces later as a "HTTP 404" from the SW for a single file.
+        async function readWithRetry(getBuffer, attempts) {
+          let lastErr = null;
+          for (let i = 0; i < attempts; i++) {
+            try {
+              return await getBuffer();
+            } catch (err) {
+              lastErr = err;
+              await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+            }
+          }
+          throw lastErr;
+        }
+
         let done = 0;
         const skipped = [];
         for (const { path: filePath, getBuffer } of entries) {
           try {
-            const buffer = await getBuffer();
+            const buffer = await readWithRetry(getBuffer, 3);
             await putAsset(db, filePath, buffer);
           } catch (err) {
             skipped.push(filePath);
@@ -579,6 +598,28 @@
           );
           $load.disabled = false;
           return false;
+        }
+
+        // Surface non-required skipped files. They're not fatal, but the
+        // user should know an incomplete import landed in IDB so they can
+        // re-import if a needed plugin/asset went missing. Common cause
+        // on mobile: transient memory pressure during File.arrayBuffer().
+        if (skipped.length > 0) {
+          const preview = skipped
+            .slice(0, 5)
+            .map((p) => "  - " + p)
+            .join("\n");
+          const more =
+            skipped.length > 5
+              ? "\n  ... and " + (skipped.length - 5) + " more"
+              : "";
+          console.warn(
+            "[loader] " +
+              skipped.length +
+              " file(s) skipped during import:\n" +
+              preview +
+              more,
+          );
         }
 
         setStatus(`${total} files stored. Extracting language data...`, "ok");
