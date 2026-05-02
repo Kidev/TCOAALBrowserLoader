@@ -18,6 +18,112 @@
 (function () {
   "use strict";
 
+  // Plugin loader hardening (iOS Safari mobile fix)
+  //
+  // Stock PluginManager.loadScript appends <script async=false src=...> for
+  // each plugin. On iOS Safari mobile, dynamically-inserted async=false
+  // scripts going through the Service Worker can intermittently abort with a
+  // DOMException(AbortError). The script's onerror fires, the URL lands in
+  // PluginManager._errorUrls, and SceneManager.initialize() throws "Failed
+  // to load: <url>". The user sees only stack frames in the console because
+  // Safari's Error.stack format omits the message.
+  //
+  // Two fixes:
+  //   1. Pre-fetch every plugin source via fetch() in parallel, then inject
+  //      them as inline <script> tags in the original order. Inline scripts
+  //      cannot abort mid-load and execute synchronously when appended, so
+  //      ordering is preserved without relying on async=false semantics.
+  //      A network failure produces an explicit console.error with the URL
+  //      *before* PluginManager.checkErrors throws.
+  //   2. window.__pluginsLoaded is exposed as a Promise so the bootstrap can
+  //      hold off on the boot sentinel until every plugin has executed.
+  if (
+    typeof PluginManager !== "undefined" &&
+    typeof window.__pluginsLoaded === "undefined"
+  ) {
+    var _origCheckErrors = PluginManager.checkErrors;
+    PluginManager.checkErrors = function () {
+      if (this._errorUrls && this._errorUrls.length) {
+        console.error(
+          "[PluginManager] " +
+            this._errorUrls.length +
+            " plugin(s) failed to load:\n  " +
+            this._errorUrls.join("\n  "),
+        );
+      }
+      return _origCheckErrors.call(this);
+    };
+
+    PluginManager.onError = function (e) {
+      var url = (e && e.target && e.target._url) || "<unknown>";
+      console.error("[PluginManager] Script load error:", url);
+      this._errorUrls.push(url);
+    };
+
+    PluginManager.setup = function (plugins) {
+      var self = this;
+      var queue = [];
+      plugins.forEach(function (plugin) {
+        if (plugin.status && self._scripts.indexOf(plugin.name) < 0) {
+          self.setParameters(plugin.name, plugin.parameters);
+          self._scripts.push(plugin.name);
+          var url = self._path + plugin.name + ".js";
+          queue.push({
+            url: url,
+            text: null,
+            error: null,
+            promise: fetch(url, {
+              credentials: "same-origin",
+              cache: "no-cache",
+            })
+              .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.text();
+              })
+              .then(
+                function (text) {
+                  return { text: text, error: null };
+                },
+                function (err) {
+                  return { text: null, error: err };
+                },
+              ),
+          });
+        }
+      });
+
+      window.__pluginsLoaded = Promise.all(
+        queue.map(function (q) {
+          return q.promise;
+        }),
+      ).then(function (results) {
+        results.forEach(function (r, i) {
+          var item = queue[i];
+          if (r.error) {
+            console.error(
+              "[PluginManager] Failed to fetch " + item.url + ":",
+              r.error.message || r.error,
+            );
+            self._errorUrls.push(item.url);
+            return;
+          }
+          try {
+            var script = document.createElement("script");
+            script.type = "text/javascript";
+            script.text = r.text + "\n//# sourceURL=" + item.url + "\n";
+            document.head.appendChild(script);
+          } catch (ex) {
+            console.error(
+              "[PluginManager] Failed to execute " + item.url + ":",
+              ex,
+            );
+            self._errorUrls.push(item.url);
+          }
+        });
+      });
+    };
+  }
+
   // IndexedDB save persistence
   // localStorage is the primary (synchronous) store. Writes are mirrored
   // to IndexedDB asynchronously. On page load, if localStorage is empty
@@ -439,9 +545,21 @@
       document.addEventListener("mousedown", this._onMouseDown.bind(this));
       document.addEventListener("mousemove", this._onMouseMove.bind(this));
       document.addEventListener("mouseup", this._onMouseUp.bind(this));
-      document.addEventListener("wheel", this._onWheel.bind(this), passiveFalse);
-      document.addEventListener("touchstart", this._onTouchStart.bind(this), passiveFalse);
-      document.addEventListener("touchmove", this._onTouchMove.bind(this), passiveFalse);
+      document.addEventListener(
+        "wheel",
+        this._onWheel.bind(this),
+        passiveFalse,
+      );
+      document.addEventListener(
+        "touchstart",
+        this._onTouchStart.bind(this),
+        passiveFalse,
+      );
+      document.addEventListener(
+        "touchmove",
+        this._onTouchMove.bind(this),
+        passiveFalse,
+      );
       document.addEventListener("touchend", this._onTouchEnd.bind(this));
       document.addEventListener("touchcancel", this._onTouchCancel.bind(this));
       document.addEventListener("pointerdown", this._onPointerDown.bind(this));
@@ -2553,7 +2671,13 @@
         var bgRect = this.itemRect(index);
         var borderColor = "#88ff88";
         var t = 2;
-        this.contents.fillRect(bgRect.x, bgRect.y, bgRect.width, t, borderColor);
+        this.contents.fillRect(
+          bgRect.x,
+          bgRect.y,
+          bgRect.width,
+          t,
+          borderColor,
+        );
         this.contents.fillRect(
           bgRect.x,
           bgRect.y + bgRect.height - t,

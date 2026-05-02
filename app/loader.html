@@ -43,7 +43,6 @@
         overflow: hidden;
       }
 
-      /* Full-screen overlay (matches demo forced-import-overlay) */
       .overlay {
         position: fixed;
         top: 0;
@@ -165,10 +164,15 @@
         align-items: center;
         gap: 2vmax;
         padding: 3vmax;
+        /* Reserve space at the bottom for the absolutely-positioned
+           bottom-note so a tall error panel can scroll without colliding
+           with the steam widget. */
+        padding-bottom: 220px;
         text-align: center;
-        height: 100vh;
+        min-height: 100vh;
         justify-content: center;
         position: relative;
+        overflow-y: auto;
       }
 
       .content h1 {
@@ -190,7 +194,6 @@
       .content .info {
         font-size: 0.9vmax;
         line-height: 1.65;
-        color: rgba(255, 255, 255, 0.6);
         max-width: 500px;
       }
 
@@ -234,7 +237,6 @@
         background: var(--bg-color-section-lighter);
       }
 
-      /* Progress bar (demo import-progress style) */
       .progress-wrap {
         display: none;
         width: 90%;
@@ -283,6 +285,52 @@
         color: var(--green);
       }
 
+      .error-panel {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.2vmax;
+        max-width: 540px;
+        margin-top: 1.5vmax;
+        padding: 1.5vmax 2vmax;
+        background: #1a0d0e;
+        border: 1px solid rgba(149, 84, 86, 0.7);
+        border-radius: 6px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+      }
+      .error-panel.visible {
+        display: flex;
+      }
+      .error-panel h2 {
+        color: var(--red);
+        font-size: 1.3vmax;
+        font-weight: normal;
+        margin: 0;
+      }
+      .error-panel .error-body {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 0.95vmax;
+        line-height: 1.5;
+        text-align: center;
+      }
+      .error-panel .error-detail {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.8vmax;
+        color: #c8a;
+        background: rgba(0, 0, 0, 0.3);
+        padding: 0.6vmax 0.8vmax;
+        border-radius: 4px;
+        max-width: 100%;
+        word-break: break-word;
+      }
+      .error-panel .error-actions {
+        display: flex;
+        gap: 1vmax;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
       /* Bottom note + Steam widget */
       .bottom-note {
         display: flex;
@@ -290,15 +338,13 @@
         align-items: center;
         gap: 0;
         margin: 0;
-        padding: 2vmax;
         line-height: 1;
-        position: absolute;
+        position: fixed;
         bottom: 0;
         left: 50%;
         transform: translateX(-50%);
-        color: #999;
-        font-size: 0.9vmax;
         font-style: italic;
+        z-index: 5;
       }
 
       #steam-buy-frame {
@@ -351,18 +397,29 @@
           Import Game
         </button>
 
-        <button
-          class="action-btn secondary"
-          id="btn-play"
-          onclick="playGame()"
-          disabled
-        >
-          Play now
-        </button>
-
         <div class="progress-wrap" id="progress-wrap">
           <div class="bar-track"><div class="bar-fill" id="bar"></div></div>
           <div class="status" id="status">Preparing...</div>
+        </div>
+
+        <div class="error-panel" id="error-panel">
+          <h2 id="error-title">Import problem</h2>
+          <div class="error-body" id="error-body"></div>
+          <div class="error-detail" id="error-detail"></div>
+          <div class="error-actions">
+            <button
+              class="action-btn secondary"
+              onclick="resetAndRetry()"
+            >
+              Clear data &amp; try again
+            </button>
+            <button
+              class="action-btn secondary"
+              onclick="dismissError()"
+            >
+              Try again
+            </button>
+          </div>
         </div>
 
         <p class="info">
@@ -389,9 +446,16 @@
 
       // IndexedDB helpers
 
-      const DB_NAME = "tcoaal";
-      const DB_VERSION = 1;
-      const STORE_NAME = "assets";
+      var DB_NAME = "tcoaal";
+      var DB_VERSION = 1;
+      var STORE_NAME = "assets";
+
+      // CLD constants are referenced by REQUIRED_FILES below, so they have
+      // to be initialised before that array is built. (`var` hoists the
+      // declaration but not the assignment, so order still matters.)
+      var TCOAAL_SIG = [84, 67, 79, 65, 65, 76]; // "TCOAAL"
+      var CLD_IDB_KEY = "data/9c7050ae76645487";
+      var LANG_DATA_CACHE_KEY = "__lang_data__";
 
       function openDB() {
         return new Promise((resolve, reject) => {
@@ -426,30 +490,64 @@
 
       // File-processing pipeline
 
+      // Files we require to be present after a successful import. If any
+      // are missing the user almost certainly picked the wrong directory
+      // (the game's parent folder rather than its `www`, or an old build
+      // missing the encrypted CLD).
+      var REQUIRED_FILES = [
+        "js/rpg_core.js",
+        "js/plugins.js",
+        CLD_IDB_KEY, // data/9c7050ae76645487 (encrypted language data)
+      ];
+      var REQUIRED_LABELS = {
+        "js/rpg_core.js": "RPG Maker engine (js/rpg_core.js)",
+        "js/plugins.js": "plugin registry (js/plugins.js)",
+        [CLD_IDB_KEY]: "language data (data/9c7050ae76645487)",
+      };
+
       /**
        * Store an array of {path, getBuffer} descriptors into IndexedDB.
        * getBuffer is an async function that returns an ArrayBuffer.
+       *
+       * Returns true on success, false (with error UI shown) on failure.
        */
       async function storeFiles(entries) {
         let db;
         try {
           db = await openDB();
         } catch (err) {
-          setStatus("Failed to open IndexedDB: " + err.message, "error");
+          showError(
+            "Browser storage unavailable",
+            "Couldn't open IndexedDB. Private browsing or " +
+              "blocked storage will prevent the game from loading.",
+            err.message,
+          );
           $load.disabled = false;
           return false;
         }
 
         const total = entries.length;
+        if (total === 0) {
+          showError(
+            "Nothing to import",
+            "No files were selected. Pick the game's folder " +
+              "(the one named after the game, or its `www` " +
+              "subfolder).",
+          );
+          $load.disabled = false;
+          return false;
+        }
         setStatus(`Loading 0 / ${total} files...`);
         setProgress(0, total);
 
         let done = 0;
+        const skipped = [];
         for (const { path: filePath, getBuffer } of entries) {
           try {
             const buffer = await getBuffer();
             await putAsset(db, filePath, buffer);
           } catch (err) {
+            skipped.push(filePath);
             console.warn("[loader] Skipping", filePath, err);
           }
           done++;
@@ -459,8 +557,41 @@
           }
         }
 
+        // Validate required files made it into IDB. A user who picked
+        // the wrong directory will still see "Loading X / Y" succeed but
+        // the game will boot into a broken state. Catch it now.
+        setStatus("Validating import...", "ok");
+        const missing = [];
+        for (const key of REQUIRED_FILES) {
+          const present = await getAsset(db, key);
+          if (!present) missing.push(key);
+        }
+        if (missing.length > 0) {
+          const labels = missing
+            .map((k) => "  - " + (REQUIRED_LABELS[k] || k))
+            .join("\n");
+          showError(
+            "Required files missing",
+            "Some files the game needs to start weren't found in the " +
+              "folder you selected. Make sure you pick the game's folder " +
+              "(the one named after the game) or its `www` subfolder.",
+            "Missing:\n" + labels,
+          );
+          $load.disabled = false;
+          return false;
+        }
+
         setStatus(`${total} files stored. Extracting language data...`, "ok");
-        await extractLangData(db);
+        const langOk = await extractLangData(db);
+        if (!langOk) {
+          showError(
+            "Language data couldn't be extracted",
+            "The CLD file was found but couldn't be decoded. The import " +
+              "is incomplete. Clear and try again.",
+          );
+          $load.disabled = false;
+          return false;
+        }
         setStatus("Registering service worker...", "ok");
         await registerSW();
         setStatus("Ready! Launching game...", "ok");
@@ -480,9 +611,8 @@
       // We decrypt it during import and store the plain JSON as '__lang_data__'
       // so the SW and lang-shim.js can serve it without runtime decryption.
 
-      const TCOAAL_SIG = [84, 67, 79, 65, 65, 76]; // "TCOAAL"
-      const CLD_IDB_KEY = "data/9c7050ae76645487";
-      const LANG_DATA_CACHE_KEY = "__lang_data__";
+      // (TCOAAL_SIG / CLD_IDB_KEY / LANG_DATA_CACHE_KEY are declared at
+      // the top of this script so REQUIRED_FILES can see them.)
 
       function cldFileMask(hashedRelPath) {
         const fname = hashedRelPath.split("/").pop().toUpperCase();
@@ -537,6 +667,9 @@
         });
       }
 
+      // Extract & cache the plain CLD JSON. Returns true on success,
+      // false on any decode/parse failure (so the caller can surface a
+      // clear "import incomplete" error).
       async function extractLangData(db) {
         const raw = await getAsset(db, CLD_IDB_KEY);
         if (!raw) {
@@ -545,7 +678,7 @@
               CLD_IDB_KEY +
               ") not found in imported data",
           );
-          return;
+          return false;
         }
 
         // Normalize to ArrayBuffer (IDB may return typed array or Blob)
@@ -558,7 +691,7 @@
           buf = raw.buffer;
         } else {
           console.warn("[loader] CLD: unexpected IDB type:", typeof raw);
-          return;
+          return false;
         }
 
         // Decrypt (no-op if not TCOAAL-encrypted)
@@ -569,7 +702,7 @@
               (decrypted ? decrypted.length : 0) +
               " bytes)",
           );
-          return;
+          return false;
         }
         const sig = new TextDecoder().decode(decrypted.slice(0, 8));
         if (sig !== "LANGDATA") {
@@ -585,7 +718,7 @@
               hexPreview +
               ")",
           );
-          return;
+          return false;
         }
         const jsonStr = new TextDecoder().decode(decrypted.slice(8));
         // Validate JSON before storing
@@ -593,23 +726,26 @@
           JSON.parse(jsonStr);
         } catch (e) {
           console.warn("[loader] CLD JSON parse failed:", e);
-          return;
+          return false;
         }
         await putAsset(db, LANG_DATA_CACHE_KEY, jsonStr);
-        /*console.log(
-          "[loader] Language data extracted and cached (" +
-            jsonStr.length +
-            " bytes)",
-        );*/
+        return true;
       }
 
       // UI helpers
+      // Declared with `var` so the inline onclick handlers (loadGameFiles,
+      // dismissError) can reference them no matter where in the script
+      // they're invoked from: `const` puts them in a temporal dead zone
+      // until execution reaches this point.
 
-      const $bar = document.getElementById("bar");
-      const $status = document.getElementById("status");
-      const $wrap = document.getElementById("progress-wrap");
-      const $load = document.getElementById("btn-load");
-      const $play = document.getElementById("btn-play");
+      var $bar = document.getElementById("bar");
+      var $status = document.getElementById("status");
+      var $wrap = document.getElementById("progress-wrap");
+      var $load = document.getElementById("btn-load");
+      var $err = document.getElementById("error-panel");
+      var $errTitle = document.getElementById("error-title");
+      var $errBody = document.getElementById("error-body");
+      var $errDetail = document.getElementById("error-detail");
 
       function showProgress(visible) {
         $wrap.classList.toggle("visible", visible);
@@ -623,6 +759,92 @@
       function setStatus(text, cls) {
         $status.textContent = text;
         $status.className = "status" + (cls ? " " + cls : "");
+      }
+
+      function showError(title, body, detail) {
+        $errTitle.textContent = title || "Import problem";
+        $errBody.textContent = body || "";
+        if (detail) {
+          $errDetail.textContent = detail;
+          $errDetail.style.display = "";
+        } else {
+          $errDetail.style.display = "none";
+        }
+        $err.classList.add("visible");
+        showProgress(false);
+        setStatus("");
+      }
+
+      function dismissError() {
+        $err.classList.remove("visible");
+        $load.disabled = false;
+      }
+
+      // Hard reset: drop everything we persisted and reload into the
+      // base loader UI. Order matches index.html's __bootClearAndReload:
+      // unregister SWs first so they release their IDB handle, then
+      // wipe caches/localStorage, then delete the DBs (waiting for the
+      // delete request to truly complete: onblocked means the SW is
+      // still holding it).
+      async function resetAndRetry() {
+        const btn = $err.querySelector("button.action-btn");
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Clearing...";
+        }
+
+        if ("serviceWorker" in navigator) {
+          try {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map((r) => r.unregister()));
+          } catch (e) {}
+        }
+        if ("caches" in self) {
+          try {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k)));
+          } catch (e) {}
+        }
+        try {
+          localStorage.clear();
+        } catch (e) {}
+
+        function dropDb(name) {
+          return new Promise((resolve) => {
+            function attempt(retries) {
+              let settled = false;
+              let req;
+              try {
+                req = indexedDB.deleteDatabase(name);
+              } catch (e) {
+                return resolve();
+              }
+              req.onsuccess = () => {
+                settled = true;
+                resolve();
+              };
+              req.onerror = () => {
+                settled = true;
+                resolve();
+              };
+              req.onblocked = () => {
+                if (settled) return;
+                if (retries > 0) {
+                  settled = true;
+                  setTimeout(() => attempt(retries - 1), 250);
+                } else {
+                  settled = true;
+                  resolve();
+                }
+              };
+            }
+            attempt(2);
+          });
+        }
+        await dropDb("tcoaal");
+        await dropDb("tcoaal-saves");
+
+        location.replace("/loader.html");
       }
 
       // Service Worker registration
@@ -653,6 +875,7 @@
       }
 
       function loadGameFiles() {
+        dismissError();
         document.getElementById("file-input").click();
       }
 
@@ -663,7 +886,14 @@
        */
       async function onFileInputChange(e) {
         const fileList = e.target.files;
-        if (!fileList || fileList.length === 0) return;
+        if (!fileList || fileList.length === 0) {
+          showError(
+            "No folder selected",
+            "Pick the game's folder (the one named after the " +
+              "game, or its `www` subfolder) to import.",
+          );
+          return;
+        }
 
         $load.disabled = true;
         showProgress(true);
@@ -679,23 +909,24 @@
           })
           .filter((e) => e.path); // discard empty paths
 
-        await storeFiles(entries);
-      }
-
-      async function playGame() {
-        // Ensure CLD is pre-extracted (may be missing if imported before this change)
         try {
-          const db = await openDB();
-          const cached = await getAsset(db, LANG_DATA_CACHE_KEY);
-          if (!cached) await extractLangData(db);
-        } catch (e) {
-          console.warn("[loader] CLD check on play:", e);
+          await storeFiles(entries);
+        } catch (err) {
+          console.error("[loader] Import failed:", err);
+          showError(
+            "Import failed",
+            "Something went wrong while importing. Try again, or " +
+              "clear data and re-import.",
+            err && err.message ? err.message : String(err),
+          );
+          $load.disabled = false;
         }
-        await registerSW();
-        window.location.href = "/index.html";
       }
 
-      // Init: wire up file input + check if files are already loaded
+      // Init: wire up file input + auto-redirect if files already loaded.
+      // No "Play now" button: if files are present we go straight to the
+      // game, no extra click needed. If something on the game page fails
+      // it shows its own error UI with a "clear data" button.
 
       (async () => {
         document
@@ -706,15 +937,17 @@
         try {
           db = await openDB();
         } catch {
+          // IDB unavailable (private browsing, locked storage). Show
+          // import button anyway; the import attempt will surface a
+          // proper error.
           return;
         }
 
         if (await hasAnyAsset(db)) {
-          $play.disabled = false;
-          $play.textContent = "Play now  (files already loaded)";
-          const fav = document.getElementById("favicon");
-          fav.href = "icon/icon.png";
-          fav.type = "image/png";
+          // Game files already imported -> straight to game.
+          // index.html validates the import and shows its own
+          // recovery UI if anything's wrong.
+          location.replace("/index.html");
         }
       })();
     </script>

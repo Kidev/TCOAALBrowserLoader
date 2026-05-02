@@ -301,7 +301,10 @@
           this.list[LIST_KEY] = "languages/" + LIST_KEY + "/dialogue.loc";
           this.offc = [LIST_KEY];
           this.data = this.data || {};
-          if (data) {
+          // Reject non-object payloads (e.g. JSON.parse('""') -> '').
+          // Writing imageLUT onto a primitive throws a confusing
+          // "Cannot create property imageLUT on string ''" on mobile.
+          if (data && typeof data === "object" && !Array.isArray(data)) {
             // TCOAALili-style DRM requires imageLUT; base DRM requires
             // imgFiles. Guarantee both so Lang.isValid passes.
             if (!data.imageLUT || typeof data.imageLUT !== "object")
@@ -309,6 +312,10 @@
             if (!data.imgFiles || typeof data.imgFiles !== "object")
               data.imgFiles = {};
             this.data[LIST_KEY] = data;
+          } else if (json) {
+            console.warn(
+              "[browser-shim] Lang.search: language data was not a JSON object",
+            );
           }
         } catch (e) {
           console.warn("[browser-shim] Lang.search failed:", e);

@@ -22,7 +22,7 @@
         position: fixed;
         inset: 0;
         background: #000;
-        color: #888;
+        color: #aaa;
         font-family: "Georgia", serif;
         display: flex;
         align-items: center;
@@ -36,10 +36,136 @@
         opacity: 0;
         pointer-events: none;
       }
+
+      /* Error overlay shown when boot fails or a runtime error occurs */
+      #boot-error {
+        position: fixed;
+        inset: 0;
+        background: #0a0a0a;
+        color: #d3d0c0;
+        font-family: "Georgia", serif;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        z-index: 10000;
+        overflow: auto;
+      }
+      #boot-error.visible {
+        display: flex;
+      }
+      #boot-error h1 {
+        color: #ec83c3;
+        font-size: 22px;
+        font-weight: normal;
+        letter-spacing: 0.05em;
+        margin: 0 0 12px;
+        text-align: center;
+      }
+      #boot-error p {
+        color: rgba(255, 255, 255, 0.75);
+        max-width: 540px;
+        line-height: 1.55;
+        margin: 0 0 16px;
+        font-size: 15px;
+        text-align: center;
+      }
+      #boot-error .err-msg {
+        max-width: 540px;
+        background: #1a1a1a;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 12px 14px;
+        color: #ff9aa2;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 13px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0 0 18px;
+        max-height: 30vh;
+        overflow: auto;
+      }
+      #boot-error .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        justify-content: center;
+      }
+      #boot-error button {
+        background: #555;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 10px 18px;
+        font-size: 15px;
+        font-family: "Georgia", serif;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      #boot-error button:hover {
+        background: #666;
+      }
+      #boot-error button.danger {
+        background: #955456;
+      }
+      #boot-error button.danger:hover {
+        background: #a8616a;
+      }
+      #boot-error .details-btn {
+        background: transparent;
+        color: #888;
+        font-size: 12px;
+        text-decoration: underline;
+        padding: 6px 10px;
+        margin-top: 14px;
+      }
+      #boot-error .details-btn:hover {
+        background: transparent;
+        color: #aaa;
+      }
+      #boot-error .diag {
+        display: none;
+        max-width: 540px;
+        margin-top: 12px;
+        font-size: 11px;
+        color: #888;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        background: #0f0f0f;
+        border: 1px solid #222;
+        border-radius: 4px;
+        padding: 10px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #boot-error .diag.visible {
+        display: block;
+      }
     </style>
   </head>
   <body>
     <div id="boot-splash">Loading...</div>
+
+    <div id="boot-error">
+      <h1 id="err-title">Something went wrong</h1>
+      <p id="err-desc">
+        The game couldn't start. This is often caused by an incomplete import or
+        a stale browser cache. Clearing the loaded data and re-importing usually
+        fixes it.
+      </p>
+      <div class="err-msg" id="err-msg"></div>
+      <div class="actions">
+        <button class="danger" onclick="window.__bootClearAndReload()">
+          Clear data &amp; re-import
+        </button>
+        <button onclick="location.reload()">Reload</button>
+      </div>
+      <button class="details-btn" onclick="window.__bootToggleDiag()">
+        Show diagnostic info
+      </button>
+      <div class="diag" id="err-diag"></div>
+    </div>
 
     <script>
       /**
@@ -56,11 +182,185 @@
         var DB_NAME = "tcoaal";
         var DB_VERSION = 1;
         var STORE_NAME = "assets";
+        var SAVE_DB_NAME = "tcoaal-saves";
+        var CLD_KEY = "data/9c7050ae76645487";
+        var LANG_CACHE_KEY = "__lang_data__";
+
         var splash = document.getElementById("boot-splash");
+        var errOverlay = document.getElementById("boot-error");
+        var errTitle = document.getElementById("err-title");
+        var errDesc = document.getElementById("err-desc");
+        var errMsg = document.getElementById("err-msg");
+        var errDiag = document.getElementById("err-diag");
+
+        var bootPhase = "init";
+        var bootDone = false;
 
         function setSplash(msg) {
           splash.textContent = msg;
         }
+
+        function setPhase(name, label) {
+          bootPhase = name;
+          setSplash(label);
+        }
+
+        function buildDiagnostics(err) {
+          var lines = [];
+          lines.push("Phase: " + bootPhase);
+          lines.push("UA: " + (navigator.userAgent || "?"));
+          lines.push("URL: " + location.href);
+          lines.push(
+            "SW: " +
+              ("serviceWorker" in navigator
+                ? navigator.serviceWorker.controller
+                  ? "controlled"
+                  : "registered/uncontrolled"
+                : "unsupported"),
+          );
+          if (err) {
+            if (err.message) lines.push("Error: " + err.message);
+            else lines.push("Error: " + String(err));
+            if (err.stack) lines.push("Stack: " + err.stack);
+          }
+          return lines.join("\n");
+        }
+
+        function showError(title, desc, err) {
+          if (bootDone) return; // ignore post-boot errors (game owns them)
+          if (errOverlay.classList.contains("visible")) return; // first error wins
+          if (title) errTitle.textContent = title;
+          if (desc) errDesc.textContent = desc;
+          var msg = err
+            ? err.message || String(err)
+            : "Boot failed during phase: " + bootPhase;
+          errMsg.textContent = msg;
+          errDiag.textContent = buildDiagnostics(err);
+          errOverlay.classList.add("visible");
+          // Hide splash so error is the only thing visible.
+          splash.classList.add("hidden");
+        }
+
+        // Clear all persisted state and send the user back to the loader.
+        //
+        // Order matters: the Service Worker keeps its own open connection
+        // to the `tcoaal` database. If we call deleteDatabase while the SW
+        // still holds it, the request stalls in `onblocked` and silently
+        // resolves but the DB isn't actually gone, so loader.html reads
+        // back stale (or partially-deleted) keys and bounces straight back
+        // to the same error. We therefore:
+        //   1) unregister the SW (releases its IDB handle)
+        //   2) clear caches
+        //   3) clear localStorage
+        //   4) wait for deleteDatabase to truly complete (success only;
+        //      onblocked means something is still holding it open)
+        //   5) replace into loader.html
+        window.__bootClearAndReload = async function () {
+          var btn = errOverlay.querySelector("button.danger");
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = "Clearing...";
+          }
+
+          // 1. Unregister all SWs first so they release their IDB handle.
+          if ("serviceWorker" in navigator) {
+            try {
+              var regs = await navigator.serviceWorker.getRegistrations();
+              await Promise.all(
+                regs.map(function (r) {
+                  return r.unregister();
+                }),
+              );
+            } catch (e) {}
+          }
+
+          // 2. Caches.
+          if ("caches" in self) {
+            try {
+              var keys = await caches.keys();
+              await Promise.all(
+                keys.map(function (k) {
+                  return caches.delete(k);
+                }),
+              );
+            } catch (e) {}
+          }
+
+          // 3. localStorage.
+          try {
+            localStorage.clear();
+          } catch (e) {}
+
+          // 4. Delete the IDB databases. Resolve on success; if the
+          // request is blocked, wait a short while and retry once, the
+          // SW takes a tick to fully detach. If still blocked after that,
+          // proceed anyway (the loader will surface a clear error if the
+          // DB is somehow still populated).
+          function dropDb(name) {
+            return new Promise(function (resolve) {
+              function attempt(retries) {
+                var settled = false;
+                var req;
+                try {
+                  req = indexedDB.deleteDatabase(name);
+                } catch (e) {
+                  return resolve();
+                }
+                req.onsuccess = function () {
+                  settled = true;
+                  resolve();
+                };
+                req.onerror = function () {
+                  settled = true;
+                  resolve();
+                };
+                req.onblocked = function () {
+                  if (settled) return;
+                  if (retries > 0) {
+                    settled = true;
+                    setTimeout(function () {
+                      attempt(retries - 1);
+                    }, 250);
+                  } else {
+                    settled = true;
+                    resolve();
+                  }
+                };
+              }
+              attempt(2);
+            });
+          }
+          await dropDb(DB_NAME);
+          await dropDb(SAVE_DB_NAME);
+
+          // 5. Redirect.
+          location.replace("/loader.html");
+        };
+
+        window.__bootToggleDiag = function () {
+          errDiag.classList.toggle("visible");
+        };
+
+        // Catch uncaught errors during boot. Once the game is running we
+        // get out of the way (game owns its own crash UI from then on).
+        window.addEventListener("error", function (e) {
+          if (bootDone) return;
+          showError(
+            "Game failed to start",
+            "An unexpected error happened while loading the game. " +
+              "Clearing the imported data and re-importing usually fixes it.",
+            e.error || { message: e.message },
+          );
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+          if (bootDone) return;
+          showError(
+            "Game failed to start",
+            "An unexpected error happened while loading the game. " +
+              "Clearing the imported data and re-importing usually fixes it.",
+            e.reason,
+          );
+        });
 
         // Step 1: register & activate the Service Worker
         function ensureSW() {
@@ -90,151 +390,80 @@
             });
         }
 
-        // Step 2: check if game files are available (IDB or server)
-        function hasGameFiles() {
-          return new Promise(function (resolve) {
-            // First check IDB
+        // IDB helpers (raw promises, no shared connection)
+        function idbOpen() {
+          return new Promise(function (resolve, reject) {
             try {
               var req = indexedDB.open(DB_NAME, DB_VERSION);
               req.onupgradeneeded = function (e) {
                 e.target.result.createObjectStore(STORE_NAME);
               };
               req.onsuccess = function (e) {
-                var db = e.target.result;
-                try {
-                  var tx = db.transaction(STORE_NAME, "readonly");
-                  var check = tx.objectStore(STORE_NAME).get("js/rpg_core.js");
-                  check.onsuccess = function () {
-                    if (check.result) {
-                      resolve(true);
-                      return;
-                    }
-                    // Not in IDB, try network (server.js mode)
-                    checkServer().then(resolve);
-                  };
-                  check.onerror = function () {
-                    checkServer().then(resolve);
-                  };
-                } catch (ex) {
-                  checkServer().then(resolve);
-                }
+                resolve(e.target.result);
               };
-              req.onerror = function () {
-                checkServer().then(resolve);
+              req.onerror = function (e) {
+                reject(e.target.error || new Error("IndexedDB open failed"));
               };
             } catch (ex) {
-              checkServer().then(resolve);
+              reject(ex);
             }
           });
         }
 
-        // Step 2b: preload language data into a global so browser-shim.js
-        // can serve it synchronously to the DRM payload.
-        //
-        // When a mod is active the CLD served to the DRM must be the MERGE of
-        // base + mod data: the mod's own CSV-parsed data is missing required
-        // CLD fields (langInfo, imgFiles, fontFile, etc.). The SW implements
-        // that merge on /lang-data.json, so we fetch through it instead of
-        // reading IDB directly. Reading __mod_lang_data__ from IDB would hand
-        // the DRM a mod-only CLD and fail validation ("Missing field: langInfo").
-        //
-        // Without an active mod we prefer the pre-extracted __lang_data__ in
-        // IDB (fastest path), then fall back to /lang-data.json.
-        function preloadLangData() {
+        function idbGet(db, key) {
           return new Promise(function (resolve) {
-            var activeMod = null;
             try {
-              activeMod = localStorage.getItem("_activeMod") || null;
-            } catch (e) {}
-
-            function fromLangDataJson() {
-              try {
-                fetch("/lang-data.json", { cache: "no-store" })
-                  .then(function (res) {
-                    return res.ok ? res.text() : null;
-                  })
-                  .then(function (text) {
-                    if (text && typeof text === "string") {
-                      window.__langData = text;
-                    }
-                    resolve();
-                  })
-                  .catch(function () {
-                    resolve();
-                  });
-              } catch (ex) {
-                resolve();
-              }
-            }
-
-            if (activeMod) {
-              // Mod active: SW merges base + mod lang data.
-              fromLangDataJson();
-              return;
-            }
-
-            // No mod: fast path via pre-extracted __lang_data__ in IDB.
-            try {
-              var req = indexedDB.open(DB_NAME, DB_VERSION);
-              req.onsuccess = function (e) {
-                var db = e.target.result;
-                try {
-                  var tx = db.transaction(STORE_NAME, "readonly");
-                  var get = tx.objectStore(STORE_NAME).get("__lang_data__");
-                  get.onsuccess = function () {
-                    var data = get.result;
-                    if (data && typeof data === "string") {
-                      window.__langData = data;
-                      resolve();
-                      return;
-                    }
-                    fromLangDataJson();
-                  };
-                  get.onerror = function () {
-                    fromLangDataJson();
-                  };
-                } catch (ex) {
-                  fromLangDataJson();
-                }
+              var tx = db.transaction(STORE_NAME, "readonly");
+              var req = tx.objectStore(STORE_NAME).get(key);
+              req.onsuccess = function () {
+                resolve(req.result == null ? null : req.result);
               };
               req.onerror = function () {
-                fromLangDataJson();
+                resolve(null);
               };
-            } catch (ex) {
-              fromLangDataJson();
+            } catch (e) {
+              resolve(null);
             }
           });
         }
 
-        // Step 2c: load favicon from IDB (icon/icon.png from the user's game files)
-        function loadFavicon() {
-          try {
-            var req = indexedDB.open(DB_NAME, DB_VERSION);
-            req.onsuccess = function (e) {
-              var db = e.target.result;
-              try {
-                var tx = db.transaction(STORE_NAME, "readonly");
-                var get = tx.objectStore(STORE_NAME).get("icon/icon.png");
-                get.onsuccess = function () {
-                  if (!get.result) return;
-                  try {
-                    var blob =
-                      get.result instanceof Blob
-                        ? get.result
-                        : new Blob([get.result], { type: "image/png" });
-                    var url = URL.createObjectURL(blob);
-                    var fav = document.getElementById("favicon");
-                    var apple = document.getElementById("apple-icon");
-                    if (fav) fav.href = url;
-                    if (apple) apple.href = url;
-                  } catch (ex) {}
-                };
-              } catch (ex) {}
-            };
-          } catch (ex) {}
+        function idbPut(db, key, value) {
+          return new Promise(function (resolve) {
+            try {
+              var tx = db.transaction(STORE_NAME, "readwrite");
+              var req = tx.objectStore(STORE_NAME).put(value, key);
+              req.onsuccess = resolve;
+              req.onerror = resolve;
+            } catch (e) {
+              resolve();
+            }
+          });
         }
 
-        // Check if a local server is serving game files
+        // Step 2: check whether game files are available (IDB or server.js).
+        // We require BOTH a script file (rpg_core.js) and a way to get the
+        // language data: either pre-extracted JSON in __lang_data__ or the
+        // encrypted CLD file. Missing pieces produce a clear error instead
+        // of letting the DRM crash with an obfuscated trace.
+        function checkGameFiles(db) {
+          return Promise.all([
+            idbGet(db, "js/rpg_core.js"),
+            idbGet(db, LANG_CACHE_KEY),
+            idbGet(db, CLD_KEY),
+          ]).then(function (results) {
+            var hasCore = !!results[0];
+            var hasLangCache = !!results[1];
+            var hasEncryptedCld = !!results[2];
+            return {
+              hasCore: hasCore,
+              hasLangCache: hasLangCache,
+              hasEncryptedCld: hasEncryptedCld,
+              hasAnyLang: hasLangCache || hasEncryptedCld,
+            };
+          });
+        }
+
+        // Check whether server.js mode is serving the game (no IDB needed).
         function checkServer() {
           return fetch("js/rpg_core.js", { method: "HEAD" })
             .then(function (r) {
@@ -245,7 +474,162 @@
             });
         }
 
-        // Step 3: dynamically load game scripts in order
+        // CLD synchronous decryption: avoids any dependency on the SW being
+        // ready by decrypting the bytes ourselves and stashing the JSON in
+        // window.__langData. Mirrors the logic in loader.html / sw.js.
+        var TCOAAL_SIG = [84, 67, 79, 65, 65, 76]; // "TCOAAL"
+
+        function fileMaskFor(hashedRelPath) {
+          var fname = hashedRelPath.split("/").pop().toUpperCase();
+          var m = 0;
+          for (var i = 0; i < fname.length; i++)
+            m = (m << 1) ^ fname.charCodeAt(i);
+          return m;
+        }
+
+        function decryptCld(arrayBuffer) {
+          var bytes = new Uint8Array(arrayBuffer);
+          if (bytes.length < TCOAAL_SIG.length + 1) return bytes;
+          for (var i = 0; i < TCOAAL_SIG.length; i++) {
+            if (bytes[i] !== TCOAAL_SIG[i]) return bytes;
+          }
+          var keyByte = bytes[TCOAAL_SIG.length];
+          var payload = bytes.subarray(TCOAAL_SIG.length + 1);
+          var mask = (fileMaskFor(CLD_KEY) + 1) & 0xff;
+          if (keyByte === 0) keyByte = payload.length;
+          var out = new Uint8Array(payload.length);
+          for (var j = 0; j < payload.length; j++) {
+            if (j < keyByte) {
+              var b = payload[j];
+              out[j] = b ^ mask;
+              mask = ((mask << 1) ^ b) & 0xff;
+            } else {
+              out[j] = payload[j];
+            }
+          }
+          return out;
+        }
+
+        function extractLangFromCld(rawCld) {
+          var buf = rawCld;
+          if (rawCld instanceof Blob) {
+            // Blob -> ArrayBuffer is async, handle separately via promise
+            return rawCld.arrayBuffer().then(function (ab) {
+              return extractLangFromCld(ab);
+            });
+          }
+          if (rawCld && rawCld.buffer instanceof ArrayBuffer) {
+            buf = rawCld.buffer;
+          }
+          var decrypted = decryptCld(buf);
+          if (!decrypted || decrypted.length < 9) return null;
+          var sig = new TextDecoder().decode(decrypted.slice(0, 8));
+          if (sig !== "LANGDATA") return null;
+          var jsonStr = new TextDecoder().decode(decrypted.slice(8));
+          try {
+            JSON.parse(jsonStr);
+            return jsonStr;
+          } catch (e) {
+            return null;
+          }
+        }
+
+        // Preload language data into a global so browser-shim.js can serve it
+        // synchronously to the DRM payload.
+        //
+        // When a mod is active the CLD served to the DRM must be the MERGE of
+        // base + mod data: the mod's own CSV-parsed data is missing required
+        // CLD fields. The SW implements that merge on /lang-data.json, so we
+        // fetch through it instead of reading IDB directly.
+        //
+        // Without an active mod we prefer __lang_data__ in IDB (fastest), then
+        // fall back to decrypting the encrypted CLD ourselves (no SW needed),
+        // then finally /lang-data.json. The middle step is critical on mobile
+        // where the SW can be slow to claim.
+        function preloadLangData(db, files) {
+          var activeMod = null;
+          try {
+            activeMod = localStorage.getItem("_activeMod") || null;
+          } catch (e) {}
+
+          function fromLangDataJson() {
+            return fetch("/lang-data.json", { cache: "no-store" })
+              .then(function (res) {
+                return res.ok ? res.text() : null;
+              })
+              .then(function (text) {
+                if (text && typeof text === "string") {
+                  window.__langData = text;
+                }
+              })
+              .catch(function () {});
+          }
+
+          if (activeMod) {
+            // Mod active: SW merges base + mod lang data.
+            return fromLangDataJson();
+          }
+
+          // 1. Pre-extracted JSON in IDB (fastest, no SW required).
+          if (files && files.hasLangCache) {
+            return idbGet(db, LANG_CACHE_KEY).then(function (data) {
+              if (data && typeof data === "string") {
+                window.__langData = data;
+                return;
+              }
+              // unexpected type -> fall through
+              return decryptInline();
+            });
+          }
+
+          // 2. Decrypt the CLD inline (no SW required).
+          function decryptInline() {
+            if (!files || !files.hasEncryptedCld) return fromLangDataJson();
+            return idbGet(db, CLD_KEY).then(function (raw) {
+              if (!raw) return fromLangDataJson();
+              var maybePromise = extractLangFromCld(raw);
+              if (maybePromise && typeof maybePromise.then === "function") {
+                return maybePromise.then(function (json) {
+                  if (json) {
+                    window.__langData = json;
+                    // Cache for next boot.
+                    return idbPut(db, LANG_CACHE_KEY, json);
+                  }
+                  return fromLangDataJson();
+                });
+              }
+              if (maybePromise) {
+                window.__langData = maybePromise;
+                return idbPut(db, LANG_CACHE_KEY, maybePromise);
+              }
+              return fromLangDataJson();
+            });
+          }
+
+          return decryptInline();
+        }
+
+        // Step 2c: load favicon from IDB (icon/icon.png from the user's game files)
+        function loadFavicon(db) {
+          idbGet(db, "icon/icon.png").then(function (data) {
+            if (!data) return;
+            try {
+              var blob =
+                data instanceof Blob
+                  ? data
+                  : new Blob([data], { type: "image/png" });
+              var url = URL.createObjectURL(blob);
+              var fav = document.getElementById("favicon");
+              var apple = document.getElementById("apple-icon");
+              if (fav) fav.href = url;
+              if (apple) apple.href = url;
+            } catch (e) {}
+          });
+        }
+
+        // Step 3: dynamically load game scripts in order.
+        // A failed load is reported (not silently swallowed): the engine
+        // can't recover from a missing rpg_core.js or browser-shim.js.
         function loadScripts(urls, idx) {
           if (idx >= urls.length) return Promise.resolve();
           return new Promise(function (resolve, reject) {
@@ -258,11 +642,7 @@
                 .catch(reject);
             };
             s.onerror = function () {
-              console.warn("[boot] Failed to load:", urls[idx]);
-              // Continue anyway the SW might serve it on retry
-              loadScripts(urls, idx + 1)
-                .then(resolve)
-                .catch(reject);
+              reject(new Error("Failed to load script: " + urls[idx]));
             };
             document.body.appendChild(s);
           });
@@ -291,28 +671,95 @@
         ];
 
         // Boot sequence
-        setSplash("Initializing...");
+        setPhase("init", "Initializing...");
 
         ensureSW()
           .then(function () {
-            setSplash("Checking game files...");
-            return hasGameFiles();
+            setPhase("check-files", "Checking game files...");
+            // Open IDB. If this throws we likely have a private/locked
+            // storage situation: still try server.js mode.
+            return idbOpen().then(
+              function (db) {
+                return { db: db };
+              },
+              function () {
+                return { db: null };
+              },
+            );
           })
-          .then(function (found) {
-            if (!found) {
-              // No game files, redirect to the loader / import screen
-              window.location.href = "/loader.html";
-              return;
+          .then(function (ctx) {
+            var db = ctx.db;
+            if (!db) {
+              return checkServer().then(function (ok) {
+                if (!ok) {
+                  // No IDB and no server, send to loader.
+                  location.replace("/loader.html");
+                  return null;
+                }
+                return { db: null, files: null, server: true };
+              });
             }
+            return checkGameFiles(db).then(function (files) {
+              if (!files.hasCore) {
+                // Maybe server.js mode (no IDB import).
+                return checkServer().then(function (ok) {
+                  if (ok) return { db: db, files: null, server: true };
+                  // Nothing to play: send back to import flow.
+                  location.replace("/loader.html");
+                  return null;
+                });
+              }
+              if (!files.hasAnyLang) {
+                // Critical files imported but the language file is missing.
+                // The DRM cannot start without it. Surface a clear error
+                // so the user can clear and re-import.
+                showError(
+                  "Required game data missing",
+                  "The language data file (data/9c7050ae76645487) wasn't " +
+                    "found in the imported game. The game can't start " +
+                    "without it. Re-import your full game folder.",
+                  new Error(
+                    "Missing CLD: neither __lang_data__ nor " +
+                      CLD_KEY +
+                      " is present in IndexedDB.",
+                  ),
+                );
+                return null;
+              }
+              return { db: db, files: files, server: false };
+            });
+          })
+          .then(function (ctx) {
+            if (!ctx) return; // already handled (redirect or error)
 
-            // Game files are in IDB and SW is active, load the game
-            setSplash("Starting game...");
+            // Game files are available and SW is active, load the game
+            setPhase("preload", "Preparing language data...");
 
-            // Preload language data from IDB before loading scripts,
-            // so browser-shim.js can serve it synchronously.
-            // Also load favicon from IDB (non-blocking).
-            loadFavicon();
-            return preloadLangData().then(function () {
+            // Preload language data and favicon (favicon is non-blocking).
+            if (ctx.db) loadFavicon(ctx.db);
+
+            return preloadLangData(ctx.db, ctx.files).then(function () {
+              // If we still don't have language data and there's no active
+              // mod, fail loudly: the DRM will produce cryptic errors
+              // ("Cannot create property imageLUT on string ''", etc.) if
+              // we let it run without it.
+              var activeMod = null;
+              try {
+                activeMod = localStorage.getItem("_activeMod") || null;
+              } catch (e) {}
+              if (!activeMod && !window.__langData) {
+                showError(
+                  "Language data unavailable",
+                  "The game's language data couldn't be decoded. This " +
+                    "usually means the import was incomplete. Clearing " +
+                    "and re-importing the game folder fixes it.",
+                  new Error("__langData empty after preload"),
+                );
+                return null;
+              }
+
+              setPhase("load-scripts", "Starting game...");
+
               // Load the font CSS first (it may also be in IDB)
               var link = document.createElement("link");
               link.rel = "stylesheet";
@@ -336,28 +783,31 @@
               });
 
               return loadScripts(GAME_SCRIPTS, 0).then(function () {
+                setPhase("plugins", "Loading game plugins...");
                 // Hide the splash
                 splash.classList.add("hidden");
                 setTimeout(function () {
                   splash.remove();
                 }, 400);
 
-                // main.js called PluginManager.setup($plugins) which
-                // creates async=false <script src> tags for plugins.
-                // They execute in insertion order. Append one more
-                // async=false script with a blob: src, it will run
-                // after every plugin and start the game.
-                var code = "window.__bootReady=true;";
-                var blob = new Blob([code], { type: "text/javascript" });
-                var sentinel = document.createElement("script");
-                sentinel.type = "text/javascript";
-                sentinel.async = false;
-                sentinel.src = URL.createObjectURL(blob);
-                sentinel.onload = function () {
-                  URL.revokeObjectURL(sentinel.src);
+                // main.js called PluginManager.setup($plugins). The
+                // hardened loader in lang-shim.js fetches every plugin
+                // source in parallel and exposes window.__pluginsLoaded
+                // as a Promise that resolves once every plugin has been
+                // injected as an inline <script>. Wait on it so we don't
+                // boot before plugins (incl. the DRM payload) execute.
+                // Falls back to a resolved Promise when the hardened
+                // loader is absent (no behavioural change in that case).
+                return Promise.resolve(window.__pluginsLoaded).then(
+                  function () {
+                    bootAfterPlugins();
+                  },
+                );
 
+                function bootAfterPlugins() {
                   // Finish boot: apply browser overrides then start game.
                   function finishBoot() {
+                    setPhase("apply-overrides", "Applying overrides...");
                     // Apply browser overrides for non-zlib DRM types
                     // (deobfuscated.js, GameCode.js, etc.). For zlib DRM,
                     // the overrides were already applied via inflateSync
@@ -370,6 +820,7 @@
                     if (window.__langShimHookBoot) window.__langShimHookBoot();
                     if (window.__achvShimHookBoot) window.__achvShimHookBoot();
                     delete window.onload;
+                    bootDone = true;
                     if (_bootOnload) {
                       _bootOnload();
                     } else if (typeof SceneManager !== "undefined") {
@@ -414,14 +865,18 @@
                   } else {
                     finishBoot();
                   }
-                };
-                document.body.appendChild(sentinel);
+                }
               });
             }); // end preloadLangData().then
           })
           .catch(function (e) {
             console.error("[boot] Fatal:", e);
-            setSplash("Error: " + (e.message || e));
+            showError(
+              "Game failed to start",
+              "The game couldn't start. Clearing the imported data and " +
+                "re-importing the game folder usually fixes it.",
+              e,
+            );
           });
       })();
     </script>
