@@ -1267,6 +1267,22 @@
       Input.keyMapper[73] = "saveImport"; // I key
     }
 
+    // Mobile: enlarge command-window items so taps land easily.
+    // Stock lineHeight is 36; bump to 54 (~1.5x) for ~54px touch targets,
+    // above the 44pt iOS / 48dp Android minimums. Every Window_Command
+    // subclass (TitleCommand, MenuCommand, Options, ChoiceList,
+    // PartyCommand, ActorCommand, GameEnd, plus our SaveConfirm /
+    // SaveInfo / ModConfirm) inherits this; itemRect / fittingHeight grow
+    // proportionally, so layouts remain centered without further work.
+    // Window_ModList sizes itself from a fixed maxVisibleItems and is
+    // unaffected. Selectable lists (save slots, item/skill lists) keep
+    // their stock sizing:  they're already large enough to tap.
+    if (_isMobile && typeof Window_Command !== "undefined") {
+      Window_Command.prototype.lineHeight = function () {
+        return 54;
+      };
+    }
+
     // Load default mod icon
     loadDefaultModIcon();
 

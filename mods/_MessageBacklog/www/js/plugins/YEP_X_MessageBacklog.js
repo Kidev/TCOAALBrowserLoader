@@ -331,7 +331,7 @@ if (Imported.YEP_MessageCore) {
 //Yanfly.Parameters = PluginManager.parameters('YEP_X_MessageBacklog');
 
 Yanfly.Parameters = {
-    "LogKeyButton": "pageup",
+    "LogKeyButton": "tab",
     "EnableLogKey": "true",
     "DefaultLogging": "true",
     "LogSpecialInput": "true",
@@ -1170,6 +1170,136 @@ Window_MessageBacklog.prototype.addWordWrapBuffer = function(text) {
     this.addCommand('', 'buffer', true, i);
   }
 };
+
+//=============================================================================
+// Input:  TAB preventDefault
+//=============================================================================
+// The engine's keyMapper has 9: 'tab' but Input._shouldPreventDefault never
+// stops the browser's default focus navigation. With TAB bound to the backlog,
+// pressing it would otherwise blur the canvas and break input.
+
+Yanfly.MsgBacklog.Input_shouldPreventDefault = Input._shouldPreventDefault;
+Input._shouldPreventDefault = function(keyCode) {
+  if (keyCode === 9) return true; // tab
+  return Yanfly.MsgBacklog.Input_shouldPreventDefault.call(this, keyCode);
+};
+
+//=============================================================================
+// Scene_MessageBacklog:  standalone backlog scene (used by the in-game menu
+// entry and by the MouseControl horizontal-swipe gesture)
+//=============================================================================
+
+function Scene_MessageBacklog() {
+  this.initialize.apply(this, arguments);
+}
+
+Scene_MessageBacklog.prototype = Object.create(Scene_MenuBase.prototype);
+Scene_MessageBacklog.prototype.constructor = Scene_MessageBacklog;
+
+Scene_MessageBacklog.prototype.initialize = function() {
+  Scene_MenuBase.prototype.initialize.call(this);
+};
+
+Scene_MessageBacklog.prototype.create = function() {
+  Scene_MenuBase.prototype.create.call(this);
+  this._backlogWindow = new Window_MessageBacklog();
+  var scene = this;
+  // Re-route window dismissal to scene pop instead of returning to a message.
+  this._backlogWindow.fullDeactivate = function() {
+    this.updateInputData();
+    Input.clear();
+    TouchInput.clear();
+    this.deactivate();
+    if (this._backgroundPicture) {
+      this._backgroundPicture.opacity = 0;
+    }
+    scene.popScene();
+  };
+  this.addWindow(this._backlogWindow);
+};
+
+Scene_MessageBacklog.prototype.start = function() {
+  Scene_MenuBase.prototype.start.call(this);
+  this._backlogWindow.fullActivate();
+};
+
+window.Scene_MessageBacklog = Scene_MessageBacklog;
+
+//=============================================================================
+// Window_NCMenu:  append "Dialogue history" command to the in-game pause menu
+// (NonCombatMenu plugin). Guarded so the plugin still works without it.
+//=============================================================================
+
+if (typeof Window_NCMenu !== 'undefined' && typeof Scene_NCMenu !== 'undefined') {
+
+Yanfly.MsgBacklog.DialogueHistoryLabel = 'Dialogue history';
+
+// Insert "Dialogue history" right after the Item entry. Splicing into _list
+// (rather than appending via addCommand) keeps it positionally adjacent to
+// 'item' regardless of how the user has reordered NCMenu's menuList parameter.
+Yanfly.MsgBacklog.Window_NCMenu_makeCommandList =
+  Window_NCMenu.prototype.makeCommandList;
+Window_NCMenu.prototype.makeCommandList = function() {
+  Yanfly.MsgBacklog.Window_NCMenu_makeCommandList.call(this);
+  var insertAt = 1;
+  for (var i = 0; i < this._list.length; i++) {
+    if (this._list[i].symbol === 'item') { insertAt = i + 1; break; }
+  }
+  this._list.splice(insertAt, 0, {
+    name: Yanfly.MsgBacklog.DialogueHistoryLabel,
+    symbol: 'dialogueHistory',
+    enabled: true,
+    ext: null,
+  });
+};
+
+// NCMenu's stock drawItem looks up icons via NCMenu.menuIcons[index]; that
+// breaks once we splice an extra command in, because the icon array is no
+// longer index-aligned. Replace the lookup with a symbol-based one.
+Window_NCMenu.prototype.drawItem = function(index) {
+  var rect = this.itemRectForText(index);
+  var symbol = this.commandSymbol(index);
+  var offset = NCMenu.offsetIconOnly ? 0 : NCMenu.textOffset;
+
+  this.resetTextColor();
+  this.changePaintOpacity(this.isCommandEnabled(index));
+
+  var iconIndex = -1;
+  if (symbol !== 'dialogueHistory') {
+    for (var k = 0; k < NCMenu.menuList.length; k++) {
+      if (NCMenu.menuList[k][1] === symbol) {
+        var ic = NCMenu.menuIcons[k];
+        if (ic != null && ic >= 0) iconIndex = ic;
+        break;
+      }
+    }
+  }
+
+  if (iconIndex >= 0) {
+    offset = NCMenu.textOffset;
+    this.drawIcon(iconIndex, rect.x, rect.y + 2);
+  }
+  this.drawText(
+    this.commandName(index),
+    rect.x + offset,
+    rect.y,
+    rect.width - offset,
+    NCMenu.textAlign);
+};
+
+Yanfly.MsgBacklog.Scene_NCMenu_createCommandWindow =
+  Scene_NCMenu.prototype.createCommandWindow;
+Scene_NCMenu.prototype.createCommandWindow = function() {
+  Yanfly.MsgBacklog.Scene_NCMenu_createCommandWindow.call(this);
+  this._commandWindow.setHandler(
+    'dialogueHistory', this.commandDialogueHistory.bind(this));
+};
+
+Scene_NCMenu.prototype.commandDialogueHistory = function() {
+  SceneManager.push(Scene_MessageBacklog);
+};
+
+}
 
 //=============================================================================
 // Utilities

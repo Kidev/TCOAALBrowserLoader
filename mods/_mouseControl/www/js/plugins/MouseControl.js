@@ -79,7 +79,94 @@
 
   // Re-register touch listeners to ensure they call our current methods
   // (guards against DisableMouse or other plugins that may have bound stale refs).
-  // Single touch = trigger (click), two-finger touch = cancel (escape).
+  //
+  // Single-touch behavior is gesture-aware:
+  //   tap                       -> click (advance message / select item)
+  //   vertical swipe in menus   -> scroll the active selectable window
+  //   big horizontal swipe      -> open MessageBacklog (when MessageLog is on)
+  //   two-finger touch          -> cancel / escape
+  //   long-press on player tile -> interact (handled later in TouchInput.update)
+  //
+  // To distinguish a tap from a swipe we DEFER firing the click trigger to
+  // touchend whenever we're NOT in map free-walk mode. On the map (without an
+  // active message) the trigger fires immediately so click-to-walk stays snappy.
+
+  var SWIPE_START_PX = 16; // distance before a touch is classified as a swipe
+  var SWIPE_BACKLOG_PX = 120; // horizontal distance to trigger backlog
+  var SWIPE_BACKLOG_RATIO = 1.4; // |dx| must exceed |dy| * this for "horizontal"
+  var _swipe = null;
+
+  function isMapFreeWalk() {
+    return (
+      typeof Scene_Map !== "undefined" &&
+      SceneManager._scene instanceof Scene_Map &&
+      (typeof $gameMessage === "undefined" || !$gameMessage.isBusy())
+    );
+  }
+
+  function getActiveScrollable() {
+    var scene = SceneManager._scene;
+    if (!scene || !scene.children) return null;
+    for (var i = 0; i < scene.children.length; i++) {
+      var layer = scene.children[i];
+      if (!layer || !layer.children) continue;
+      for (var j = 0; j < layer.children.length; j++) {
+        var w = layer.children[j];
+        if (!(w instanceof Window_Selectable)) continue;
+        if (!w.isOpenAndActive()) continue;
+        if (w.maxRows() <= w.maxPageRows()) continue;
+        return w;
+      }
+    }
+    return null;
+  }
+
+  function isMessageBacklogReady() {
+    // The YEP plugin's classes (Window_MessageBacklog) are block-scoped, but
+    // Scene_MessageBacklog is exposed on `window` and Imported.YEP_X_MessageBacklog
+    // is set globally. Either signal is enough to know the plugin is loaded.
+    return (
+      typeof Imported !== "undefined" &&
+      Imported.YEP_X_MessageBacklog &&
+      typeof $gameSystem !== "undefined" &&
+      $gameSystem
+    );
+  }
+
+  function openMessageBacklog() {
+    if (!isMessageBacklogReady()) return false;
+    var scene = SceneManager._scene;
+    if (!scene) return false;
+    // Inside an active message: route through the existing per-window opener
+    // so the message resumes correctly on close.
+    if (scene._messageWindow) {
+      var mw = scene._messageWindow;
+      if (mw.pause && mw.isOpen() && typeof mw.openBacklogWindow === "function") {
+        mw.openBacklogWindow();
+        return true;
+      }
+      var ch = scene._choiceListWindow;
+      if (
+        ch &&
+        ch.isOpenAndActive &&
+        ch.isOpenAndActive() &&
+        typeof ch.openBacklogWindow === "function"
+      ) {
+        ch.openBacklogWindow();
+        return true;
+      }
+    }
+    // Standalone scene (added by YEP_X_MessageBacklog)
+    if (
+      typeof Scene_MessageBacklog !== "undefined" &&
+      !(scene instanceof Scene_MessageBacklog)
+    ) {
+      SceneManager.push(Scene_MessageBacklog);
+      return true;
+    }
+    return false;
+  }
+
   TouchInput._onTouchStart = function (event) {
     for (var i = 0; i < event.changedTouches.length; i++) {
       var touch = event.changedTouches[i];
@@ -94,8 +181,23 @@
           if (isOnMap()) {
             simulateEscape();
           }
+          _swipe = null;
         } else {
-          this._onTrigger(x, y);
+          var deferred = !isMapFreeWalk();
+          _swipe = {
+            x0: x,
+            y0: y,
+            lastX: x,
+            lastY: y,
+            scrollAccum: 0,
+            isSwipe: false,
+            dir: null,
+            deferred: deferred,
+          };
+          if (!deferred) {
+            // Map free-walk: fire trigger immediately for responsive walking.
+            this._onTrigger(x, y);
+          }
         }
         event.preventDefault();
       }
@@ -103,6 +205,80 @@
     if (window.cordova || window.navigator.standalone) {
       event.preventDefault();
     }
+  };
+
+  // Wrap the stock touchmove to add swipe classification + scroll application.
+  var _baseOnTouchMove = TouchInput._onTouchMove;
+  TouchInput._onTouchMove = function (event) {
+    _baseOnTouchMove.call(this, event);
+    if (!_swipe || !event.touches || event.touches.length !== 1) return;
+    var touch = event.touches[0];
+    var x = Graphics.pageToCanvasX(touch.pageX);
+    var y = Graphics.pageToCanvasY(touch.pageY);
+    var dxAll = x - _swipe.x0;
+    var dyAll = y - _swipe.y0;
+
+    if (!_swipe.isSwipe) {
+      if (Math.sqrt(dxAll * dxAll + dyAll * dyAll) > SWIPE_START_PX) {
+        _swipe.isSwipe = true;
+        _swipe.dir = Math.abs(dxAll) > Math.abs(dyAll) ? "h" : "v";
+      }
+    }
+
+    if (_swipe.isSwipe && _swipe.dir === "v") {
+      var win = getActiveScrollable();
+      if (win) {
+        var dy = y - _swipe.lastY;
+        _swipe.scrollAccum -= dy; // dragging finger down -> scroll content up
+        var lh = win.itemHeight();
+        while (_swipe.scrollAccum >= lh) {
+          win.scrollDown();
+          _swipe.scrollAccum -= lh;
+        }
+        while (_swipe.scrollAccum <= -lh) {
+          win.scrollUp();
+          _swipe.scrollAccum += lh;
+        }
+      }
+    }
+
+    _swipe.lastX = x;
+    _swipe.lastY = y;
+  };
+
+  var _baseOnTouchEnd = TouchInput._onTouchEnd;
+  TouchInput._onTouchEnd = function (event) {
+    _baseOnTouchEnd.call(this, event);
+    if (!_swipe) return;
+    var sw = _swipe;
+    _swipe = null;
+
+    var dx = sw.lastX - sw.x0;
+    var dy = sw.lastY - sw.y0;
+
+    if (!sw.isSwipe) {
+      if (sw.deferred) {
+        this._onTrigger(sw.x0, sw.y0);
+      }
+      return;
+    }
+
+    // Big horizontal swipe -> open the MessageBacklog (when available).
+    if (
+      Math.abs(dx) > SWIPE_BACKLOG_PX &&
+      Math.abs(dx) > Math.abs(dy) * SWIPE_BACKLOG_RATIO
+    ) {
+      var opened = openMessageBacklog();
+      if (opened && typeof $gameTemp !== "undefined") {
+        // Cancel any walk destination that might have been set by an immediate
+        // trigger on the map (free-walk path).
+        $gameTemp.clearDestination();
+      }
+      return;
+    }
+
+    // Vertical / non-backlog swipe: already handled in touchmove (scroll).
+    // Suppress any deferred tap-trigger so it doesn't accidentally select.
   };
 
   document.addEventListener(
@@ -121,6 +297,9 @@
   );
   document.addEventListener("touchend", function (event) {
     TouchInput._onTouchEnd.call(TouchInput, event);
+  });
+  document.addEventListener("touchcancel", function () {
+    _swipe = null;
   });
 
   // Suppress browser context menu so right-click acts as escape
@@ -285,8 +464,14 @@
             hitIndex !== win.index() &&
             win.isCursorMovable()
           ) {
+            // Some windows (e.g. Window_MessageBacklog) override select() to
+            // a no-op. Only play the cursor sound if the index actually moved,
+            // otherwise we'd fire it every frame the mouse hovers an item.
+            var prevIndex = win.index();
             win.select(hitIndex);
-            SoundManager.playCursor();
+            if (win.index() !== prevIndex) {
+              SoundManager.playCursor();
+            }
           }
         }
       }
@@ -341,7 +526,7 @@
     if (!scene._helpWindow) return;
     if (scene._mcBackRect) return; // already drawn
     var hw = scene._helpWindow;
-    var label = "\u2190 Back"; // ← Back
+    var label = "\u2190 Back"; // <- Back
     var fontSize = hw.standardFontSize(); // 28: same as the title on the left
     hw.contents.fontSize = fontSize;
     hw.contents.textColor = hw.normalColor();

@@ -6,7 +6,7 @@
     "type": "built-in plugin",
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
-    "version": "1b1acad",
+    "version": "8e099ea",
     "files": [
       "img/icon.png",
       "js/plugins/MouseControl.js"
@@ -19,7 +19,7 @@
     "type": "built-in plugin",
     "description": "While enabled, the vision room, visions and stars are all available",
     "author": "kidev",
-    "version": "1b1acad",
+    "version": "8e099ea",
     "files": [
       "img/icon.png",
       "js/plugins/UnlockAll.js"
@@ -32,7 +32,7 @@
     "type": "built-in plugin",
     "description": "Changes party character movement to dot movement that does not depend on tiles",
     "author": "Sanshiro",
-    "version": "1b1acad",
+    "version": "8e099ea",
     "lastUpdate": "2024-03-29",
     "files": [
       "img/icon.png",
@@ -45,9 +45,9 @@
     "path": "mods/_MessageBacklog",
     "icon": "mods/_MessageBacklog/www/img/icon.png",
     "type": "built-in plugin",
-    "description": "Add a message backlog function to the game's message system (PageUp key)",
+    "description": "Add a message backlog function to the game's message system (shortcut: TAB)",
     "author": "Yanfly",
-    "version": "1b1acad",
+    "version": "8e099ea",
     "lastUpdate": "2024-03-29",
     "files": [
       "img/icon.png",
@@ -1899,7 +1899,7 @@
       "mods/The coffin of Andy and July/mod.json",
       "package.json"
     ],
-    "version": "1b1acad",
+    "version": "8e099ea",
     "drmType": "none"
   },
   "TCOAALili": {
@@ -2350,7 +2350,7 @@
       "languages/english/dialogue.loc",
       "package.json"
     ],
-    "version": "1b1acad",
+    "version": "8e099ea",
     "drmType": "script"
   },
   "TLCOAAA": {
@@ -3131,7 +3131,7 @@
       "js/rpg_windows.js",
       "package.json"
     ],
-    "version": "1b1acad",
+    "version": "8e099ea",
     "drmType": "direct"
   },
   "TDOAAL": {
@@ -3142,7 +3142,7 @@
     "description": "Adds voice acting to Chapter 1 (FenrirtheWulf, iamyourmagician, Adoxographist, PatchumiVT, Shami, WesternShadow, Zombi)",
     "lastUpdate": "2025-09-15",
     "author": "6ExtraOrdinary9",
-    "version": "1b1acad",
+    "version": "8e099ea",
     "files": [
       "audio/bgm/Sexy Raidish/1/Voice/A1",
       "audio/bgm/Sexy Raidish/1/Voice/A10",
