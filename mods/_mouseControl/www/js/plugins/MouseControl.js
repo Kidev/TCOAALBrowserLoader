@@ -53,6 +53,7 @@
     if (Graphics.isInsideCanvas(x, y)) {
       this._mousePressed = true;
       this._pressedTime = 0;
+      _pressStartedOnPlayer = isOnMap() && isOnPlayerTile(x, y);
       this._onTrigger(x, y);
     }
   };
@@ -192,6 +193,7 @@
           _swipe = null;
         } else {
           var deferred = !isMapFreeWalk();
+          _pressStartedOnPlayer = isOnMap() && isOnPlayerTile(x, y);
           _swipe = {
             x0: x,
             y0: y,
@@ -422,14 +424,22 @@
     return false;
   }
 
-  // Check if scene is a non-fullscreen popup menu (centered window, not
-  // covering the full screen). These get click-outside-to-cancel.
+  // Scenes that get click-outside-to-cancel. Denylist instead of allowlist
+  // so the DRM payload's custom in-game menu scene (which we can't refer to
+  // by class statically) is also covered. Anything that isn't the map,
+  // title, boot, battle, or a fullscreen-with-Back scene is treated as a
+  // dismissible popup/menu.
   function isPopupScene(scene) {
-    return (
-      (typeof Scene_Options !== "undefined" &&
-        scene instanceof Scene_Options) ||
-      (typeof Scene_GameEnd !== "undefined" && scene instanceof Scene_GameEnd)
-    );
+    if (typeof Scene_Map !== "undefined" && scene instanceof Scene_Map)
+      return false;
+    if (typeof Scene_Title !== "undefined" && scene instanceof Scene_Title)
+      return false;
+    if (typeof Scene_Boot !== "undefined" && scene instanceof Scene_Boot)
+      return false;
+    if (typeof Scene_Battle !== "undefined" && scene instanceof Scene_Battle)
+      return false;
+    if (isFullscreenScene(scene)) return false;
+    return true;
   }
 
   // Check if the mouse is outside ALL visible windows in the scene
@@ -496,31 +506,37 @@
     return hovering;
   }
 
-  // Handle click-outside-to-cancel for popup scenes
+  // Handle click-outside-to-cancel for popup scenes. Tries the active
+  // Window_Selectable with a cancel handler first; if none is found (e.g.
+  // the DRM-defined in-game menu uses a non-standard window structure)
+  // falls back to simulating an escape keypress, which any well-behaved
+  // RPG Maker scene listens to.
   function handleClickOutside() {
     if (!TouchInput.isTriggered()) return;
     var scene = SceneManager._scene;
     if (!scene || !isPopupScene(scene)) return;
     if (!isOutsideAllWindows(scene)) return;
-    // Find the active window with a cancel handler and trigger cancel
     var children = scene.children;
-    if (!children) return;
-    for (var i = 0; i < children.length; i++) {
-      var layer = children[i];
-      if (!layer || !layer.children) continue;
-      var windows = layer.children;
-      for (var j = 0; j < windows.length; j++) {
-        var win = windows[j];
-        if (
-          win instanceof Window_Selectable &&
-          win.isOpenAndActive() &&
-          win.isCancelEnabled()
-        ) {
-          win.processCancel();
-          return;
+    if (children) {
+      for (var i = 0; i < children.length; i++) {
+        var layer = children[i];
+        if (!layer || !layer.children) continue;
+        var windows = layer.children;
+        for (var j = 0; j < windows.length; j++) {
+          var win = windows[j];
+          if (
+            win instanceof Window_Selectable &&
+            win.isOpenAndActive() &&
+            win.isCancelEnabled()
+          ) {
+            win.processCancel();
+            return;
+          }
         }
       }
     }
+    // Fallback: synthesize an escape keypress.
+    simulateEscape();
   }
 
   // Handle click on the Back button drawn on fullscreen scenes
@@ -620,15 +636,19 @@
     };
   }
 
-  // 4. Right-click / two-finger tap = context-sensitive action
+  // 4. Cancel / escape, and held-press-on-player = interact
   //
   // On the map:
-  //   - Right-click ON the player -> interact with facing event
-  //   - Right-click elsewhere    -> escape (open menu)
-  //   - Mobile long-touch ON the player -> interact with facing event
-  //   - Mobile two-finger tap -> escape (open menu)
+  //   - Right-click anywhere     -> escape (open menu)
+  //   - Two-finger tap (mobile)  -> escape (open menu)
+  //   - Hold left-click ON the player -> interact with facing event
+  //   - Long-touch ON the player -> interact with facing event
   // In menus:
   //   - Right-click / two-finger tap -> cancel (back out)
+  //
+  // Only held-on-player triggers interact: a quick click/tap on the player
+  // tile is just the normal walk-here (no-op), and right-click / two-finger
+  // tap never trigger interact (too easy to confuse with cancel).
 
   function isOnPlayerTile(canvasX, canvasY) {
     if (typeof $gamePlayer === "undefined" || typeof $gameMap === "undefined")
@@ -648,7 +668,8 @@
     );
   }
 
-  var _rightClickInteract = false;
+  var _interactRequested = false;
+  var _pressStartedOnPlayer = false;
   var _pendingEscapeRelease = false;
 
   // Simulate an escape key press for one frame. Input.update() runs before
@@ -665,17 +686,11 @@
   if (typeof TouchInput !== "undefined") {
     var _base_onRightButtonDown = TouchInput._onRightButtonDown;
     TouchInput._onRightButtonDown = function (event) {
-      var x = Graphics.pageToCanvasX(event.pageX);
-      var y = Graphics.pageToCanvasY(event.pageY);
-      if (isOnMap() && isOnPlayerTile(x, y)) {
-        _rightClickInteract = true;
-      } else {
-        _base_onRightButtonDown.call(this, event);
-        // Also simulate escape key so DRM payload's menu system responds
-        // (it may only check Input.isTriggered, not TouchInput.isCancelled)
-        if (isOnMap()) {
-          simulateEscape();
-        }
+      _base_onRightButtonDown.call(this, event);
+      // Also simulate escape key so DRM payload's menu system responds
+      // (it may only check Input.isTriggered, not TouchInput.isCancelled)
+      if (isOnMap()) {
+        simulateEscape();
       }
     };
   }
@@ -683,8 +698,8 @@
   if (typeof Game_Player !== "undefined") {
     var _orig_triggerButtonAction = Game_Player.prototype.triggerButtonAction;
     Game_Player.prototype.triggerButtonAction = function () {
-      if (_rightClickInteract) {
-        _rightClickInteract = false;
+      if (_interactRequested) {
+        _interactRequested = false;
         if (this.canMove()) {
           if (this.getOnOffVehicle()) return true;
           this.checkEventTriggerHere([0]);
@@ -698,9 +713,11 @@
     };
   }
 
-  // Long-touch on player = interact (mobile equivalent of right-click on player)
-  // After LONG_PRESS_FRAMES frames (~500ms at 60fps) of holding on the player
-  // tile, trigger interact and cancel the touch-move destination.
+  // Held press on player = interact (works for both mouse and touch).
+  // After LONG_PRESS_FRAMES frames (~500ms at 60fps) of holding on the
+  // player tile, trigger interact and cancel any touch-move destination.
+  // Gated on _pressStartedOnPlayer so dragging/sliding onto the player
+  // mid-hold doesn't trigger; the press has to BEGIN on the player tile.
 
   var LONG_PRESS_FRAMES = 30;
   var _longPressTriggered = false;
@@ -730,17 +747,20 @@
         }
       }
 
-      // Long-press detection
+      // Long-press detection (mouse OR touch). Requires the press to have
+      // started on the player tile AND the cursor/finger to still be on the
+      // player tile when the threshold fires.
       if (
-        this._screenPressed &&
+        (this._screenPressed || this._mousePressed) &&
         !_longPressTriggered &&
+        _pressStartedOnPlayer &&
         this._pressedTime === LONG_PRESS_FRAMES &&
         isOnMap()
       ) {
         var cx = this.x;
         var cy = this.y;
         if (isOnPlayerTile(cx, cy)) {
-          _rightClickInteract = true;
+          _interactRequested = true;
           _longPressTriggered = true;
           // Clear destination so the player doesn't walk
           if (typeof $gameTemp !== "undefined") {
@@ -748,7 +768,7 @@
           }
         }
       }
-      if (!this._screenPressed) {
+      if (!this._screenPressed && !this._mousePressed) {
         _longPressTriggered = false;
       }
     };
