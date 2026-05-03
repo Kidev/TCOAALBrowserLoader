@@ -17,6 +17,16 @@
   if (typeof TouchInput === "undefined" || typeof Graphics === "undefined")
     return;
 
+  // Touch-primary detection (matches lang-shim.js's _isMobile). On mobile,
+  // browsers (including Brave's mobile simulator) emit synthetic mousedown
+  // events alongside touchstart for compatibility. The mouse path below
+  // fires _onTrigger immediately, which beats the touch path's deferred
+  // swipe detection: touch-and-hold-then-swipe registers as a tap on the
+  // item under the finger before the move can be classified as a swipe.
+  var _isMobile =
+    /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
+
   // 1. Restore stock mouse handlers on TouchInput AND register new DOM
   //    event listeners that call them. The old bound no-ops stay attached
   //    but are harmless (they do nothing).
@@ -32,6 +42,12 @@
   };
 
   TouchInput._onLeftButtonDown = function (event) {
+    // On touch-primary devices, suppress the immediate trigger from
+    // synthetic mousedown events. The touch handlers below own click
+    // gesture recognition and will defer/fire _onTrigger appropriately.
+    // Right-click cancel and middle-click are left intact for any genuine
+    // pointer device a mobile user might pair.
+    if (_isMobile) return;
     var x = Graphics.pageToCanvasX(event.pageX);
     var y = Graphics.pageToCanvasY(event.pageY);
     if (Graphics.isInsideCanvas(x, y)) {
