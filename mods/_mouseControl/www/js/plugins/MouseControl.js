@@ -254,10 +254,23 @@
     _swipe.lastY = y;
   };
 
+  // For deferred-tap touchend: the stock _baseOnTouchEnd clears _screenPressed,
+  // but Window_Message.isTriggered uses TouchInput.isRepeated() which requires
+  // isPressed() (i.e. _screenPressed) AND _triggered to be true on the SAME
+  // update tick. If we cleared _screenPressed before _onTrigger's effect was
+  // observed, the engine sees _triggered=true alone and isRepeated returns
+  // false: dialogue won't advance on tap. So we defer the base cleanup by
+  // one update tick: { event, age:0 } on the frame _onTrigger fires, then
+  // age:1 on the next frame where the base handler finally runs.
   var _baseOnTouchEnd = TouchInput._onTouchEnd;
+  var _pendingTouchEnd = null;
+
   TouchInput._onTouchEnd = function (event) {
-    _baseOnTouchEnd.call(this, event);
-    if (!_swipe) return;
+    if (!_swipe) {
+      // Multi-touch (escape) or stray release: clear normally.
+      _baseOnTouchEnd.call(this, event);
+      return;
+    }
     var sw = _swipe;
     _swipe = null;
 
@@ -266,8 +279,14 @@
 
     if (!sw.isSwipe) {
       if (sw.deferred) {
+        // Fire trigger NOW but keep _screenPressed=true so isRepeated() works
+        // on the next update tick. _baseOnTouchEnd is flushed one frame later.
         this._onTrigger(sw.x0, sw.y0);
+        _pendingTouchEnd = { event: event, age: 0 };
+        return;
       }
+      // Map free-walk: trigger already fired on touchstart; clear normally.
+      _baseOnTouchEnd.call(this, event);
       return;
     }
 
@@ -282,11 +301,11 @@
         // trigger on the map (free-walk path).
         $gameTemp.clearDestination();
       }
-      return;
     }
 
     // Vertical / non-backlog swipe: already handled in touchmove (scroll).
-    // Suppress any deferred tap-trigger so it doesn't accidentally select.
+    // Either way, no deferred trigger, clear normally.
+    _baseOnTouchEnd.call(this, event);
   };
 
   // Clear our gesture state on cancel (lang-shim's touchcancel listener calls
@@ -297,6 +316,7 @@
   TouchInput._onTouchCancel = function (event) {
     _baseOnTouchCancel.call(this, event);
     _swipe = null;
+    _pendingTouchEnd = null;
   };
 
   // Suppress browser context menu so right-click acts as escape
@@ -694,6 +714,20 @@
       if (_pendingEscapeRelease) {
         Input._currentState["escape"] = false;
         _pendingEscapeRelease = false;
+      }
+
+      // Flush deferred touchend cleanup. On the frame _onTrigger landed
+      // (age=0) we leave _screenPressed alone so isRepeated() returns true
+      // for Window_Message.isTriggered. On the NEXT frame (age>=1) we run
+      // the base handler to clear _screenPressed and fire _onRelease.
+      if (_pendingTouchEnd) {
+        if (_pendingTouchEnd.age >= 1) {
+          var ev = _pendingTouchEnd.event;
+          _pendingTouchEnd = null;
+          _baseOnTouchEnd.call(this, ev);
+        } else {
+          _pendingTouchEnd.age++;
+        }
       }
 
       // Long-press detection
