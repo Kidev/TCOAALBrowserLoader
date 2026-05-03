@@ -554,15 +554,45 @@
       var isSupportPassive = Utils.isSupportPassiveEvent();
       var passiveFalse = isSupportPassive ? { passive: false } : false;
       var T = TouchInput;
-      document.addEventListener("mousedown", function (e) { T._onMouseDown(e); });
-      document.addEventListener("mousemove", function (e) { T._onMouseMove(e); });
-      document.addEventListener("mouseup", function (e) { T._onMouseUp(e); });
-      document.addEventListener("wheel", function (e) { T._onWheel(e); }, passiveFalse);
-      document.addEventListener("touchstart", function (e) { T._onTouchStart(e); }, passiveFalse);
-      document.addEventListener("touchmove", function (e) { T._onTouchMove(e); }, passiveFalse);
-      document.addEventListener("touchend", function (e) { T._onTouchEnd(e); });
-      document.addEventListener("touchcancel", function (e) { T._onTouchCancel(e); });
-      document.addEventListener("pointerdown", function (e) { T._onPointerDown(e); });
+      document.addEventListener("mousedown", function (e) {
+        T._onMouseDown(e);
+      });
+      document.addEventListener("mousemove", function (e) {
+        T._onMouseMove(e);
+      });
+      document.addEventListener("mouseup", function (e) {
+        T._onMouseUp(e);
+      });
+      document.addEventListener(
+        "wheel",
+        function (e) {
+          T._onWheel(e);
+        },
+        passiveFalse,
+      );
+      document.addEventListener(
+        "touchstart",
+        function (e) {
+          T._onTouchStart(e);
+        },
+        passiveFalse,
+      );
+      document.addEventListener(
+        "touchmove",
+        function (e) {
+          T._onTouchMove(e);
+        },
+        passiveFalse,
+      );
+      document.addEventListener("touchend", function (e) {
+        T._onTouchEnd(e);
+      });
+      document.addEventListener("touchcancel", function (e) {
+        T._onTouchCancel(e);
+      });
+      document.addEventListener("pointerdown", function (e) {
+        T._onPointerDown(e);
+      });
     };
   }
 

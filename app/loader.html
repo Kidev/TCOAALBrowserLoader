@@ -314,8 +314,7 @@
         text-align: center;
       }
       .error-panel .error-detail {
-        font-family:
-          "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
         font-size: 0.8vmax;
         color: #c8a;
         background: rgba(0, 0, 0, 0.3);
@@ -391,8 +390,7 @@
         display: none;
         max-height: 18vmax;
         overflow-y: auto;
-        font-family:
-          "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
         font-size: 0.75vmax;
         color: #c8a;
         background: rgba(0, 0, 0, 0.4);
@@ -486,11 +484,7 @@
              Hidden by default; revealed on init when IDB already has assets. -->
         <div class="manage-panel" id="manage-panel">
           <div class="manage-actions">
-            <button
-              class="action-btn play"
-              id="btn-play"
-              onclick="goToGame()"
-            >
+            <button class="action-btn play" id="btn-play" onclick="goToGame()">
               Play
             </button>
             <button
@@ -509,14 +503,12 @@
             </button>
           </div>
           <div class="health-panel" id="health-panel">
-            <div class="health-summary" id="health-summary">
-              Scanning...
-            </div>
+            <div class="health-summary" id="health-summary">Scanning...</div>
             <button
               class="health-toggle"
               id="health-toggle"
               onclick="toggleMissingList()"
-              style="display:none"
+              style="display: none"
             >
               Show missing files
             </button>
@@ -534,16 +526,10 @@
           <div class="error-body" id="error-body"></div>
           <div class="error-detail" id="error-detail"></div>
           <div class="error-actions">
-            <button
-              class="action-btn secondary"
-              onclick="resetAndRetry()"
-            >
+            <button class="action-btn secondary" onclick="resetAndRetry()">
               Clear data &amp; try again
             </button>
-            <button
-              class="action-btn secondary"
-              onclick="dismissError()"
-            >
+            <button class="action-btn secondary" onclick="dismissError()">
               Try again
             </button>
           </div>
@@ -871,8 +857,7 @@
         if (health.missing.length === 0) {
           $hp.classList.add("ok");
           $sum.classList.add("ok");
-          $sum.textContent =
-            "All " + health.total + " expected files present.";
+          $sum.textContent = "All " + health.total + " expected files present.";
           $tog.style.display = "none";
           $list.classList.remove("visible");
           return;
@@ -888,8 +873,7 @@
           "% present). The game may still run; mods or version drift can cause this.";
         $list.textContent = health.missing.join("\n");
         $tog.style.display = "";
-        $tog.textContent =
-          "Show missing files (" + health.missing.length + ")";
+        $tog.textContent = "Show missing files (" + health.missing.length + ")";
       }
 
       function toggleMissingList() {

@@ -7,10 +7,7 @@
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
     "version": "2a55afc",
-    "files": [
-      "img/icon.png",
-      "js/plugins/MouseControl.js"
-    ]
+    "files": ["img/icon.png", "js/plugins/MouseControl.js"]
   },
   "_unlockAll": {
     "name": "Unlocker",
@@ -20,10 +17,7 @@
     "description": "While enabled, the vision room, visions and stars are all available",
     "author": "kidev",
     "version": "2a55afc",
-    "files": [
-      "img/icon.png",
-      "js/plugins/UnlockAll.js"
-    ]
+    "files": ["img/icon.png", "js/plugins/UnlockAll.js"]
   },
   "AnalogMove": {
     "name": "Analog Move",
@@ -34,10 +28,7 @@
     "author": "Sanshiro",
     "version": "2a55afc",
     "lastUpdate": "2024-03-29",
-    "files": [
-      "img/icon.png",
-      "js/plugins/SAN_AnalogMove.js"
-    ],
+    "files": ["img/icon.png", "js/plugins/SAN_AnalogMove.js"],
     "drmType": "none"
   },
   "MessageBacklog": {
@@ -49,10 +40,7 @@
     "author": "Yanfly",
     "version": "2a55afc",
     "lastUpdate": "2024-03-29",
-    "files": [
-      "img/icon.png",
-      "js/plugins/YEP_X_MessageBacklog.js"
-    ],
+    "files": ["img/icon.png", "js/plugins/YEP_X_MessageBacklog.js"],
     "drmType": "none"
   },
   "TCOAAR": {
@@ -4789,10 +4777,7 @@
     "description": "Português / Brasil",
     "langFile": "dialogue.txt",
     "version": "2026-04-21",
-    "files": [
-      "dialogue.txt",
-      "icon.png"
-    ]
+    "files": ["dialogue.txt", "icon.png"]
   },
   "translation_russian": {
     "name": "Russian",
@@ -4944,10 +4929,7 @@
     "description": "Türkçe",
     "langFile": "dialogue.txt",
     "version": "2026-04-21",
-    "files": [
-      "dialogue.txt",
-      "icon.png"
-    ]
+    "files": ["dialogue.txt", "icon.png"]
   },
   "translation_ukrainian": {
     "name": "Ukrainian",

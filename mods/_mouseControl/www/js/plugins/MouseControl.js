@@ -150,7 +150,11 @@
     // so the message resumes correctly on close.
     if (scene._messageWindow) {
       var mw = scene._messageWindow;
-      if (mw.pause && mw.isOpen() && typeof mw.openBacklogWindow === "function") {
+      if (
+        mw.pause &&
+        mw.isOpen() &&
+        typeof mw.openBacklogWindow === "function"
+      ) {
         mw.openBacklogWindow();
         return true;
       }
