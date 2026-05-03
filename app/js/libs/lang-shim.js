@@ -535,38 +535,34 @@
     } catch (e) {}
   }
 
-  // Chrome treats wheel listeners on document as passive by default, so
-  // TouchInput._onWheel's preventDefault() call is blocked and spams
-  // "[Intervention] Unable to preventDefault inside passive event listener"
-  // on every scroll. Re-register _setupEventHandlers with {passive: false}
-  // for the wheel listener. This must run before SceneManager.initInput()
-  // (triggered on window.onload via main.js), so it's patched eagerly here
-  // rather than in applyPatches (which runs at Scene_Boot.start, too late).
+  // Replace the stock _setupEventHandlers for two reasons:
+  //   1. {passive: false} on the wheel listener:  Chrome treats document-level
+  //      wheel listeners as passive by default, blocking _onWheel's
+  //      preventDefault() and spamming the console on every scroll.
+  //   2. Indirect-lookup wrappers (instead of .bind(this)) so later plugin
+  //      reassignment of TouchInput._onTouchStart / _onMouseDown / etc.
+  //      takes effect on the live listeners. .bind() captures the function
+  //      value at setup time, so plugins like MouseControl that reassign
+  //      these methods afterwards have no effect on the stock listener,
+  //      causing both the stock (immediate-trigger) and the plugin's
+  //      (deferred-trigger) paths to fire on every touch.
+  // This must run before SceneManager.initInput() (triggered on window.onload
+  // via main.js), so it's patched eagerly here rather than in applyPatches
+  // (which runs at Scene_Boot.start, too late).
   if (typeof TouchInput !== "undefined" && typeof Utils !== "undefined") {
     TouchInput._setupEventHandlers = function () {
       var isSupportPassive = Utils.isSupportPassiveEvent();
       var passiveFalse = isSupportPassive ? { passive: false } : false;
-      document.addEventListener("mousedown", this._onMouseDown.bind(this));
-      document.addEventListener("mousemove", this._onMouseMove.bind(this));
-      document.addEventListener("mouseup", this._onMouseUp.bind(this));
-      document.addEventListener(
-        "wheel",
-        this._onWheel.bind(this),
-        passiveFalse,
-      );
-      document.addEventListener(
-        "touchstart",
-        this._onTouchStart.bind(this),
-        passiveFalse,
-      );
-      document.addEventListener(
-        "touchmove",
-        this._onTouchMove.bind(this),
-        passiveFalse,
-      );
-      document.addEventListener("touchend", this._onTouchEnd.bind(this));
-      document.addEventListener("touchcancel", this._onTouchCancel.bind(this));
-      document.addEventListener("pointerdown", this._onPointerDown.bind(this));
+      var T = TouchInput;
+      document.addEventListener("mousedown", function (e) { T._onMouseDown(e); });
+      document.addEventListener("mousemove", function (e) { T._onMouseMove(e); });
+      document.addEventListener("mouseup", function (e) { T._onMouseUp(e); });
+      document.addEventListener("wheel", function (e) { T._onWheel(e); }, passiveFalse);
+      document.addEventListener("touchstart", function (e) { T._onTouchStart(e); }, passiveFalse);
+      document.addEventListener("touchmove", function (e) { T._onTouchMove(e); }, passiveFalse);
+      document.addEventListener("touchend", function (e) { T._onTouchEnd(e); });
+      document.addEventListener("touchcancel", function (e) { T._onTouchCancel(e); });
+      document.addEventListener("pointerdown", function (e) { T._onPointerDown(e); });
     };
   }
 

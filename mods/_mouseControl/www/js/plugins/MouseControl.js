@@ -4,11 +4,12 @@
  * menu/cancel, single-click menus, hover-to-select choices, contextual cursors,
  * and mobile touch support (two-finger tap = escape).
  *
- * DisableMouse.js replaces TouchInput._onMouseDown with a no-op BEFORE
- * _setupEventHandlers runs. When _setupEventHandlers does:
- *   document.addEventListener('mousedown', this._onMouseDown.bind(this))
- * the .bind() captures a reference to the no-op. Reassigning the method
- * later has NO effect on the bound listener. We must add fresh listeners.
+ * DisableMouse.js replaces TouchInput._onMouseDown with a no-op. lang-shim.js
+ * patches TouchInput._setupEventHandlers to use indirect-lookup wrappers
+ * (e.g. function (e) { TouchInput._onTouchStart(e); } instead of
+ * this._onTouchStart.bind(this)), so reassigning these methods here at
+ * plugin-load time takes effect on the live DOM listeners:  no need to
+ * re-register fresh listeners on top.
  */
 
 (function () {
@@ -27,9 +28,8 @@
     /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent) ||
     (navigator.maxTouchPoints && navigator.maxTouchPoints > 1);
 
-  // 1. Restore stock mouse handlers on TouchInput AND register new DOM
-  //    event listeners that call them. The old bound no-ops stay attached
-  //    but are harmless (they do nothing).
+  // 1. Restore stock mouse handlers on TouchInput. lang-shim's indirect-lookup
+  //    DOM listeners pick up these reassignments automatically.
 
   TouchInput._onMouseDown = function (event) {
     if (event.button === 0) {
@@ -82,19 +82,11 @@
     }
   };
 
-  // Register fresh DOM listeners (the old bound no-ops remain but are harmless)
-  document.addEventListener("mousedown", function (event) {
-    TouchInput._onMouseDown.call(TouchInput, event);
-  });
-  document.addEventListener("mousemove", function (event) {
-    TouchInput._onMouseMove.call(TouchInput, event);
-  });
-  document.addEventListener("mouseup", function (event) {
-    TouchInput._onMouseUp.call(TouchInput, event);
-  });
-
-  // Re-register touch listeners to ensure they call our current methods
-  // (guards against DisableMouse or other plugins that may have bound stale refs).
+  // The DOM listeners for mousedown / mousemove / mouseup / touchstart /
+  // touchmove / touchend are registered once by lang-shim.js's patched
+  // TouchInput._setupEventHandlers, using indirect-lookup wrappers. The
+  // method reassignments above (and on _onTouch* below) are picked up
+  // automatically:  registering fresh listeners here would just double-fire.
   //
   // Single-touch behavior is gesture-aware:
   //   tap                       -> click (advance message / select item)
@@ -297,26 +289,15 @@
     // Suppress any deferred tap-trigger so it doesn't accidentally select.
   };
 
-  document.addEventListener(
-    "touchstart",
-    function (event) {
-      TouchInput._onTouchStart.call(TouchInput, event);
-    },
-    { passive: false },
-  );
-  document.addEventListener(
-    "touchmove",
-    function (event) {
-      TouchInput._onTouchMove.call(TouchInput, event);
-    },
-    { passive: false },
-  );
-  document.addEventListener("touchend", function (event) {
-    TouchInput._onTouchEnd.call(TouchInput, event);
-  });
-  document.addEventListener("touchcancel", function () {
+  // Clear our gesture state on cancel (lang-shim's touchcancel listener calls
+  // the stock _onTouchCancel; we just need to drop our pending swipe so a
+  // partial tap doesn't fire a deferred trigger after the browser aborts the
+  // gesture).
+  var _baseOnTouchCancel = TouchInput._onTouchCancel;
+  TouchInput._onTouchCancel = function (event) {
+    _baseOnTouchCancel.call(this, event);
     _swipe = null;
-  });
+  };
 
   // Suppress browser context menu so right-click acts as escape
   document.addEventListener("contextmenu", function (event) {
@@ -567,7 +548,9 @@
   function isFullscreenScene(scene) {
     return (
       (typeof Scene_File !== "undefined" && scene instanceof Scene_File) ||
-      (typeof Scene_Mods !== "undefined" && scene instanceof Scene_Mods)
+      (typeof Scene_Mods !== "undefined" && scene instanceof Scene_Mods) ||
+      (typeof Scene_Achievements !== "undefined" &&
+        scene instanceof Scene_Achievements)
     );
   }
 
