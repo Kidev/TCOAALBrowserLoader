@@ -70,6 +70,15 @@
     if (event.button === 0) {
       var x = Graphics.pageToCanvasX(event.pageX);
       var y = Graphics.pageToCanvasY(event.pageY);
+      // Click on the player tile = interact with facing event.
+      // Requires press AND release to land on the player tile so a
+      // click-then-drag elsewhere stays a normal walk.
+      if (_pressStartedOnPlayer && isOnMap() && isOnPlayerTile(x, y)) {
+        _interactRequested = true;
+        if (typeof $gameTemp !== "undefined") {
+          $gameTemp.clearDestination();
+        }
+      }
       this._mousePressed = false;
       this._onRelease(x, y);
     }
@@ -91,10 +100,10 @@
   //
   // Single-touch behavior is gesture-aware:
   //   tap                       -> click (advance message / select item)
+  //   tap on player tile        -> interact with facing event
   //   vertical swipe in menus   -> scroll the active selectable window
   //   big horizontal swipe      -> open MessageBacklog (when MessageLog is on)
   //   two-finger touch          -> cancel / escape
-  //   long-press on player tile -> interact (handled later in TouchInput.update)
   //
   // To distinguish a tap from a swipe we DEFER firing the click trigger to
   // touchend whenever we're NOT in map free-walk mode. On the map (without an
@@ -284,6 +293,17 @@
     var dy = sw.lastY - sw.y0;
 
     if (!sw.isSwipe) {
+      // Tap on the player tile = interact with facing event.
+      if (
+        _pressStartedOnPlayer &&
+        isOnMap() &&
+        isOnPlayerTile(sw.lastX, sw.lastY)
+      ) {
+        _interactRequested = true;
+        if (typeof $gameTemp !== "undefined") {
+          $gameTemp.clearDestination();
+        }
+      }
       if (sw.deferred) {
         // Fire trigger NOW but keep _screenPressed=true so isRepeated() works
         // on the next update tick. _baseOnTouchEnd is flushed one frame later.
@@ -640,19 +660,20 @@
     };
   }
 
-  // 4. Cancel / escape, and held-press-on-player = interact
+  // 4. Cancel / escape, and click-on-player = interact
   //
   // On the map:
-  //   - Right-click anywhere     -> escape (open menu)
-  //   - Two-finger tap (mobile)  -> escape (open menu)
-  //   - Hold left-click ON the player -> interact with facing event
-  //   - Long-touch ON the player -> interact with facing event
+  //   - Right-click anywhere          -> escape (open menu)
+  //   - Two-finger tap (mobile)       -> escape (open menu)
+  //   - Click ON the player           -> interact with facing event
+  //   - Tap ON the player             -> interact with facing event
   // In menus:
-  //   - Right-click / two-finger tap -> cancel (back out)
+  //   - Right-click / two-finger tap  -> cancel (back out)
   //
-  // Only held-on-player triggers interact: a quick click/tap on the player
-  // tile is just the normal walk-here (no-op), and right-click / two-finger
-  // tap never trigger interact (too easy to confuse with cancel).
+  // Click/tap on the player only triggers interact when both press AND
+  // release land on the player tile (drag-from-player still walks). Right-
+  // click and two-finger tap never trigger interact (would conflict with
+  // cancel).
 
   function isOnPlayerTile(canvasX, canvasY) {
     if (typeof $gamePlayer === "undefined" || typeof $gameMap === "undefined")
@@ -717,15 +738,6 @@
     };
   }
 
-  // Held press on player = interact (works for both mouse and touch).
-  // After LONG_PRESS_FRAMES frames (~500ms at 60fps) of holding on the
-  // player tile, trigger interact and cancel any touch-move destination.
-  // Gated on _pressStartedOnPlayer so dragging/sliding onto the player
-  // mid-hold doesn't trigger; the press has to BEGIN on the player tile.
-
-  var LONG_PRESS_FRAMES = 30;
-  var _longPressTriggered = false;
-
   if (typeof TouchInput !== "undefined") {
     var _orig_tiUpdate = TouchInput.update;
     TouchInput.update = function () {
@@ -749,31 +761,6 @@
         } else {
           _pendingTouchEnd.age++;
         }
-      }
-
-      // Long-press detection (mouse OR touch). Requires the press to have
-      // started on the player tile AND the cursor/finger to still be on the
-      // player tile when the threshold fires.
-      if (
-        (this._screenPressed || this._mousePressed) &&
-        !_longPressTriggered &&
-        _pressStartedOnPlayer &&
-        this._pressedTime === LONG_PRESS_FRAMES &&
-        isOnMap()
-      ) {
-        var cx = this.x;
-        var cy = this.y;
-        if (isOnPlayerTile(cx, cy)) {
-          _interactRequested = true;
-          _longPressTriggered = true;
-          // Clear destination so the player doesn't walk
-          if (typeof $gameTemp !== "undefined") {
-            $gameTemp.clearDestination();
-          }
-        }
-      }
-      if (!this._screenPressed && !this._mousePressed) {
-        _longPressTriggered = false;
       }
     };
   }
