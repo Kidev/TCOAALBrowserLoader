@@ -24,7 +24,7 @@ var MODS_JSON = path.join(__dirname, "mods.json");
 var MODS_DIR = path.join(__dirname, "mods");
 
 var TRANSLATIONS_BASE =
-  "https://play-tcoaal-translations.kidev.org/translations";
+  "https://translations.tcoaal.app/translations";
 var TRANSLATIONS_LANGS_URL = TRANSLATIONS_BASE + "/langs.txt";
 var TRANSLATION_AUTHOR = "TCOAAL Translation Project";
 
