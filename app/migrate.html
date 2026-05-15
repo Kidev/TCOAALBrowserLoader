@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
     <title>Save File Migration · TCOAAL Browser Player</title>
     <style>
       :root {
@@ -644,8 +645,6 @@
         }, 30000);
       }
 
-      // ---- merge ---------------------------------------------------------
-
       // Build a plan from the combined LS+IDB view. Returns:
       //   { hasTranslation, ordered, newGlobalEncoded, newConfig,
       //     keysToDelete }
@@ -1058,8 +1057,6 @@
           }
         } catch (_) {}
       }
-
-      // ---- main flow -----------------------------------------------------
 
       var _state = null; // { plan, combined, db }
 

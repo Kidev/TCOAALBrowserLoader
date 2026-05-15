@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
     <title>Importing Saves - TCOAAL Browser Player</title>
     <style>
       :root {
@@ -745,7 +746,7 @@
           try {
             localStorage.setItem(k, entries[i][1]);
           } catch (e) {
-            // Quota or invalid value:  skip and continue, the sender's
+            // Quota or invalid value: skip and continue, the sender's
             // ack-based flow expects us to keep going.
             console.warn("[migrate-incoming] LS write failed for", k, e);
           }
@@ -767,13 +768,28 @@
           send({ type: "ack", kind: "idb" });
           return;
         }
+        // Filter entries to save-shape keys only. The sender already groups
+        // chunks by DB, but a stale sender (or a future change that lumps
+        // bookkeeping keys into tcoaal-saves) could still ship mod-state
+        // keys like `__active_mod__`, `_activeMod`, `_activePlugins`, or
+        // `__mod_meta__:<id>`. Save data carries across; everything else
+        // (active mod, plugin enablement, install metadata) must reset
+        // on the new origin so the user starts with a clean mod slate.
+        var entries = (data.entries || []).filter(function (e) {
+          return e && isSaveKey(e.key);
+        });
+        if (entries.length === 0) {
+          setProgress(data.bytes);
+          send({ type: "ack", kind: "idb" });
+          return;
+        }
         var cacheKey = data.db + "::" + data.store;
         var db = dbCache[cacheKey];
         if (!db) {
           db = await openDB(data.db, [data.store]);
           dbCache[cacheKey] = db;
         }
-        await writeEntries(db, data.store, data.entries);
+        await writeEntries(db, data.store, entries);
         setProgress(data.bytes);
         send({ type: "ack", kind: "idb" });
       }

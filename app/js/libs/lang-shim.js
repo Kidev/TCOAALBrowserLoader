@@ -2336,24 +2336,94 @@
     Scene_Mods.prototype.create = function () {
       Scene_MenuBase.prototype.create.call(this);
       this.createHelpWindow();
+      this.createActiveModWindow();
       this.createListWindow();
       this.createConfirmWindow();
     };
 
     Scene_Mods.prototype.createHelpWindow = function () {
       this._helpWindow = new Window_Help(1);
-      var am = getActiveMod();
-      var amLabel = am;
-      if (am && _modsData && _modsData[am]) {
-        var amEntry = _modsData[am];
-        var amName = amEntry.name || am;
-        amLabel = isTranslationType(amEntry.type)
-          ? amName + " translation"
-          : amName;
-      }
-      this._helpWindow.setText(am ? "Mods | Active: " + amLabel : "Mods");
+      // Header stays at just "Mods": when an overhaul or translation is
+      // enabled it gets its own Window_ModActive rectangle below this one
+      // (createActiveModWindow), so the header doesn't need to spell out
+      // "Mods | Active: <name>" (a long mod name there overlapped the
+      // centered [Del]/[Enter] hint row drawn over this same window by
+      // _drawModsHints).
+      this._helpWindow.setText("Mods");
       this.addWindow(this._helpWindow);
       this._drawModsHints();
+    };
+
+    Scene_Mods.prototype.createActiveModWindow = function () {
+      // Plugin-type mods can have many active at once and stay in
+      // Window_ModList with a green border. Only the single
+      // overhaul/translation slot (the one returned by getActiveMod) gets
+      // hoisted into its own framed rectangle here.
+      var am = getActiveMod();
+      if (!am) {
+        this._activeModWindow = null;
+        return;
+      }
+      var entry = null;
+      var list = getModList();
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].key === am) {
+          entry = list[i];
+          break;
+        }
+      }
+      if (!entry || isPluginType(entry.type)) {
+        this._activeModWindow = null;
+        return;
+      }
+      var y = this._helpWindow.height;
+      var width = Graphics.boxWidth;
+      // Pin row + 4 visible list rows = 5 rows total below the help bar,
+      // all at the same height. Each window contributes one standardPadding
+      // pair (pad2 = 36) to the chrome budget. Keeping pin/list rows the
+      // same height makes the pin look like a peeled-off list row.
+      var pad2 = 36;
+      var contentH = Graphics.boxHeight - y;
+      var rowH = Math.floor((contentH - 2 * pad2) / 5);
+      this._modRowHeight = rowH;
+      this._activeModWindow = new Window_ModActive(
+        0,
+        y,
+        width,
+        rowH + pad2,
+        entry,
+      );
+      this._activeModWindow.setHandler("ok", this.onActiveModOk.bind(this));
+      this._activeModWindow.setHandler("cancel", this.popScene.bind(this));
+      // The pin only has a single item, so pressing Down on it hops focus
+      // to the top of the main list rather than no-oping.
+      var scene = this;
+      this._activeModWindow.cursorDown = function () {
+        if (scene._listWindow && scene._listWindow.maxItems() > 0) {
+          SoundManager.playCursor();
+          this.deactivate();
+          scene._listWindow.select(0);
+          scene._listWindow.activate();
+        }
+      };
+      this.addWindow(this._activeModWindow);
+    };
+
+    Scene_Mods.prototype.onActiveModOk = function () {
+      var mod = this._activeModWindow.selectedMod();
+      if (!mod) {
+        this._activeModWindow.activate();
+        return;
+      }
+      // The pin only hosts the currently-active overhaul/translation, so
+      // OK on it can only mean "disable". Confirm first, then on Yes the
+      // standard disableOverhaul path runs (clears _activeMod, reloads).
+      this._showConfirm(
+        "Disable " + mod.name + "?",
+        "disableOverhaul",
+        mod,
+        this._activeModWindow,
+      );
     };
 
     Scene_Mods.prototype._drawModsHints = function () {
@@ -2395,12 +2465,45 @@
 
     Scene_Mods.prototype.createListWindow = function () {
       var y = this._helpWindow.height;
+      if (this._activeModWindow) y += this._activeModWindow.height;
       var width = Graphics.boxWidth;
       var height = Graphics.boxHeight - y;
-      this._listWindow = new Window_ModList(0, y, width, height);
+      // When the pin is present, show 4 list rows so list row height
+      // matches pin row height. Without a pin the list reverts to the
+      // original 5-row layout.
+      var maxVisible = this._activeModWindow ? 4 : 5;
+      this._listWindow = new Window_ModList(0, y, width, height, maxVisible);
       this._listWindow.setHandler("ok", this.onModOk.bind(this));
       this._listWindow.setHandler("cancel", this.popScene.bind(this));
+      if (this._activeModWindow) {
+        // Pressing Up on the top row hops focus up to the pin instead of
+        // doing nothing: paired with the pin's cursorDown override above,
+        // this lets the user move freely between the two windows.
+        var scene = this;
+        var origCursorUp = Window_Selectable.prototype.cursorUp;
+        this._listWindow.cursorUp = function (wrap) {
+          if (this.index() < this.maxCols()) {
+            SoundManager.playCursor();
+            this.deactivate();
+            scene._activeModWindow.select(0);
+            scene._activeModWindow.activate();
+            return;
+          }
+          origCursorUp.call(this, wrap);
+        };
+      }
       this.addWindow(this._listWindow);
+      // Edge case: the list ended up empty (every entry in mods.json was
+      // the active overhaul, which was filtered out). Hand initial focus
+      // to the pin so input has somewhere to go.
+      if (
+        this._listWindow.maxItems() === 0 &&
+        this._activeModWindow
+      ) {
+        this._listWindow.deactivate();
+        this._activeModWindow.select(0);
+        this._activeModWindow.activate();
+      }
     };
 
     Scene_Mods.prototype.createConfirmWindow = function () {
@@ -2415,42 +2518,62 @@
     Scene_Mods.prototype.start = function () {
       Scene_MenuBase.prototype.start.call(this);
       var self = this;
+      // Mouse position tracker for cross-window hover-to-focus. Vanilla
+      // MV's TouchInput only updates x/y on press, and MouseControl keeps
+      // its own _mouseX/_mouseY private, so we attach our own listener
+      // scoped to this scene. Removed in terminate() to avoid leaking
+      // handlers across scene transitions.
+      this._modsMouseX = null;
+      this._modsMouseY = null;
+      this._modsLastSeenMouseX = null;
+      this._modsLastSeenMouseY = null;
+      this._modsMouseHandler = function (e) {
+        self._modsMouseX = Graphics.pageToCanvasX(e.pageX);
+        self._modsMouseY = Graphics.pageToCanvasY(e.pageY);
+      };
+      document.addEventListener("mousemove", this._modsMouseHandler);
       fetchAllModStatus(function () {
         if (self._listWindow) self._listWindow.refresh();
+        if (self._activeModWindow) self._activeModWindow.refresh();
       });
     };
 
+    Scene_Mods.prototype.terminate = function () {
+      if (this._modsMouseHandler) {
+        document.removeEventListener("mousemove", this._modsMouseHandler);
+        this._modsMouseHandler = null;
+      }
+      Scene_MenuBase.prototype.terminate.call(this);
+    };
+
     Scene_Mods.prototype.update = function () {
+      // Cross-window touch focus must run BEFORE the children update, so
+      // the now-active window's own processTouch (called from its update)
+      // can consume the same touch-trigger event we used to swap focus.
+      // Without this, clicking the pin while the list is focused would be
+      // silently dropped: the list's processTouch sees the touch outside
+      // its frame and the pin's processTouch is gated on this.active.
+      this._processCrossWindowTouch();
       Scene_MenuBase.prototype.update.call(this);
-      if (
-        this._listWindow &&
-        this._listWindow.active &&
-        Input.isTriggered("delete")
-      ) {
-        var mod = this._listWindow.selectedMod();
-        if (mod && isBuiltIn(mod) && isPluginType(mod.type)) {
-          // Built-in plugin: disable instead of uninstall
-          if (isPluginActive(mod.key)) {
-            this._showConfirm(
-              "Disable " + mod.name + "?",
-              "disablePlugin",
-              mod,
-            );
-          }
-        } else if (
-          mod &&
-          _modStatus[mod.key] &&
-          _modStatus[mod.key].installed
-        ) {
-          this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
+      // Del key: list and pin handle their own selection's uninstall.
+      if (Input.isTriggered("delete")) {
+        if (this._listWindow && this._listWindow.active) {
+          this._handleDelete(this._listWindow);
+        } else if (this._activeModWindow && this._activeModWindow.active) {
+          this._handleDelete(this._activeModWindow);
         }
       }
       // Hint button click detection (only with mouse control enabled)
+      var hintWin = null;
+      if (this._listWindow && this._listWindow.active) {
+        hintWin = this._listWindow;
+      } else if (this._activeModWindow && this._activeModWindow.active) {
+        hintWin = this._activeModWindow;
+      }
       if (
         isPluginActive("_mouseControl") &&
         this._modHintRects &&
-        this._listWindow &&
-        this._listWindow.active &&
+        hintWin &&
         !this._pendingAction &&
         TouchInput.isTriggered()
       ) {
@@ -2465,23 +2588,7 @@
           ty >= rUninstall.y &&
           ty <= rUninstall.y + rUninstall.h
         ) {
-          // Click on [Del] Uninstall mod
-          var mod = this._listWindow.selectedMod();
-          if (mod && isBuiltIn(mod) && isPluginType(mod.type)) {
-            if (isPluginActive(mod.key)) {
-              this._showConfirm(
-                "Disable " + mod.name + "?",
-                "disablePlugin",
-                mod,
-              );
-            }
-          } else if (
-            mod &&
-            _modStatus[mod.key] &&
-            _modStatus[mod.key].installed
-          ) {
-            this._showConfirm("Uninstall " + mod.name + "?", "uninstall", mod);
-          }
+          this._handleDelete(hintWin);
         } else if (
           rInstall &&
           tx >= rInstall.x &&
@@ -2489,15 +2596,113 @@
           ty >= rInstall.y &&
           ty <= rInstall.y + rInstall.h
         ) {
-          // Click on [Enter] Install/Enable mod
-          this.onModOk();
+          if (hintWin === this._activeModWindow) {
+            this.onActiveModOk();
+          } else {
+            this.onModOk();
+          }
         }
       }
     };
 
-    Scene_Mods.prototype._showConfirm = function (message, action, mod) {
+    Scene_Mods.prototype._handleDelete = function (sourceWin) {
+      var mod = sourceWin.selectedMod && sourceWin.selectedMod();
+      if (!mod) return;
+      if (isBuiltIn(mod) && isPluginType(mod.type)) {
+        // Built-in plugin: Del disables instead of uninstalling, since the
+        // files are shipped with the app and can't actually be removed.
+        if (isPluginActive(mod.key)) {
+          this._showConfirm(
+            "Disable " + mod.name + "?",
+            "disablePlugin",
+            mod,
+            sourceWin,
+          );
+        }
+        return;
+      }
+      if (_modStatus[mod.key] && _modStatus[mod.key].installed) {
+        this._showConfirm(
+          "Uninstall " + mod.name + "?",
+          "uninstall",
+          mod,
+          sourceWin,
+        );
+      }
+    };
+
+    Scene_Mods.prototype._processCrossWindowTouch = function () {
+      if (!this._activeModWindow) return;
+      if (this._pendingAction) return;
+      if (this._confirmWindow && this._confirmWindow.active) return;
+      var aw = this._activeModWindow;
+      var lw = this._listWindow;
+
+      // Two signals trigger a focus swap: a click anywhere on canvas
+      // (TouchInput.isTriggered) and a fresh mouse movement while the
+      // cursor is over the inactive window. The hover path lets the pin
+      // highlight on mouse-over without first clicking, so MouseControl's
+      // hover-to-select can then drive its cursor inside the pin. We gate
+      // hover on actual movement so keyboard navigation isn't disturbed
+      // when the mouse is parked over either window.
+      var tx, ty;
+      var clicked = TouchInput.isTriggered();
+      if (clicked) {
+        tx = TouchInput.x;
+        ty = TouchInput.y;
+      } else if (
+        this._modsMouseX != null &&
+        (this._modsMouseX !== this._modsLastSeenMouseX ||
+          this._modsMouseY !== this._modsLastSeenMouseY)
+      ) {
+        tx = this._modsMouseX;
+        ty = this._modsMouseY;
+        this._modsLastSeenMouseX = tx;
+        this._modsLastSeenMouseY = ty;
+      } else {
+        return;
+      }
+
+      function inside(win) {
+        return (
+          win &&
+          tx >= win.x &&
+          ty >= win.y &&
+          tx < win.x + win.width &&
+          ty < win.y + win.height
+        );
+      }
+      if (lw && lw.active && inside(aw) && !inside(lw)) {
+        SoundManager.playCursor();
+        lw.deactivate();
+        aw.select(0);
+        aw.activate();
+      } else if (
+        aw.active &&
+        lw &&
+        lw.maxItems() > 0 &&
+        inside(lw) &&
+        !inside(aw)
+      ) {
+        SoundManager.playCursor();
+        aw.deactivate();
+        lw.activate();
+      }
+    };
+
+    Scene_Mods.prototype._showConfirm = function (
+      message,
+      action,
+      mod,
+      sourceWin,
+    ) {
       this._pendingAction = { type: action, mod: mod };
-      this._listWindow.deactivate();
+      // Track which window opened the prompt so a "No" answer hands focus
+      // back to it (otherwise pin-initiated cancels would dump the user
+      // into the list).
+      this._confirmSource = sourceWin || this._listWindow;
+      if (this._listWindow) this._listWindow.deactivate();
+      if (this._activeModWindow) this._activeModWindow.deactivate();
       this._confirmWindow.setMessage(message);
       this._confirmWindow.show();
       this._confirmWindow.activate();
@@ -2688,7 +2893,9 @@
       this._confirmWindow.hide();
       this._confirmWindow.deactivate();
       this._pendingAction = null;
-      this._listWindow.activate();
+      var src = this._confirmSource || this._listWindow;
+      this._confirmSource = null;
+      src.activate();
     };
 
     // Window_ModConfirm: Yes/No confirmation dialog
@@ -2749,6 +2956,273 @@
       return rect;
     };
 
+    function isBuiltIn(mod) {
+      return mod.path && mod.path.indexOf("mods/_") === 0;
+    }
+
+    // Shared per-row renderer for Window_ModList and Window_ModActive so
+    // both surfaces display a mod with the exact same layout (icon, name,
+    // by-author, last-update, type tag, install status, description, and
+    // the Enabled/Disabled tag). Options:
+    //   showTypeTag        omit the [Type] badge in the middle column (pin)
+    //   showInstallStatus  omit the right-side "Installed/Not installed"
+    //                      label (pin: the active mod is installed by
+    //                      definition, otherwise it couldn't be active)
+    //   showEnabledBadge   omit the right-side "Enabled"/"Disabled" badge
+    //                      (pin: the [Active ...] tag in line 2 already
+    //                      conveys the same information and the duplicate
+    //                      label cluttered the row)
+    //   showActiveLabel    draw "[Active overhaul mod]" / "[Active
+    //                      translation mod]" in green on line 2 (pin: 
+    //                      replaces the type tag, which would be redundant
+    //                      with the existence of the pin itself)
+    function drawModRow(win, mod, rect, isActive, iconCache, opts) {
+      opts = opts || {};
+      var showTypeTag = opts.showTypeTag !== false;
+      var showInstallStatus = opts.showInstallStatus !== false;
+      var showEnabledBadge = opts.showEnabledBadge !== false;
+      var showActiveLabel = !!opts.showActiveLabel;
+      var lineHeight = win.lineHeight();
+      var pad = rect.x;
+
+      var iconH = rect.height - pad * 2;
+      var iconW = Math.floor((iconH * 16) / 9);
+      var textX = rect.x + iconW + 8;
+      var iconY = rect.y + pad;
+
+      var iconBmp = iconCache && iconCache[mod.key];
+      var src =
+        iconBmp && iconBmp.isReady() && iconBmp.width > 1
+          ? iconBmp
+          : getDefaultModIcon();
+      if (src && src.isReady() && src.width > 1) {
+        var scale = Math.min(iconW / src.width, iconH / src.height);
+        var dw = Math.floor(src.width * scale);
+        var dh = Math.floor(src.height * scale);
+        var ix = rect.x + Math.floor((iconW - dw) / 2);
+        var iy = iconY + Math.floor((iconH - dh) / 2);
+        win.contents.blt(src, 0, 0, src.width, src.height, ix, iy, dw, dh);
+      }
+
+      var availW = rect.width - (textX - rect.x);
+
+      // Line 1: mod name + "by author" (left), date (right)
+      win.resetTextColor();
+      var nameW = win.textWidth(mod.name);
+      win.drawText(mod.name, textX, rect.y, availW);
+      var byX = textX + Math.min(nameW, availW) + 8;
+      var byText = "by " + mod.author;
+      win.contents.fontSize = 18;
+      win.contents.textColor = "#aaaacc";
+      win.drawText(byText, byX, rect.y + 4, rect.width - (byX - rect.x));
+      win.contents.fontSize = win.standardFontSize();
+
+      if (mod.lastUpdate) {
+        win.contents.fontSize = 16;
+        win.resetTextColor();
+        win.drawText(mod.lastUpdate, rect.x, rect.y + 4, rect.width, "right");
+        win.contents.fontSize = win.standardFontSize();
+      }
+
+      var status = _modStatus[mod.key];
+      var installed = status && status.installed;
+      var lineY = rect.y + lineHeight;
+      // Vertical offset from line 2's top to line 3's top. Sized at half
+      // the standard lineHeight so three lines of content (lineHeight +
+      // smallLine + small-text descent) fit inside a 96px row with a few
+      // pixels of clearance from the bottom green border around active
+      // plugins. The old 0.7 ratio (=25 at lineHeight 36) was tuned for
+      // the larger 103px row used before the pin existed.
+      var smallLine = Math.floor(lineHeight / 2);
+
+      // Lines 2 and 3 share a single small font size. Set it once here so
+      // the right-side status (line 2), the description (line 3 left),
+      // and the Enabled badge (line 3 right) all render at the same scale
+      // whether or not the type tag is drawn: without this the pin
+      // (which skips the tag) was inheriting standardFontSize for these
+      // labels and rendering them at ~28pt.
+      win.contents.fontSize = 16;
+
+      // Line 2: type label (left, optional) + installed status (right, optional)
+      if (showActiveLabel) {
+        // Pin variant: identify the slot as "the active overhaul/translation
+        // mod" in green, which both labels the section AND replaces the now-
+        // removed right-side "Enabled" badge without duplicating its meaning.
+        var activeKind = isTranslationType(mod.type) ? "translation" : "overhaul";
+        win.contents.textColor = "#88ff88";
+        win.drawText("[Active " + activeKind + " mod]", textX, lineY + 2, availW);
+      } else if (showTypeTag) {
+        var rawType = (mod.type || "overhaul")
+          .replace(/^built-in\s+/i, "")
+          .replace(/\b\w/g, function (c) {
+            return c.toUpperCase();
+          });
+        var typeLabel = "[" + rawType + "]";
+        win.contents.textColor = isPluginType(mod.type)
+          ? "#88bbff"
+          : isTranslationType(mod.type)
+            ? "#ffcc66"
+            : "#ff8888";
+        win.drawText(typeLabel, textX, lineY + 2, availW);
+      }
+
+      if (showInstallStatus) {
+        if (status && status._downloading) {
+          win.contents.textColor = "#ffff88";
+          win.drawText(
+            status._progress || "Installing...",
+            rect.x,
+            lineY + 2,
+            rect.width,
+            "right",
+          );
+        } else if (status && status._error) {
+          win.contents.textColor = "#ff8888";
+          win.drawText(
+            "Error: " + status._error,
+            rect.x,
+            lineY + 2,
+            rect.width,
+            "right",
+          );
+        } else if (isBuiltIn(mod)) {
+          // Built-in plugins: no status label on the right.
+        } else {
+          win.contents.textColor = installed ? "#88ff88" : "#aaaaaa";
+          win.drawText(
+            installed ? "Installed" : "Not installed",
+            rect.x,
+            lineY + 2,
+            rect.width,
+            "right",
+          );
+        }
+      }
+
+      // Line 3: description (left), enabled status (right)
+      if (mod.description) {
+        win.contents.textColor = "#cccccc";
+        // GameFont ships CJK Unified Ideographs glyphs but no Hangul/Thai/etc.
+        // Canvas 2D falls back per-codepoint when the font-family list has
+        // more than one entry, so append system fallbacks to cover scripts
+        // the base font lacks (notably Korean for "한국어").
+        var _prevFace = win.contents.fontFace;
+        win.contents.fontFace =
+          _prevFace +
+          ', "Noto Sans CJK KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
+        win.drawText(mod.description, textX, lineY + smallLine + 2, availW);
+        win.contents.fontFace = _prevFace;
+      }
+
+      if (showEnabledBadge && (isBuiltIn(mod) || installed)) {
+        win.contents.textColor = isActive ? "#88ff88" : "#aaaaaa";
+        win.drawText(
+          isActive ? "Enabled" : "Disabled",
+          rect.x,
+          lineY + smallLine + 2,
+          rect.width,
+          "right",
+        );
+      }
+
+      win.contents.fontSize = win.standardFontSize();
+      win.resetTextColor();
+    }
+
+    // Window_ModActive: dedicated framed rectangle showing the active
+    // overhaul/translation mod above the main list. It's a real
+    // Window_Selectable with a single item so the engine handles hover,
+    // touch-to-trigger, and the [Enter]/[Del] handlers exactly like a
+    // one-row Window_ModList: the user can disable or uninstall the active
+    // mod from the pin without scrolling to find it. The pin uses the
+    // standard windowskin (rounded corners, translucent fill) just like
+    // every other RPG Maker MV menu panel.
+    window.Window_ModActive = function () {
+      this.initialize.apply(this, arguments);
+    };
+
+    Window_ModActive.prototype = Object.create(Window_Selectable.prototype);
+    Window_ModActive.prototype.constructor = Window_ModActive;
+
+    Window_ModActive.prototype.initialize = function (x, y, width, height, mod) {
+      this._mods = [mod];
+      this._iconBitmaps = {};
+      Window_Selectable.prototype.initialize.call(this, x, y, width, height);
+      this._loadIcons();
+      this.refresh();
+      this.select(0);
+    };
+
+    Window_ModActive.prototype.maxItems = function () {
+      return 1;
+    };
+
+    Window_ModActive.prototype.maxCols = function () {
+      return 1;
+    };
+
+    Window_ModActive.prototype.itemHeight = function () {
+      // Single item fills the full content area.
+      return this.height - this.padding * 2;
+    };
+
+    Window_ModActive.prototype._itemGap = function () {
+      return 6;
+    };
+
+    Window_ModActive.prototype.itemRect = function (index) {
+      // Mirror Window_ModList's itemRect tweak so the row content inside
+      // the pin has the exact same visible height (and therefore icon size,
+      // text positions) as a row in the list below. Without this the pin's
+      // row would be 6px taller than a list row and the layouts would drift
+      // out of sync.
+      var rect = Window_Selectable.prototype.itemRect.call(this, index);
+      var gap = this._itemGap();
+      rect.y += Math.floor(gap / 2);
+      rect.height -= gap;
+      return rect;
+    };
+
+    Window_ModActive.prototype._loadIcons = function () {
+      var self = this;
+      var mod = this._mods[0];
+      if (mod && mod.icon) {
+        var bmp = ImageManager.loadNormalBitmap(mod.icon, 0);
+        this._iconBitmaps[mod.key] = bmp;
+        bmp.addLoadListener(function () {
+          self.refresh();
+        });
+      }
+      var def = getDefaultModIcon();
+      if (def) {
+        def.addLoadListener(function () {
+          self.refresh();
+        });
+      }
+    };
+
+    Window_ModActive.prototype.drawItem = function (index) {
+      var mod = this._mods[index];
+      if (!mod) return;
+      var rect = this.itemRectForText(index);
+      // The pin only ever hosts the currently-active overhaul/translation,
+      // so the type badge would be redundant and the install status is
+      // always "installed" (otherwise the mod couldn't be active). The
+      // right-side "Enabled" badge is also suppressed here: the green
+      // "[Active ... mod]" tag on line 2 already labels the slot, and the
+      // duplicate marker cluttered the row.
+      drawModRow(this, mod, rect, true, this._iconBitmaps, {
+        showTypeTag: false,
+        showInstallStatus: false,
+        showEnabledBadge: false,
+        showActiveLabel: true,
+      });
+    };
+
+    Window_ModActive.prototype.selectedMod = function () {
+      return this._mods[0] || null;
+    };
+
     // Window_ModList: mod list
     window.Window_ModList = function () {
       this.initialize.apply(this, arguments);
@@ -2757,9 +3231,28 @@
     Window_ModList.prototype = Object.create(Window_Selectable.prototype);
     Window_ModList.prototype.constructor = Window_ModList;
 
-    Window_ModList.prototype.initialize = function (x, y, width, height) {
-      this._mods = getModList();
+    Window_ModList.prototype.initialize = function (
+      x,
+      y,
+      width,
+      height,
+      maxVisible,
+    ) {
+      // The active overhaul/translation mod is hoisted into its own pin
+      // window (Window_ModActive) above this list, so we hide it here to
+      // keep it from appearing twice. Plugin-type mods stay in the list
+      // regardless of their active state since multiple plugins can be
+      // active at once and they're not represented by the pin.
+      var am = getActiveMod();
+      this._mods = getModList().filter(function (m) {
+        return !(am && m.key === am && !isPluginType(m.type));
+      });
       this._iconBitmaps = {};
+      // When the pin is shown above us, the scene passes 4 so a list row
+      // ends up the same height as the pin row (boxH-helpH split into
+      // 5 equal rows: 1 pin + 4 list). Without a pin we keep the original
+      // 5-row layout.
+      this._maxVisible = maxVisible || 5;
       Window_Selectable.prototype.initialize.call(this, x, y, width, height);
       this._loadIcons();
       this.refresh();
@@ -2792,7 +3285,7 @@
     };
 
     Window_ModList.prototype.maxVisibleItems = function () {
-      return 5;
+      return this._maxVisible;
     };
 
     Window_ModList.prototype.itemHeight = function () {
@@ -2817,32 +3310,23 @@
       return idx >= 0 && idx < this._mods.length ? this._mods[idx] : null;
     };
 
-    function isBuiltIn(mod) {
-      return mod.path && mod.path.indexOf("mods/_") === 0;
-    }
-
     Window_ModList.prototype.drawItem = function (index) {
       var mod = this._mods[index];
       if (!mod) return;
       var rect = this.itemRectForText(index);
-      var lineHeight = this.lineHeight();
-      var pad = rect.x;
 
       var isActive = isPluginType(mod.type)
         ? isPluginActive(mod.key)
         : getActiveMod() === mod.key;
 
-      if (isActive) {
+      // Active plugins get a green border in the list (overhaul/translation
+      // active are already hoisted out into Window_ModActive, so they never
+      // reach this branch here).
+      if (isActive && isPluginType(mod.type)) {
         var bgRect = this.itemRect(index);
         var borderColor = "#88ff88";
         var t = 2;
-        this.contents.fillRect(
-          bgRect.x,
-          bgRect.y,
-          bgRect.width,
-          t,
-          borderColor,
-        );
+        this.contents.fillRect(bgRect.x, bgRect.y, bgRect.width, t, borderColor);
         this.contents.fillRect(
           bgRect.x,
           bgRect.y + bgRect.height - t,
@@ -2850,13 +3334,7 @@
           t,
           borderColor,
         );
-        this.contents.fillRect(
-          bgRect.x,
-          bgRect.y,
-          t,
-          bgRect.height,
-          borderColor,
-        );
+        this.contents.fillRect(bgRect.x, bgRect.y, t, bgRect.height, borderColor);
         this.contents.fillRect(
           bgRect.x + bgRect.width - t,
           bgRect.y,
@@ -2866,129 +3344,50 @@
         );
       }
 
-      var iconH = rect.height - pad * 2;
-      var iconW = Math.floor((iconH * 16) / 9);
-      var textX = rect.x + iconW + 8;
-      var iconY = rect.y + pad;
-
-      var iconBmp = this._iconBitmaps[mod.key];
-      var src =
-        iconBmp && iconBmp.isReady() && iconBmp.width > 1
-          ? iconBmp
-          : getDefaultModIcon();
-      if (src && src.isReady() && src.width > 1) {
-        var scale = Math.min(iconW / src.width, iconH / src.height);
-        var dw = Math.floor(src.width * scale);
-        var dh = Math.floor(src.height * scale);
-        var ix = rect.x + Math.floor((iconW - dw) / 2);
-        var iy = iconY + Math.floor((iconH - dh) / 2);
-        this.contents.blt(src, 0, 0, src.width, src.height, ix, iy, dw, dh);
-      }
-
-      var availW = rect.width - (textX - rect.x);
-
-      // Line 1: mod name + "by author" (left), date (right)
-      this.resetTextColor();
-      var nameW = this.textWidth(mod.name);
-      this.drawText(mod.name, textX, rect.y, availW);
-      var byX = textX + Math.min(nameW, availW) + 8;
-      var byText = "by " + mod.author;
-      this.contents.fontSize = 18;
-      this.contents.textColor = "#aaaacc";
-      this.drawText(byText, byX, rect.y + 4, rect.width - (byX - rect.x));
-      this.contents.fontSize = this.standardFontSize();
-
-      if (mod.lastUpdate) {
-        this.contents.fontSize = 16;
-        this.resetTextColor();
-        this.drawText(mod.lastUpdate, rect.x, rect.y + 4, rect.width, "right");
-        this.contents.fontSize = this.standardFontSize();
-      }
-
-      var status = _modStatus[mod.key];
-      var installed = status && status.installed;
-      var lineY = rect.y + lineHeight;
-      var smallLine = Math.floor(lineHeight * 0.7);
-
-      // Line 2: type label (left), installed status (right)
-      var rawType = (mod.type || "overhaul")
-        .replace(/^built-in\s+/i, "")
-        .replace(/\b\w/g, function (c) {
-          return c.toUpperCase();
-        });
-      var typeLabel = "[" + rawType + "]";
-      this.contents.fontSize = 16;
-      this.contents.textColor = isPluginType(mod.type)
-        ? "#88bbff"
-        : isTranslationType(mod.type)
-          ? "#ffcc66"
-          : "#ff8888";
-      this.drawText(typeLabel, textX, lineY + 2, availW);
-
-      if (status && status._downloading) {
-        this.contents.textColor = "#ffff88";
-        this.drawText(
-          status._progress || "Installing...",
-          rect.x,
-          lineY + 2,
-          rect.width,
-          "right",
-        );
-      } else if (status && status._error) {
-        this.contents.textColor = "#ff8888";
-        this.drawText(
-          "Error: " + status._error,
-          rect.x,
-          lineY + 2,
-          rect.width,
-          "right",
-        );
-      } else if (isBuiltIn(mod)) {
-        // Built-in plugins: no status label on the right.
-      } else {
-        this.contents.textColor = installed ? "#88ff88" : "#aaaaaa";
-        this.drawText(
-          installed ? "Installed" : "Not installed",
-          rect.x,
-          lineY + 2,
-          rect.width,
-          "right",
-        );
-      }
-
-      // Line 3: description (left), enabled status (right)
-      if (mod.description) {
-        this.contents.textColor = "#cccccc";
-        // GameFont ships CJK Unified Ideographs glyphs but no Hangul/Thai/etc.
-        // Canvas 2D falls back per-codepoint when the font-family list has
-        // more than one entry, so append system fallbacks to cover scripts
-        // the base font lacks (notably Korean for "한국어").
-        var _prevFace = this.contents.fontFace;
-        this.contents.fontFace =
-          _prevFace +
-          ', "Noto Sans CJK KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
-        this.drawText(mod.description, textX, lineY + smallLine + 2, availW);
-        this.contents.fontFace = _prevFace;
-      }
-
-      if (isBuiltIn(mod) || installed) {
-        this.contents.textColor = isActive ? "#88ff88" : "#aaaaaa";
-        this.drawText(
-          isActive ? "Enabled" : "Disabled",
-          rect.x,
-          lineY + smallLine + 2,
-          rect.width,
-          "right",
-        );
-      }
-
-      this.contents.fontSize = this.standardFontSize();
-      this.resetTextColor();
+      drawModRow(this, mod, rect, isActive, this._iconBitmaps, {
+        showTypeTag: true,
+      });
     };
 
     Window_ModList.prototype.playOkSound = function () {
       SoundManager.playOk();
     };
+
+    // Suppress the selection cursor while the window is inactive so the
+    // mods screen only ever shows ONE highlight box at a time. Vanilla MV
+    // keeps the cursor rect sized to the selected item on every Selectable
+    // regardless of `active`, and Window.prototype._updateCursor only uses
+    // `active` to drive the blink animation: the sprite itself stays at
+    // full opacity. The result is that both the pin and the list always
+    // looked simultaneously selected. We override updateCursor (the actual
+    // MV method: _refreshCursor doesn't exist, so the previous version of
+    // this patch was a no-op) to clear the rect when inactive, and hook
+    // activate/deactivate so the cursor visibility flips immediately when
+    // focus crosses windows.
+    function hideCursorWhenInactive(WindowClass) {
+      var origUpdateCursor =
+        WindowClass.prototype.updateCursor ||
+        Window_Selectable.prototype.updateCursor;
+      WindowClass.prototype.updateCursor = function () {
+        if (!this.active) {
+          this.setCursorRect(0, 0, 0, 0);
+        } else {
+          origUpdateCursor.call(this);
+        }
+      };
+      var origActivate = WindowClass.prototype.activate;
+      WindowClass.prototype.activate = function () {
+        origActivate.call(this);
+        this.updateCursor();
+      };
+      var origDeactivate = WindowClass.prototype.deactivate;
+      WindowClass.prototype.deactivate = function () {
+        origDeactivate.call(this);
+        this.updateCursor();
+      };
+    }
+    hideCursorWhenInactive(Window_ModActive);
+    hideCursorWhenInactive(Window_ModList);
 
     /*console.log(
       "[lang-shim] Mod system patches applied" +
