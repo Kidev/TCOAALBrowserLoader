@@ -54,6 +54,9 @@ jobs:
             https://cdn.fastly.steamstatic.com/steamcommunity/public/images/apps/2378900/8909a9950e3deb1c38afce9a4b427d5f7dfb461b.jpg
           curl -fsSL -o _site/img/tcoaal-steam-header.jpg \
             https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2378900/0badd5423ec8cb36d543b7b156121ac2d38ef330/header.jpg
+          BUILD_TS=$(TZ=UTC date '+%d/%m/%Y %H:%M:%S')
+          printf '\n<!-- %s -->\n' "$BUILD_TS" >> _site/index.html
+          printf '\n<!-- %s -->\n' "$BUILD_TS" >> _site/loader.html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
