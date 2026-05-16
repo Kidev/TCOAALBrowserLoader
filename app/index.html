@@ -236,10 +236,62 @@
       #boot-error .diag.visible {
         display: block;
       }
+
+      /* Network status badge. In-game we only surface offline state inside
+         the Mods menu (where it matters: it gates the Install action). The
+         indicator gets two preconditions:
+            - .visible   -> page detected offline
+            - body.mods-scene-active -> Scene_Mods is on screen
+         Scene_Mods toggles the body class in start/terminate (lang-shim.js).
+         Outside Scene_Mods the indicator stays hidden even while offline. */
+      #offline-indicator {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top, 0px));
+        right: max(10px, env(safe-area-inset-right, 0px));
+        z-index: 10001;
+        background: rgba(110, 20, 30, 0.88);
+        color: #ffd5d8;
+        border: 1px solid rgba(220, 90, 100, 0.55);
+        border-radius: 999px;
+        padding: 5px 12px 6px;
+        font-family: "Georgia", serif;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+        user-select: none;
+      }
+      body.mods-scene-active #offline-indicator.visible {
+        opacity: 1;
+      }
+      #offline-indicator::before {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #ff5f6e;
+        margin-right: 7px;
+        vertical-align: 1px;
+        box-shadow: 0 0 6px rgba(255, 95, 110, 0.7);
+      }
     </style>
   </head>
   <body>
     <div id="boot-splash">Loading...</div>
+
+    <div
+      id="offline-indicator"
+      role="status"
+      aria-live="polite"
+      aria-hidden="true"
+    >
+      Offline
+    </div>
 
     <div id="boot-error">
       <h1 id="err-title">Something went wrong</h1>
@@ -270,6 +322,25 @@
        * We must ensure the SW is active BEFORE loading game scripts, otherwise
        * the <script> requests would 404 against the static host.
        */
+      // Offline indicator wiring. Lives outside the main IIFE so it runs
+      // even if the bootstrap below bails early (lock redirect, migration
+      // redirect, fatal exception). Reflects navigator.onLine on boot and
+      // toggles live on online/offline events.
+      (function () {
+        var el = document.getElementById("offline-indicator");
+        if (!el) return;
+        function update() {
+          var offline = navigator.onLine === false;
+          el.classList.toggle("visible", offline);
+          el.setAttribute("aria-hidden", offline ? "false" : "true");
+        }
+        update();
+        try {
+          window.addEventListener("online", update);
+          window.addEventListener("offline", update);
+        } catch (e) {}
+      })();
+
       (function () {
         "use strict";
 
@@ -748,15 +819,137 @@
           );
         });
 
+        // Auto-recovery for users stuck on a stale Service Worker.
+        //
+        // The page asks the controlling SW for its SW_VERSION and compares
+        // against EXPECTED_SW_VERSION below. Three outcomes:
+        //
+        //   1. Reply with version >= EXPECTED -> up to date, do nothing.
+        //   2. Reply with version <  EXPECTED -> SW is on a known-stale
+        //      build, recover immediately.
+        //   3. No reply within 3 s -> SW predates the getVersion handler
+        //      (i.e. the original broken interceptor). Recover.
+        //
+        // Recovery = unregister every SW registration and reload. The
+        // reload happens without a controller, so the browser fetches
+        // /sw.js natively (bypassing whatever interception the old SW had)
+        // and the new SW installs cleanly. From then on, future updates
+        // land normally because the new SW does not intercept /sw.js.
+        //
+        // Bump this constant in lockstep with SW_VERSION in app/sw.js
+        // whenever an SW change requires existing users to drop their
+        // previous install. Pure additive features don't need a bump.
+        var EXPECTED_SW_VERSION = 3;
+
+        function maybeRecoverStaleSW() {
+          if (!("serviceWorker" in navigator)) return;
+          var RECOVERY_KEY = "__sw_recovery_attempted__";
+          try {
+            if (sessionStorage.getItem(RECOVERY_KEY)) return;
+          } catch (e) {}
+
+          var done = false;
+          function recover(reason) {
+            if (done) return;
+            done = true;
+            console.warn(
+              "[boot] Recovering from stale Service Worker:",
+              reason,
+            );
+            try {
+              sessionStorage.setItem(RECOVERY_KEY, "1");
+            } catch (e) {}
+            navigator.serviceWorker
+              .getRegistrations()
+              .then(function (regs) {
+                return Promise.all(
+                  regs.map(function (r) {
+                    return r.unregister().catch(function () {});
+                  }),
+                );
+              })
+              .then(function () {
+                location.reload();
+              })
+              .catch(function () {
+                location.reload();
+              });
+          }
+
+          function queryVersion() {
+            var ctrl = navigator.serviceWorker.controller;
+            if (!ctrl) return;
+            try {
+              var ch = new MessageChannel();
+              ch.port1.onmessage = function (ev) {
+                if (done) return;
+                var v = ev && ev.data && ev.data.version;
+                if (typeof v === "number" && v >= EXPECTED_SW_VERSION) {
+                  // Up to date. Mark done so the timeout is a no-op.
+                  done = true;
+                } else {
+                  recover("SW version " + v + " < " + EXPECTED_SW_VERSION);
+                }
+              };
+              ctrl.postMessage({ type: "getVersion" }, [ch.port2]);
+            } catch (e) {}
+          }
+
+          // Probe immediately; re-probe if a new SW claims the page mid-
+          // check (rare race where the browser successfully updated but
+          // the old SW was still the controller at the moment we asked).
+          queryVersion();
+          function onCC() {
+            queryVersion();
+          }
+          try {
+            navigator.serviceWorker.addEventListener(
+              "controllerchange",
+              onCC,
+            );
+          } catch (e) {}
+
+          setTimeout(function () {
+            try {
+              navigator.serviceWorker.removeEventListener(
+                "controllerchange",
+                onCC,
+              );
+            } catch (e) {}
+            if (done) return;
+            // No controller at all = first visit, nothing to recover.
+            if (!navigator.serviceWorker.controller) return;
+            recover("no getVersion reply within 3s");
+          }, 3000);
+        }
+
         // Step 1: register & activate the Service Worker
         function ensureSW() {
           if (!("serviceWorker" in navigator)) {
             return Promise.resolve();
           }
+          // Fire recovery check in parallel with registration. If the page
+          // is controlled by a stale SW, the timer will trigger an
+          // unregister + reload before the bootstrap proceeds further.
+          maybeRecoverStaleSW();
           return navigator.serviceWorker
             .register("/sw.js", { scope: "/" })
             .then(function (reg) {
-              reg.update();
+              reg.update().catch(function (err) {
+                // Surface the failure but don't throw: the active SW (if
+                // any) keeps serving and recovery handles the stuck case.
+                console.warn(
+                  "[boot] reg.update() failed:",
+                  err && err.message,
+                );
+              });
+              // If a new SW is already waiting (browser fetched the new
+              // script behind the scenes), tell it to take over now.
+              if (reg.waiting) {
+                try {
+                  reg.waiting.postMessage({ type: "skipWaiting" });
+                } catch (e) {}
+              }
               if (navigator.serviceWorker.controller) {
                 return Promise.resolve();
               }

@@ -841,6 +841,43 @@
         white-space: nowrap;
         border: 0;
       }
+
+      /* Network status badge. Rendered inline under the health panel
+         (not fixed-positioned) so it sits in the centered content column
+         instead of overlapping the top-right GitHub link. Hidden via
+         display:none until the page detects offline state. */
+      #offline-indicator {
+        display: none;
+        align-self: center;
+        margin-top: clamp(8px, 1.2vmin, 14px);
+        background: rgba(110, 20, 30, 0.88);
+        color: #ffd5d8;
+        border: 1px solid rgba(220, 90, 100, 0.55);
+        border-radius: 999px;
+        padding: 5px 14px 6px;
+        font-family: "Georgia", serif;
+        font-size: clamp(11px, 1.3vmin, 13px);
+        font-weight: bold;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        user-select: none;
+        pointer-events: none;
+      }
+      #offline-indicator.visible {
+        display: inline-flex;
+        align-items: center;
+      }
+      #offline-indicator::before {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #ff5f6e;
+        margin-right: 7px;
+        box-shadow: 0 0 6px rgba(255, 95, 110, 0.7);
+      }
     </style>
   </head>
   <body>
@@ -1068,6 +1105,30 @@
               </button>
             </div>
           </div>
+          <div
+            id="offline-indicator"
+            role="status"
+            aria-live="polite"
+            aria-hidden="true"
+          >
+            You are offline
+          </div>
+          <script>
+            (function () {
+              var el = document.getElementById("offline-indicator");
+              if (!el) return;
+              function update() {
+                var offline = navigator.onLine === false;
+                el.classList.toggle("visible", offline);
+                el.setAttribute("aria-hidden", offline ? "false" : "true");
+              }
+              update();
+              try {
+                window.addEventListener("online", update);
+                window.addEventListener("offline", update);
+              } catch (e) {}
+            })();
+          </script>
         </div>
 
         <!-- Destructive confirmation: shown when user clicks "Clear data". -->

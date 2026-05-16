@@ -27,16 +27,33 @@ const DB_NAME = "tcoaal";
 const DB_VERSION = 1;
 const STORE_NAME = "assets";
 
+// Protocol version. The page reads its own EXPECTED_SW_VERSION constant
+// (defined in app/index.html) and auto-recovers if the controlling SW
+// replies with a lower number, or doesn't reply at all (older SWs predate
+// the "getVersion" handler). Bump BOTH this constant and EXPECTED_SW_VERSION
+// together whenever shipping a SW change that needs existing users to drop
+// their old installation: e.g. a fix to the fetch handler or a new IDB
+// schema. Pure additive features (new message types the page can feature-
+// detect) do not need a bump.
+const SW_VERSION = 3;
+
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
 // the infra files). Game assets live in IndexedDB, NOT here.
 const SHELL_CACHE = "tcoaal-shell-v1";
 
+// Mod-asset cache: holds files fetched from /mods/{id}/www/{rel} for mods
+// that the user has only BROWSED in the menu (not yet installed). Mainly
+// icons. Once a mod is installed, its files live in IDB under "mod:{id}:..."
+// and we serve from there directly. This cache exists to make the Mods
+// menu fully functional offline after a single online viewing pass.
+const MOD_ASSET_CACHE = "tcoaal-mod-assets-v1";
+
 // The shell is everything required to boot the player when the network is
 // unreachable. Game files are not listed: those are imported into IDB by the
 // user via loader.html and served by serveFromIDB() below.
 //
-// sw.js itself is intentionally NOT in this list:  the browser owns SW
+// sw.js itself is intentionally NOT in this list: the browser owns SW
 // updates and must always see a fresh sw.js to install new code.
 const APP_SHELL = [
   "/",
@@ -62,7 +79,7 @@ const APP_SHELL = [
 async function precacheShell() {
   const cache = await caches.open(SHELL_CACHE);
   // cache.add() per file (vs addAll) so one 404 or transient failure doesn't
-  // abort the whole install:  partial shells still buy the user offline boot.
+  // abort the whole install: partial shells still buy the user offline boot.
   // cache: "reload" forces a fresh network fetch, bypassing the HTTP cache,
   // so we never persist a stale GitHub Pages copy into the SW cache.
   await Promise.all(
@@ -80,9 +97,76 @@ async function cleanupOldShellCaches() {
   const names = await caches.keys();
   await Promise.all(
     names
-      .filter((n) => n.startsWith("tcoaal-shell-") && n !== SHELL_CACHE)
+      .filter(
+        (n) =>
+          (n.startsWith("tcoaal-shell-") && n !== SHELL_CACHE) ||
+          (n.startsWith("tcoaal-mod-assets-") && n !== MOD_ASSET_CACHE),
+      )
       .map((n) => caches.delete(n)),
   );
+}
+
+/**
+ * Serve a request for a /mods/{id}/www/{rel} asset.
+ *
+ *   1. If the mod is already installed, the file lives in IDB under
+ *      "mod:{id}:{rel}": serve from there (no network, instant).
+ *   2. Otherwise, network-first into MOD_ASSET_CACHE so the second visit
+ *      and any offline visit thereafter find the file cached.
+ *   3. On total failure, fall through to a plain fetch() so the browser
+ *      surfaces its own error.
+ */
+async function serveModAsset(logicalPath, request) {
+  const m = logicalPath.match(/^mods\/([^/]+)\/www\/(.+)$/);
+  if (!m) return fetch(request);
+  const modId = m[1];
+  const relPath = m[2];
+
+  let db = null;
+  try {
+    db = await openDB();
+  } catch {}
+
+  if (db) {
+    const idbKey = "mod:" + modId + ":" + relPath;
+    const value = await getAsset(db, idbKey);
+    if (value !== null) {
+      const buf =
+        value instanceof ArrayBuffer
+          ? value
+          : value && value.buffer instanceof ArrayBuffer
+            ? value.buffer
+            : value;
+      // dekit is a no-op when the TCOAAL header isn't present, so this is
+      // safe for plain PNGs/JSON shipped by mod authors and still correct
+      // for overhaul mods that ship encrypted assets.
+      const decrypted = dekit(buf, relPath);
+      return new Response(decrypted, {
+        status: 200,
+        headers: { "Content-Type": mimeFor(relPath) },
+      });
+    }
+  }
+
+  let cache = null;
+  try {
+    cache = await caches.open(MOD_ASSET_CACHE);
+  } catch {}
+
+  try {
+    const fresh = await fetch(request, { cache: "no-store" });
+    if (fresh && fresh.ok && cache) {
+      const clone = fresh.clone();
+      cache.put(request, clone).catch(() => {});
+    }
+    return fresh;
+  } catch (_) {
+    if (cache) {
+      const cached = await cache.match(request, { ignoreSearch: true });
+      if (cached) return cached;
+    }
+    return fetch(request);
+  }
 }
 
 /**
@@ -93,7 +177,7 @@ async function cleanupOldShellCaches() {
  * future offline boot can find it.
  *
  * When offline: serve the cached copy. If nothing is cached we fall through
- * to a final fetch() that will reject:  the same failure mode users had
+ * to a final fetch() that will reject: the same failure mode users had
  * before this strategy was added.
  *
  * `cacheKey` lets us normalise "/" and "/index.html" to a single cache entry
@@ -646,7 +730,7 @@ async function buildDrmScript(db) {
 // The shell cache is generally an improvement (offline boot, faster repeat
 // visits) but it adds a new failure mode: a poisoned cache entry could keep
 // serving a broken file even after a fix is deployed. The page can flip this
-// off via postMessage({type:"setOfflineEnabled", enabled:false}):  typically
+// off via postMessage({type:"setOfflineEnabled", enabled:false}): typically
 // driven by the user visiting "/?offline=off" or running a console helper
 // (see app/index.html). When disabled, the SW reverts to its pre-offline
 // behaviour: no precache, no fallback, no cache writes; and we wipe whatever
@@ -701,14 +785,30 @@ async function setOfflineDisabledPersist(disabled) {
 self.addEventListener("install", (e) =>
   e.waitUntil(
     (async () => {
+      // Best-effort, time-boxed: a failing or slow precache must never
+      // block the SW update. If we let install reject, the browser
+      // surfaces "unknown error fetching the script" and the previous SW
+      // stays in place forever: a self-trapping bug. And if install takes
+      // longer than the page's controllerchange wait (~3 s) the page boots
+      // without a controller and game-asset requests 404 against the
+      // static host. So we cap how long we'll wait for precache here and
+      // let any remaining fetches finish in the background: pending
+      // fetches extend SW lifetime past install on their own.
       try {
         const db = await openDB();
         await ensureOfflineFlagLoaded(db);
       } catch {}
       if (!_offlineDisabled) {
-        await precacheShell();
+        await Promise.race([
+          precacheShell().catch((err) =>
+            console.warn("[sw] precacheShell failed:", err && err.message),
+          ),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
       }
-      await self.skipWaiting();
+      try {
+        await self.skipWaiting();
+      } catch {}
     })(),
   ),
 );
@@ -741,6 +841,32 @@ let _activeModLoadPromise = null;
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
+
+  // Version handshake. The page sends this on boot and compares the reply
+  // against its own EXPECTED_SW_VERSION constant. Old SW versions either
+  // don't have this handler (no reply -> page treats as stale and recovers)
+  // or reply with a lower SW_VERSION (page recovers explicitly). Replies
+  // include shellCache for diagnostics.
+  if (data.type === "getVersion") {
+    if (event.ports && event.ports[0]) {
+      event.ports[0].postMessage({
+        ok: true,
+        version: SW_VERSION,
+        shellCache: SHELL_CACHE,
+      });
+    }
+    return;
+  }
+
+  // Manual skipWaiting hook for the common PWA "new SW is waiting, take
+  // over now" prompt. Install already calls skipWaiting on its own, so
+  // this is just a backup channel.
+  if (data.type === "skipWaiting") {
+    try {
+      self.skipWaiting();
+    } catch {}
+    return;
+  }
 
   if (data.type === "setActiveMod") {
     _activeMod = data.id || null;
@@ -850,19 +976,17 @@ self.addEventListener("fetch", (event) => {
     logicalPath = url.pathname.replace(/^\/+/, "") || "index.html";
   }
 
-  // Infrastructure files: always try the network first (so a deploy lands
-  // within seconds, not 10 minutes of GitHub Pages' max-age=600), but fall
-  // back to the SHELL_CACHE so the player still boots when the user is
-  // offline. sw.js itself is excluded from the cache fallback:  the browser
-  // owns SW updates and must always receive a fresh copy.
-  if (logicalPath === "sw.js") {
-    event.respondWith(
-      fetch(event.request, { cache: "no-store" }).catch(() =>
-        fetch(event.request),
-      ),
-    );
-    return;
-  }
+  // sw.js: do NOT intercept. The browser performs SW update fetches with
+  // service-workers mode "none", but in practice some browsers still route
+  // them through the active SW, and a response served via respondWith() can
+  // be flagged as "fetched through SW": which the SW update algorithm then
+  // rejects with "An unknown error occurred when fetching the script",
+  // bricking all future updates. Letting the request bypass the SW
+  // entirely means update fetches go straight to the network, which is what
+  // the spec wants anyway. The browser has its own freshness check (max 24h
+  // by spec, often shorter) so the file stays current independently of HTTP
+  // cache headers.
+  if (logicalPath === "sw.js") return;
 
   if (
     logicalPath === "loader.html" ||
@@ -905,6 +1029,14 @@ self.addEventListener("fetch", (event) => {
         return networkFirstWithShellFallback(event.request, cacheKey);
       })(),
     );
+    return;
+  }
+
+  // Mod-asset paths: /mods/{id}/www/{rel}. Handled by a dedicated strategy
+  // (IDB for installed mods, MOD_ASSET_CACHE for already-browsed ones, then
+  // network) so the Mods menu's icons survive an offline session.
+  if (/^mods\/[^/]+\/www\//.test(logicalPath)) {
+    event.respondWith(serveModAsset(logicalPath, event.request));
     return;
   }
 

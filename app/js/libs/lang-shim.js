@@ -2532,6 +2532,12 @@
         self._modsMouseY = Graphics.pageToCanvasY(e.pageY);
       };
       document.addEventListener("mousemove", this._modsMouseHandler);
+      // The offline indicator (defined in app/index.html) is gated by this
+      // body class so it only shows in the Mods menu: the one place where
+      // network state actually changes what the user can do (install).
+      try {
+        document.body.classList.add("mods-scene-active");
+      } catch (e) {}
       fetchAllModStatus(function () {
         if (self._listWindow) self._listWindow.refresh();
         if (self._activeModWindow) self._activeModWindow.refresh();
@@ -2543,6 +2549,9 @@
         document.removeEventListener("mousemove", this._modsMouseHandler);
         this._modsMouseHandler = null;
       }
+      try {
+        document.body.classList.remove("mods-scene-active");
+      } catch (e) {}
       Scene_MenuBase.prototype.terminate.call(this);
     };
 
@@ -2740,6 +2749,16 @@
 
       if (!installed) {
         if (this._installing) {
+          this._listWindow.activate();
+          return;
+        }
+        // Install is the only mod operation that needs the network. Enable
+        // / disable / uninstall all work entirely against IDB and the SW,
+        // so we don't block those. Refuse install offline and buzz so the
+        // user gets feedback (the OFFLINE pill at the top already explains
+        // why).
+        if (navigator.onLine === false) {
+          SoundManager.playBuzzer();
           this._listWindow.activate();
           return;
         }
