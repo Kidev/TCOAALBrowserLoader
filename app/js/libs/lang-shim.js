@@ -463,6 +463,7 @@
           path: entry.path || "mods/" + keys[i],
           type: entry.type || MOD_TYPE_OVERHAUL,
           description: entry.description || "",
+          requiresBaseGame: !!entry.requiresBaseGame,
         });
       }
     }
