@@ -2496,10 +2496,7 @@
       // Edge case: the list ended up empty (every entry in mods.json was
       // the active overhaul, which was filtered out). Hand initial focus
       // to the pin so input has somewhere to go.
-      if (
-        this._listWindow.maxItems() === 0 &&
-        this._activeModWindow
-      ) {
+      if (this._listWindow.maxItems() === 0 && this._activeModWindow) {
         this._listWindow.deactivate();
         this._activeModWindow.select(0);
         this._activeModWindow.activate();
@@ -2992,7 +2989,7 @@
     //                      conveys the same information and the duplicate
     //                      label cluttered the row)
     //   showActiveLabel    draw "[Active overhaul mod]" / "[Active
-    //                      translation mod]" in green on line 2 (pin: 
+    //                      translation mod]" in green on line 2 (pin:
     //                      replaces the type tag, which would be redundant
     //                      with the existence of the pin itself)
     function drawModRow(win, mod, rect, isActive, iconCache, opts) {
@@ -3067,9 +3064,16 @@
         // Pin variant: identify the slot as "the active overhaul/translation
         // mod" in green, which both labels the section AND replaces the now-
         // removed right-side "Enabled" badge without duplicating its meaning.
-        var activeKind = isTranslationType(mod.type) ? "translation" : "overhaul";
+        var activeKind = isTranslationType(mod.type)
+          ? "translation"
+          : "overhaul";
         win.contents.textColor = "#88ff88";
-        win.drawText("[Active " + activeKind + " mod]", textX, lineY + 2, availW);
+        win.drawText(
+          "[Active " + activeKind + " mod]",
+          textX,
+          lineY + 2,
+          availW,
+        );
       } else if (showTypeTag) {
         var rawType = (mod.type || "overhaul")
           .replace(/^built-in\s+/i, "")
@@ -3163,7 +3167,13 @@
     Window_ModActive.prototype = Object.create(Window_Selectable.prototype);
     Window_ModActive.prototype.constructor = Window_ModActive;
 
-    Window_ModActive.prototype.initialize = function (x, y, width, height, mod) {
+    Window_ModActive.prototype.initialize = function (
+      x,
+      y,
+      width,
+      height,
+      mod,
+    ) {
       this._mods = [mod];
       this._iconBitmaps = {};
       Window_Selectable.prototype.initialize.call(this, x, y, width, height);
@@ -3345,7 +3355,13 @@
         var bgRect = this.itemRect(index);
         var borderColor = "#88ff88";
         var t = 2;
-        this.contents.fillRect(bgRect.x, bgRect.y, bgRect.width, t, borderColor);
+        this.contents.fillRect(
+          bgRect.x,
+          bgRect.y,
+          bgRect.width,
+          t,
+          borderColor,
+        );
         this.contents.fillRect(
           bgRect.x,
           bgRect.y + bgRect.height - t,
@@ -3353,7 +3369,13 @@
           t,
           borderColor,
         );
-        this.contents.fillRect(bgRect.x, bgRect.y, t, bgRect.height, borderColor);
+        this.contents.fillRect(
+          bgRect.x,
+          bgRect.y,
+          t,
+          bgRect.height,
+          borderColor,
+        );
         this.contents.fillRect(
           bgRect.x + bgRect.width - t,
           bgRect.y,

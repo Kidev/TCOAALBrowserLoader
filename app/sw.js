@@ -199,9 +199,7 @@ async function networkFirstWithShellFallback(request, cacheKey) {
     // ignoreSearch: "/?offline=off" should still match cached "/".
     const cached =
       (await cache.match(request, { ignoreSearch: true })) ||
-      (cacheKey
-        ? await cache.match(cacheKey, { ignoreSearch: true })
-        : null);
+      (cacheKey ? await cache.match(cacheKey, { ignoreSearch: true }) : null);
     if (cached) return cached;
     // Last resort: let the browser surface its own network error. This
     // preserves the previous behaviour for files we never had a chance to

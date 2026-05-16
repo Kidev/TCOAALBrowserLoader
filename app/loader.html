@@ -62,10 +62,7 @@
       name="twitter:image"
       content="https://tcoaal.app/img/tcoaal-steam-header.jpg"
     />
-    <meta
-      name="twitter:image:alt"
-      content="TCOAAL Browser Player title art"
-    />
+    <meta name="twitter:image:alt" content="TCOAAL Browser Player title art" />
 
     <link rel="icon" id="favicon" href="/favicon.ico" type="image/x-icon" />
 
@@ -942,11 +939,11 @@
           <h2>Play The Coffin of Andy and Leyley in your browser</h2>
           <p>
             TCOAAL Browser Player is a free, open-source fan-made loader that
-            lets you play The Coffin of Andy and Leyley (TCOAAL) by Nemlei
-            (Kit9 Studio) directly inside any modern browser on desktop, laptop,
-            phone or tablet. No install, no upload, no account. Your owned copy
-            of the game stays on your device and is decrypted locally by a
-            Service Worker.
+            lets you play The Coffin of Andy and Leyley (TCOAAL) by Nemlei (Kit9
+            Studio) directly inside any modern browser on desktop, laptop, phone
+            or tablet. No install, no upload, no account. Your owned copy of the
+            game stays on your device and is decrypted locally by a Service
+            Worker.
           </p>
           <h2>Features</h2>
           <ul>
@@ -988,17 +985,17 @@
             Coffin of Andy and Leyley on Steam to import the game files.
           </p>
           <p>
-            <strong>Can I play TCOAAL on mobile?</strong> Yes: once your
-            game files are imported, the site behaves like a progressive web
-            app and runs on Android and iOS.
+            <strong>Can I play TCOAAL on mobile?</strong> Yes: once your game
+            files are imported, the site behaves like a progressive web app and
+            runs on Android and iOS.
           </p>
           <p>
-            <strong>Are my saves uploaded anywhere?</strong> No. Saves and
-            game files live in your browser's IndexedDB and localStorage only.
+            <strong>Are my saves uploaded anywhere?</strong> No. Saves and game
+            files live in your browser's IndexedDB and localStorage only.
           </p>
           <p>
-            <strong>Does it work offline?</strong> Yes: after the first
-            import the Service Worker serves everything locally.
+            <strong>Does it work offline?</strong> Yes: after the first import
+            the Service Worker serves everything locally.
           </p>
         </section>
 
@@ -1227,8 +1224,7 @@
         window.__toggleOfflineCache = function (enabled) {
           var disabled = enabled === false;
           try {
-            if (disabled)
-              localStorage.setItem("_offlineCacheDisabled", "1");
+            if (disabled) localStorage.setItem("_offlineCacheDisabled", "1");
             else localStorage.removeItem("_offlineCacheDisabled");
           } catch (e) {}
           return new Promise(function (resolve) {
@@ -1243,8 +1239,7 @@
           if (v === "off" || v === "on") {
             var disabled = v === "off";
             try {
-              if (disabled)
-                localStorage.setItem("_offlineCacheDisabled", "1");
+              if (disabled) localStorage.setItem("_offlineCacheDisabled", "1");
               else localStorage.removeItem("_offlineCacheDisabled");
             } catch (e) {}
             applyToSW(disabled, function () {

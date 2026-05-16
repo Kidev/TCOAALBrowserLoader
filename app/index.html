@@ -375,7 +375,11 @@
                 navigator.serviceWorker
                   .getRegistration()
                   .then(function (reg) {
-                    if (reg && reg.active && reg.active !== navigator.serviceWorker.controller) {
+                    if (
+                      reg &&
+                      reg.active &&
+                      reg.active !== navigator.serviceWorker.controller
+                    ) {
                       reg.active.postMessage({
                         type: "setOfflineEnabled",
                         enabled: !disabled,
@@ -903,10 +907,7 @@
             queryVersion();
           }
           try {
-            navigator.serviceWorker.addEventListener(
-              "controllerchange",
-              onCC,
-            );
+            navigator.serviceWorker.addEventListener("controllerchange", onCC);
           } catch (e) {}
 
           setTimeout(function () {
@@ -938,10 +939,7 @@
               reg.update().catch(function (err) {
                 // Surface the failure but don't throw: the active SW (if
                 // any) keeps serving and recovery handles the stuck case.
-                console.warn(
-                  "[boot] reg.update() failed:",
-                  err && err.message,
-                );
+                console.warn("[boot] reg.update() failed:", err && err.message);
               });
               // If a new SW is already waiting (browser fetched the new
               // script behind the scenes), tell it to take over now.
