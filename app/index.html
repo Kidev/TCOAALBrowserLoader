@@ -1235,6 +1235,58 @@
           return decryptInline();
         }
 
+        // Preload /mods.json into window.__modsDataJson so lang-shim.js's
+        // synchronous XHR has a working fallback when the SW couldn't (or
+        // didn't yet) intercept the request: first visit before SW claim,
+        // ensureSW's 3 s timeout firing, or an empty SHELL_CACHE / IDB
+        // fallback after a SW version bump while offline.
+        //
+        // Resolution order:
+        //   1. fetch(/mods.json) goes through the SW (which has its own
+        //      network-first + SHELL_CACHE + IDB fallback chain); also handles
+        //      the no-controller case where the fetch goes straight to network.
+        //   2. Direct IDB read of "__shell:mods.json__" (the same key the SW
+        //      writes to on every successful fetch). Survives an SW that never
+        //      controlled the page (e.g. user offline since first install).
+        //
+        // On a successful resolve we also mirror the text back into IDB so
+        // a future offline boot finds it even if the SW never intercepts.
+        // mod-related logic in lang-shim.js (mod menu, loadActivePlugins,
+        // install/uninstall) all key off _modsData, so making this resilient
+        // is what keeps plugins and the Mods scene working offline.
+        var MODS_JSON_IDB_KEY = "__shell:mods.json__";
+
+        function preloadModsData(db) {
+          function stashAndPersist(text) {
+            if (!text || typeof text !== "string") return false;
+            try {
+              var parsed = JSON.parse(text);
+              if (!parsed || typeof parsed !== "object") return false;
+              window.__modsDataJson = text;
+              if (db) idbPut(db, MODS_JSON_IDB_KEY, text);
+              return true;
+            } catch (e) {
+              return false;
+            }
+          }
+
+          return fetch("/mods.json", { cache: "no-store" })
+            .then(function (res) {
+              return res && res.ok ? res.text() : null;
+            })
+            .catch(function () {
+              return null;
+            })
+            .then(function (text) {
+              if (stashAndPersist(text)) return;
+              if (!db) return;
+              return idbGet(db, MODS_JSON_IDB_KEY).then(function (cached) {
+                if (cached && typeof cached === "string")
+                  stashAndPersist(cached);
+              });
+            });
+        }
+
         // Step 2c: load favicon from IDB (icon/icon.png from the user's game files)
         function loadFavicon(db) {
           idbGet(db, "icon/icon.png").then(function (data) {
@@ -1382,7 +1434,10 @@
             // Preload language data and favicon (favicon is non-blocking).
             if (ctx.db) loadFavicon(ctx.db);
 
-            return preloadLangData(ctx.db, ctx.files).then(function () {
+            return Promise.all([
+              preloadLangData(ctx.db, ctx.files),
+              preloadModsData(ctx.db),
+            ]).then(function () {
               // If we still don't have language data and there's no active
               // mod, fail loudly: the DRM will produce cryptic errors
               // ("Cannot create property imageLUT on string ''", etc.) if

@@ -290,7 +290,44 @@
   var _modsData = null;
   var _modsLoaded = false;
 
+  // IDB key the SW (and index.html's preloadModsData) write the latest
+  // mods.json text to. Mirrored here so a successful sync XHR also tops
+  // up the durable copy independently of whether the SW intercepted.
+  var MODS_JSON_IDB_KEY = "__shell:mods.json__";
+
+  function persistModsJsonToIdb(text) {
+    if (!text || typeof text !== "string") return;
+    openAssetsDb(function (db) {
+      if (!db) return;
+      try {
+        var tx = db.transaction(ASSETS_STORE, "readwrite");
+        tx.objectStore(ASSETS_STORE).put(text, MODS_JSON_IDB_KEY);
+      } catch (e) {}
+    });
+  }
+
   function loadModsData() {
+    // index.html's preloadModsData runs before this script loads and
+    // resolves /mods.json against the network or an IDB fallback. Using
+    // that preloaded blob avoids depending on the SW intercepting a sync
+    // XHR, which doesn't help on first-visit-before-claim boots and
+    // breaks completely offline if the SW's IDB fallback is empty.
+    try {
+      var preloaded =
+        typeof window !== "undefined" &&
+        typeof window.__modsDataJson === "string"
+          ? window.__modsDataJson
+          : null;
+      if (preloaded) {
+        var parsedPre = JSON.parse(preloaded);
+        if (parsedPre && Object.keys(parsedPre).length > 0) {
+          _modsData = parsedPre;
+          _modsLoaded = true;
+          return;
+        }
+      }
+    } catch (e) {}
+
     try {
       var xhr = new XMLHttpRequest();
       xhr.open("GET", "/mods.json", false);
@@ -300,6 +337,10 @@
         if (parsed && Object.keys(parsed).length > 0) {
           _modsData = parsed;
           _modsLoaded = true;
+          // Mirror to IDB ourselves so the next offline boot finds it
+          // even if the SW didn't intercept this XHR (no controller yet,
+          // first visit before claim, etc.).
+          persistModsJsonToIdb(xhr.responseText);
         }
       }
     } catch (e) {}

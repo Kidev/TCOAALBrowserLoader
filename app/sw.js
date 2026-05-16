@@ -234,7 +234,11 @@ async function readShellJSONFromIDB(idbKey) {
  * a successful network fetch also persists the body to IDB, and a cache miss
  * after a network failure falls back to the IDB copy before giving up.
  */
-async function networkFirstWithShellFallback(request, cacheKey, idbFallbackKey) {
+async function networkFirstWithShellFallback(
+  request,
+  cacheKey,
+  idbFallbackKey,
+) {
   try {
     const fresh = await fetch(request, { cache: "no-store" });
     if (fresh && fresh.ok) {
