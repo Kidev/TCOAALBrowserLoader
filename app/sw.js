@@ -35,7 +35,7 @@ const STORE_NAME = "assets";
 // their old installation: e.g. a fix to the fetch handler or a new IDB
 // schema. Pure additive features (new message types the page can feature-
 // detect) do not need a bump.
-const SW_VERSION = 3;
+const SW_VERSION = 4;
 
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
@@ -169,6 +169,52 @@ async function serveModAsset(logicalPath, request) {
   }
 }
 
+// IDB-backed durable copies of critical shell JSON. SHELL_CACHE is keyed by
+// SW_VERSION/SHELL_CACHE name and is wiped whenever cleanupOldShellCaches()
+// runs, so a SW version bump while the user is offline (or a fresh install
+// with precache failing) leaves the shell empty. These files are required
+// for the mod system to function (sync XHR in lang-shim) and for the
+// healthcheck in index.html, so we persist them to IDB on every successful
+// network fetch and serve from IDB when both network and SHELL_CACHE miss.
+// IDB lives in the shared "assets" store and survives SW updates.
+const SHELL_IDB_FALLBACK_KEYS = {
+  "mods.json": "__shell:mods.json__",
+  "expected-files.json": "__shell:expected-files.json__",
+};
+
+async function persistShellJSONToIDB(idbKey, response) {
+  try {
+    const text = await response.clone().text();
+    if (!text) return;
+    const db = await openDB();
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+        tx.onabort = () => resolve();
+        tx.objectStore(STORE_NAME).put(text, idbKey);
+      } catch (_) {
+        resolve();
+      }
+    });
+  } catch (_) {}
+}
+
+async function readShellJSONFromIDB(idbKey) {
+  try {
+    const db = await openDB();
+    const value = await getAsset(db, idbKey);
+    if (typeof value === "string" && value.length > 0) {
+      return new Response(value, {
+        status: 200,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+  } catch (_) {}
+  return null;
+}
+
 /**
  * Network-first, cache-fallback strategy for app-shell files.
  *
@@ -182,8 +228,13 @@ async function serveModAsset(logicalPath, request) {
  *
  * `cacheKey` lets us normalise "/" and "/index.html" to a single cache entry
  * so a boot from the bare origin still finds the cached index.
+ *
+ * `idbFallbackKey` enables a durable IDB-backed fallback for files that must
+ * survive SHELL_CACHE invalidation (mods.json, expected-files.json). When set,
+ * a successful network fetch also persists the body to IDB, and a cache miss
+ * after a network failure falls back to the IDB copy before giving up.
  */
-async function networkFirstWithShellFallback(request, cacheKey) {
+async function networkFirstWithShellFallback(request, cacheKey, idbFallbackKey) {
   try {
     const fresh = await fetch(request, { cache: "no-store" });
     if (fresh && fresh.ok) {
@@ -192,6 +243,9 @@ async function networkFirstWithShellFallback(request, cacheKey) {
         .open(SHELL_CACHE)
         .then((cache) => cache.put(cacheKey || request, clone))
         .catch(() => {});
+      if (idbFallbackKey) {
+        persistShellJSONToIDB(idbFallbackKey, fresh);
+      }
     }
     return fresh;
   } catch (_) {
@@ -201,6 +255,10 @@ async function networkFirstWithShellFallback(request, cacheKey) {
       (await cache.match(request, { ignoreSearch: true })) ||
       (cacheKey ? await cache.match(cacheKey, { ignoreSearch: true }) : null);
     if (cached) return cached;
+    if (idbFallbackKey) {
+      const idbResponse = await readShellJSONFromIDB(idbFallbackKey);
+      if (idbResponse) return idbResponse;
+    }
     // Last resort: let the browser surface its own network error. This
     // preserves the previous behaviour for files we never had a chance to
     // cache (e.g. user went offline before the first successful visit).
@@ -1011,6 +1069,7 @@ self.addEventListener("fetch", (event) => {
     // bare origin finds the same cached entry the SW pre-populated.
     const cacheKey =
       logicalPath === "index.html" ? new Request("/") : event.request;
+    const idbFallbackKey = SHELL_IDB_FALLBACK_KEYS[logicalPath] || null;
     event.respondWith(
       (async () => {
         // Lazy-load the kill switch so the first request after a SW restart
@@ -1024,7 +1083,11 @@ self.addEventListener("fetch", (event) => {
             fetch(event.request),
           );
         }
-        return networkFirstWithShellFallback(event.request, cacheKey);
+        return networkFirstWithShellFallback(
+          event.request,
+          cacheKey,
+          idbFallbackKey,
+        );
       })(),
     );
     return;
