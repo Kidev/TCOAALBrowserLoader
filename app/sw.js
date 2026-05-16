@@ -93,6 +93,44 @@ async function precacheShell() {
   );
 }
 
+// Built-in plugin mods. These ship with the app under /mods/_*/www/ and are
+// never "installed" through the menu (Scene_Mods toggles them directly), so
+// their files are not written to IDB by installMod(). Without precaching,
+// an offline user who has never enabled them sees them in the menu but
+// can't activate them: serveModAsset would hit the network and fail.
+//
+// We mirror the files listed in mods.json for each built-in entry. Keep
+// this list in sync with mods.json when adding/removing built-in mods.
+// Paths are routed through serveModAsset on fetch, which falls back to
+// MOD_ASSET_CACHE when the network is unreachable.
+const BUILTIN_MOD_ASSETS = [
+  "/mods/_mouseControl/www/img/icon.png",
+  "/mods/_mouseControl/www/js/plugins/MouseControl.js",
+  "/mods/_unlockAll/www/img/icon.png",
+  "/mods/_unlockAll/www/js/plugins/UnlockAll.js",
+  "/mods/_AnalogMove/www/img/icon.png",
+  "/mods/_AnalogMove/www/js/plugins/SAN_AnalogMove.js",
+  "/mods/_MessageBacklog/www/img/icon.png",
+  "/mods/_MessageBacklog/www/js/plugins/YEP_X_MessageBacklog.js",
+];
+
+async function precacheBuiltinMods() {
+  const cache = await caches.open(MOD_ASSET_CACHE);
+  await Promise.all(
+    BUILTIN_MOD_ASSETS.map((url) =>
+      cache
+        .add(new Request(url, { cache: "reload" }))
+        .catch((e) =>
+          console.warn(
+            "[sw] builtin precache failed for",
+            url,
+            e && e.message,
+          ),
+        ),
+    ),
+  );
+}
+
 async function cleanupOldShellCaches() {
   const names = await caches.keys();
   await Promise.all(
@@ -859,10 +897,22 @@ self.addEventListener("install", (e) =>
         await ensureOfflineFlagLoaded(db);
       } catch {}
       if (!_offlineDisabled) {
+        // Run shell + built-in mod precache concurrently; the timeout caps
+        // total install time so a slow network can't block the new SW.
+        // Files that haven't landed by the timeout keep fetching in the
+        // background (pending fetches extend SW lifetime past install).
         await Promise.race([
-          precacheShell().catch((err) =>
-            console.warn("[sw] precacheShell failed:", err && err.message),
-          ),
+          Promise.all([
+            precacheShell().catch((err) =>
+              console.warn("[sw] precacheShell failed:", err && err.message),
+            ),
+            precacheBuiltinMods().catch((err) =>
+              console.warn(
+                "[sw] precacheBuiltinMods failed:",
+                err && err.message,
+              ),
+            ),
+          ]),
           new Promise((resolve) => setTimeout(resolve, 2500)),
         ]);
       }
@@ -950,9 +1000,10 @@ self.addEventListener("message", (event) => {
     const disabled = data.enabled === false;
     const ack = setOfflineDisabledPersist(disabled).then(async () => {
       if (!disabled) {
-        // Re-enabling: warm the cache so the next offline boot works.
+        // Re-enabling: warm both shell + built-in mod caches so the next
+        // offline boot works.
         try {
-          await precacheShell();
+          await Promise.all([precacheShell(), precacheBuiltinMods()]);
         } catch {}
       }
     });
@@ -991,7 +1042,10 @@ self.addEventListener("message", (event) => {
       return;
     }
     _lastShellRevalidateAt = now;
-    const ack = precacheShell().catch(() => {});
+    const ack = Promise.all([
+      precacheShell().catch(() => {}),
+      precacheBuiltinMods().catch(() => {}),
+    ]);
     if (event.ports && event.ports[0]) {
       ack.then(() => event.ports[0].postMessage({ ok: true }));
     }

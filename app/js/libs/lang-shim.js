@@ -2548,6 +2548,10 @@
       this._confirmWindow = new Window_ModConfirm();
       this._confirmWindow.setHandler("yes", this.onConfirmYes.bind(this));
       this._confirmWindow.setHandler("no", this.onConfirmNo.bind(this));
+      // Cancel (Esc / B button) dismisses the popup without acting. Without
+      // this handler Window_Selectable.processCancel deactivates the window
+      // and leaves the scene with no active focus.
+      this._confirmWindow.setHandler("cancel", this.onConfirmNo.bind(this));
       this._confirmWindow.hide();
       this._confirmWindow.deactivate();
       this.addWindow(this._confirmWindow);
@@ -2750,11 +2754,28 @@
       this._confirmSource = sourceWin || this._listWindow;
       if (this._listWindow) this._listWindow.deactivate();
       if (this._activeModWindow) this._activeModWindow.deactivate();
+      this._confirmWindow.setInfo(false);
       this._confirmWindow.setMessage(message);
       this._confirmWindow.show();
       this._confirmWindow.activate();
       this._confirmWindow.select(1);
       SoundManager.playOk();
+    };
+
+    // Single-OK info popup. Used to surface conditions the user can't act
+    // on from the menu (e.g. trying to install a remote mod while offline)
+    // without a confirmation choice.
+    Scene_Mods.prototype._showInfo = function (message, sourceWin) {
+      this._pendingAction = null;
+      this._confirmSource = sourceWin || this._listWindow;
+      if (this._listWindow) this._listWindow.deactivate();
+      if (this._activeModWindow) this._activeModWindow.deactivate();
+      this._confirmWindow.setInfo(true);
+      this._confirmWindow.setMessage(message);
+      this._confirmWindow.show();
+      this._confirmWindow.activate();
+      this._confirmWindow.select(0);
+      SoundManager.playBuzzer();
     };
 
     Scene_Mods.prototype.onModOk = function () {
@@ -2792,12 +2813,13 @@
         }
         // Install is the only mod operation that needs the network. Enable
         // / disable / uninstall all work entirely against IDB and the SW,
-        // so we don't block those. Refuse install offline and buzz so the
-        // user gets feedback (the OFFLINE pill at the top already explains
-        // why).
+        // so we don't block those. Built-in mods are shipped with the app
+        // and are handled by the early branch above (no install step), so
+        // by the time we get here we're looking at a remote mod that must
+        // be downloaded. Surface a popup offline instead of swallowing the
+        // tap with a buzzer.
         if (navigator.onLine === false) {
-          SoundManager.playBuzzer();
-          this._listWindow.activate();
+          this._showInfo("You need an internet connection");
           return;
         }
         this._showConfirm("Install " + mod.name + "?", "install", mod);
@@ -2850,7 +2872,11 @@
       var action = this._pendingAction;
       this._pendingAction = null;
       if (!action) {
-        this._listWindow.activate();
+        // Info popups (_showInfo) leave pendingAction null and dismiss back
+        // to the source window so focus mirrors the Yes/No cancel flow.
+        var src = this._confirmSource || this._listWindow;
+        this._confirmSource = null;
+        src.activate();
         return;
       }
 
@@ -2965,6 +2991,7 @@
 
     Window_ModConfirm.prototype.initialize = function () {
       this._message = "";
+      this._infoMode = false;
       Window_Command.prototype.initialize.call(this, 0, 0);
       this.updatePlacement();
       this.openness = 255;
@@ -2979,12 +3006,27 @@
       return 360;
     };
     Window_ModConfirm.prototype.windowHeight = function () {
-      return this.fittingHeight(3);
+      // One line for the message + one line per command (Yes/No -> 2, OK -> 1)
+      return this.fittingHeight(this._infoMode ? 2 : 3);
     };
 
     Window_ModConfirm.prototype.updatePlacement = function () {
       this.x = (Graphics.boxWidth - this.width) / 2;
       this.y = (Graphics.boxHeight - this.height) / 2;
+    };
+
+    // Switch between Yes/No confirm and single-OK info popups. Reuses one
+    // window instance: callers pair this with _showConfirm / _showInfo.
+    Window_ModConfirm.prototype.setInfo = function (isInfo) {
+      var next = !!isInfo;
+      if (this._infoMode === next) return;
+      this._infoMode = next;
+      this.height = this.windowHeight();
+      this.clearCommandList();
+      this.makeCommandList();
+      this.createContents();
+      this.updatePlacement();
+      this.refresh();
     };
 
     Window_ModConfirm.prototype.setMessage = function (msg) {
@@ -2996,8 +3038,12 @@
     };
 
     Window_ModConfirm.prototype.makeCommandList = function () {
-      this.addCommand("Yes", "yes");
-      this.addCommand("No", "no");
+      if (this._infoMode) {
+        this.addCommand("OK", "yes");
+      } else {
+        this.addCommand("Yes", "yes");
+        this.addCommand("No", "no");
+      }
     };
 
     Window_ModConfirm.prototype.refresh = function () {
