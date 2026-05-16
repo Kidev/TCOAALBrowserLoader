@@ -27,6 +27,105 @@ const DB_NAME = "tcoaal";
 const DB_VERSION = 1;
 const STORE_NAME = "assets";
 
+// App-shell cache. Bump the version to invalidate previously cached shells
+// on the next SW activation (e.g. when shipping a breaking change to one of
+// the infra files). Game assets live in IndexedDB, NOT here.
+const SHELL_CACHE = "tcoaal-shell-v1";
+
+// The shell is everything required to boot the player when the network is
+// unreachable. Game files are not listed: those are imported into IDB by the
+// user via loader.html and served by serveFromIDB() below.
+//
+// sw.js itself is intentionally NOT in this list:  the browser owns SW
+// updates and must always see a fresh sw.js to install new code.
+const APP_SHELL = [
+  "/",
+  "/index.html",
+  "/loader.html",
+  "/lock.html",
+  "/lock.json",
+  "/manifest.webmanifest",
+  "/favicon.ico",
+  "/favicon16.ico",
+  "/img/bg.webp",
+  "/img/mods.png",
+  "/img/achievements.png",
+  "/img/tcoaal-steam-header.jpg",
+  "/js/libs/pako_inflate.min.js",
+  "/js/libs/browser-shim.js",
+  "/js/libs/lang-shim.js",
+  "/js/libs/achievements-shim.js",
+  "/mods.json",
+  "/expected-files.json",
+];
+
+async function precacheShell() {
+  const cache = await caches.open(SHELL_CACHE);
+  // cache.add() per file (vs addAll) so one 404 or transient failure doesn't
+  // abort the whole install:  partial shells still buy the user offline boot.
+  // cache: "reload" forces a fresh network fetch, bypassing the HTTP cache,
+  // so we never persist a stale GitHub Pages copy into the SW cache.
+  await Promise.all(
+    APP_SHELL.map((url) =>
+      cache
+        .add(new Request(url, { cache: "reload" }))
+        .catch((e) =>
+          console.warn("[sw] precache failed for", url, e && e.message),
+        ),
+    ),
+  );
+}
+
+async function cleanupOldShellCaches() {
+  const names = await caches.keys();
+  await Promise.all(
+    names
+      .filter((n) => n.startsWith("tcoaal-shell-") && n !== SHELL_CACHE)
+      .map((n) => caches.delete(n)),
+  );
+}
+
+/**
+ * Network-first, cache-fallback strategy for app-shell files.
+ *
+ * When online: hit the network with cache:"no-store" so users always get the
+ * latest infra after a deploy, then write the response into SHELL_CACHE so a
+ * future offline boot can find it.
+ *
+ * When offline: serve the cached copy. If nothing is cached we fall through
+ * to a final fetch() that will reject:  the same failure mode users had
+ * before this strategy was added.
+ *
+ * `cacheKey` lets us normalise "/" and "/index.html" to a single cache entry
+ * so a boot from the bare origin still finds the cached index.
+ */
+async function networkFirstWithShellFallback(request, cacheKey) {
+  try {
+    const fresh = await fetch(request, { cache: "no-store" });
+    if (fresh && fresh.ok) {
+      const clone = fresh.clone();
+      caches
+        .open(SHELL_CACHE)
+        .then((cache) => cache.put(cacheKey || request, clone))
+        .catch(() => {});
+    }
+    return fresh;
+  } catch (_) {
+    const cache = await caches.open(SHELL_CACHE);
+    // ignoreSearch: "/?offline=off" should still match cached "/".
+    const cached =
+      (await cache.match(request, { ignoreSearch: true })) ||
+      (cacheKey
+        ? await cache.match(cacheKey, { ignoreSearch: true })
+        : null);
+    if (cached) return cached;
+    // Last resort: let the browser surface its own network error. This
+    // preserves the previous behaviour for files we never had a chance to
+    // cache (e.g. user went offline before the first successful visit).
+    return fetch(request);
+  }
+}
+
 /* Magic bytes: "TCOAAL" as char codes */
 const ASSET_SIG = [84, 67, 79, 65, 65, 76];
 
@@ -542,13 +641,83 @@ async function buildDrmScript(db) {
   }
 }
 
+// Offline-cache kill switch.
+//
+// The shell cache is generally an improvement (offline boot, faster repeat
+// visits) but it adds a new failure mode: a poisoned cache entry could keep
+// serving a broken file even after a fix is deployed. The page can flip this
+// off via postMessage({type:"setOfflineEnabled", enabled:false}):  typically
+// driven by the user visiting "/?offline=off" or running a console helper
+// (see app/index.html). When disabled, the SW reverts to its pre-offline
+// behaviour: no precache, no fallback, no cache writes; and we wipe whatever
+// was already in SHELL_CACHE so nothing stale can leak through.
+const OFFLINE_FLAG_KEY = "__offline_disabled__";
+let _offlineDisabled = false;
+let _offlineDisabledLoadPromise = null;
+
+// Belt-and-suspenders revalidation throttle. The per-request network-first
+// strategy refreshes files the current page loads; this complements it by
+// re-fetching the entire APP_SHELL after a successful online boot so files
+// the page didn't touch (loader.html, lock.html, bg.webp, ...) still pick
+// up new deploys quickly. Five minutes is short enough to land hotfixes in
+// one play session, long enough that mashed reloads don't refetch ~2 MB.
+const SHELL_REVALIDATE_THROTTLE_MS = 5 * 60 * 1000;
+let _lastShellRevalidateAt = 0;
+
+function ensureOfflineFlagLoaded(db) {
+  if (_offlineDisabledLoadPromise) return _offlineDisabledLoadPromise;
+  _offlineDisabledLoadPromise = (async () => {
+    try {
+      const val = await getAsset(db, OFFLINE_FLAG_KEY);
+      _offlineDisabled = val === true || val === 1 || val === "1";
+    } catch {}
+  })();
+  return _offlineDisabledLoadPromise;
+}
+
+async function setOfflineDisabledPersist(disabled) {
+  _offlineDisabled = !!disabled;
+  _offlineDisabledLoadPromise = Promise.resolve();
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    if (_offlineDisabled) {
+      tx.objectStore(STORE_NAME).put(true, OFFLINE_FLAG_KEY);
+    } else {
+      tx.objectStore(STORE_NAME).delete(OFFLINE_FLAG_KEY);
+    }
+  } catch {}
+  if (_offlineDisabled) {
+    // Wipe everything so a flipped-off kill switch immediately stops
+    // serving cached infra files.
+    try {
+      await caches.delete(SHELL_CACHE);
+    } catch {}
+  }
+}
+
 // Lifecycle
 
-self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("install", (e) =>
+  e.waitUntil(
+    (async () => {
+      try {
+        const db = await openDB();
+        await ensureOfflineFlagLoaded(db);
+      } catch {}
+      if (!_offlineDisabled) {
+        await precacheShell();
+      }
+      await self.skipWaiting();
+    })(),
+  ),
+);
+
 self.addEventListener("activate", (e) =>
   e.waitUntil(
     Promise.all([
       self.clients.claim(),
+      cleanupOldShellCaches(),
       // Invalidate the DRM cache so it gets rebuilt with the new SW code.
       // This prevents stale DRM payloads from persisting across SW updates.
       openDB()
@@ -570,8 +739,11 @@ let _activeMod = null;
 let _activeModLoadPromise = null;
 
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "setActiveMod") {
-    _activeMod = event.data.id || null;
+  const data = event.data;
+  if (!data || typeof data !== "object") return;
+
+  if (data.type === "setActiveMod") {
+    _activeMod = data.id || null;
     // Mark as resolved so parallel fetches skip the IDB read.
     _activeModLoadPromise = Promise.resolve();
     // Persist to IDB
@@ -585,6 +757,59 @@ self.addEventListener("message", (event) => {
         }
       })
       .catch(() => {});
+    return;
+  }
+
+  if (data.type === "setOfflineEnabled") {
+    const disabled = data.enabled === false;
+    const ack = setOfflineDisabledPersist(disabled).then(async () => {
+      if (!disabled) {
+        // Re-enabling: warm the cache so the next offline boot works.
+        try {
+          await precacheShell();
+        } catch {}
+      }
+    });
+    if (event.ports && event.ports[0]) {
+      ack.then(() => event.ports[0].postMessage({ ok: true, disabled }));
+    }
+    return;
+  }
+
+  if (data.type === "clearShellCache") {
+    const ack = caches.delete(SHELL_CACHE).catch(() => false);
+    if (event.ports && event.ports[0]) {
+      ack.then((ok) => event.ports[0].postMessage({ ok: !!ok }));
+    }
+    return;
+  }
+
+  if (data.type === "revalidateShell") {
+    // Belt-and-suspenders refresh: the per-request network-first strategy
+    // only refreshes files the current page actually loads. Files the page
+    // never touches (e.g. loader.html if the user is on index.html) can
+    // stay stale in the cache between SW updates. This message re-fetches
+    // the full APP_SHELL with cache:"reload" so a bad deploy can't linger
+    // for more than one online visit.
+    //
+    // Throttled to avoid wasting bandwidth on every navigation. The page
+    // only sends this after a successful boot; the throttle keeps rapid
+    // reloads from re-pulling ~2 MB of shell on each one.
+    if (_offlineDisabled) return;
+    const force = data.force === true;
+    const now = Date.now();
+    if (!force && now - _lastShellRevalidateAt < SHELL_REVALIDATE_THROTTLE_MS) {
+      if (event.ports && event.ports[0]) {
+        event.ports[0].postMessage({ ok: true, skipped: "throttled" });
+      }
+      return;
+    }
+    _lastShellRevalidateAt = now;
+    const ack = precacheShell().catch(() => {});
+    if (event.ports && event.ports[0]) {
+      ack.then(() => event.ports[0].postMessage({ ok: true }));
+    }
+    return;
   }
 });
 
@@ -625,31 +850,60 @@ self.addEventListener("fetch", (event) => {
     logicalPath = url.pathname.replace(/^\/+/, "") || "index.html";
   }
 
-  // Infrastructure files: always serve fresh from the network, bypassing the
-  // browser HTTP cache. A bare `return` would let the browser use its own
-  // cache (GitHub Pages: max-age=600), so after a push clients could get stale
-  // copies of browser-shim.js / lang-shim.js / etc. for up to 10 minutes.
-  // Using respondWith + fetch(cache:"no-store") guarantees the latest version.
+  // Infrastructure files: always try the network first (so a deploy lands
+  // within seconds, not 10 minutes of GitHub Pages' max-age=600), but fall
+  // back to the SHELL_CACHE so the player still boots when the user is
+  // offline. sw.js itself is excluded from the cache fallback:  the browser
+  // owns SW updates and must always receive a fresh copy.
+  if (logicalPath === "sw.js") {
+    event.respondWith(
+      fetch(event.request, { cache: "no-store" }).catch(() =>
+        fetch(event.request),
+      ),
+    );
+    return;
+  }
+
   if (
     logicalPath === "loader.html" ||
-    logicalPath === "sw.js" ||
     logicalPath === "index.html" ||
     logicalPath === "migrate.html" ||
     logicalPath === "lock.html" ||
     logicalPath === "lock.json" ||
     logicalPath === "test.html" ||
+    logicalPath === "manifest.webmanifest" ||
     logicalPath === "js/libs/pako_inflate.min.js" ||
     logicalPath === "js/libs/browser-shim.js" ||
     logicalPath === "js/libs/lang-shim.js" ||
+    logicalPath === "js/libs/achievements-shim.js" ||
     logicalPath === "mods.json" ||
     logicalPath === "expected-files.json" ||
     logicalPath === "favicon.ico" ||
-    logicalPath === "img/mods.png"
+    logicalPath === "favicon16.ico" ||
+    logicalPath === "img/mods.png" ||
+    logicalPath === "img/bg.webp" ||
+    logicalPath === "img/achievements.png" ||
+    logicalPath === "img/tcoaal-steam-header.jpg"
   ) {
+    // Normalise "/" -> "/index.html" for cache lookups so a boot from the
+    // bare origin finds the same cached entry the SW pre-populated.
+    const cacheKey =
+      logicalPath === "index.html" ? new Request("/") : event.request;
     event.respondWith(
-      fetch(event.request, { cache: "no-store" }).catch(() =>
-        fetch(event.request),
-      ),
+      (async () => {
+        // Lazy-load the kill switch so the first request after a SW restart
+        // gets the right behaviour. Falls back to "enabled" if IDB is down.
+        try {
+          const db = await openDB();
+          await ensureOfflineFlagLoaded(db);
+        } catch {}
+        if (_offlineDisabled) {
+          return fetch(event.request, { cache: "no-store" }).catch(() =>
+            fetch(event.request),
+          );
+        }
+        return networkFirstWithShellFallback(event.request, cacheKey);
+      })(),
     );
     return;
   }

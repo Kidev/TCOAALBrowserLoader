@@ -273,6 +273,170 @@
       (function () {
         "use strict";
 
+        // Offline-cache kill switch.
+        //
+        // The Service Worker pre-caches the player's app shell so the game
+        // boots without a network (game files already live in IDB). If that
+        // cache ever serves a poisoned copy, the user can disable it by:
+        //   - visiting /?offline=off (or /?offline=on to re-enable)
+        //   - running __toggleOfflineCache(false) in the console
+        //   - setting localStorage._offlineCacheDisabled = "1"
+        //
+        // The localStorage flag is the source of truth on the page side and
+        // is mirrored to the SW via postMessage on every boot, so the SW
+        // always knows whether to use the cache.
+        (function () {
+          function applyToSW(disabled, done) {
+            try {
+              if (
+                "serviceWorker" in navigator &&
+                navigator.serviceWorker.controller
+              ) {
+                var ch = new MessageChannel();
+                ch.port1.onmessage = function () {
+                  if (done) done();
+                };
+                navigator.serviceWorker.controller.postMessage(
+                  { type: "setOfflineEnabled", enabled: !disabled },
+                  [ch.port2],
+                );
+                // Also nudge any other registrations (waiting/installing).
+                navigator.serviceWorker
+                  .getRegistration()
+                  .then(function (reg) {
+                    if (reg && reg.active && reg.active !== navigator.serviceWorker.controller) {
+                      reg.active.postMessage({
+                        type: "setOfflineEnabled",
+                        enabled: !disabled,
+                      });
+                    }
+                  })
+                  .catch(function () {});
+                // Safety timeout so we never hang the boot on a missing reply.
+                setTimeout(function () {
+                  if (done) {
+                    var d = done;
+                    done = null;
+                    d();
+                  }
+                }, 1500);
+              } else if (done) {
+                done();
+              }
+            } catch (e) {
+              if (done) done();
+            }
+          }
+
+          // Expose a console-friendly toggle. Returns a promise so users can
+          // `await __toggleOfflineCache(false)` and reload.
+          window.__toggleOfflineCache = function (enabled) {
+            var disabled = enabled === false;
+            try {
+              if (disabled) {
+                localStorage.setItem("_offlineCacheDisabled", "1");
+              } else {
+                localStorage.removeItem("_offlineCacheDisabled");
+              }
+            } catch (e) {}
+            return new Promise(function (resolve) {
+              applyToSW(disabled, function () {
+                resolve({ offlineDisabled: disabled });
+              });
+            });
+          };
+
+          // URL trigger: /?offline=off disables, /?offline=on re-enables.
+          // Strip the param and reload so the rest of the bootstrap (lock
+          // check, healthcheck, etc.) re-runs with the new state.
+          try {
+            var params = new URLSearchParams(location.search);
+            var v = params.get("offline");
+            if (v === "off" || v === "on") {
+              var disabled = v === "off";
+              try {
+                if (disabled)
+                  localStorage.setItem("_offlineCacheDisabled", "1");
+                else localStorage.removeItem("_offlineCacheDisabled");
+              } catch (e) {}
+              applyToSW(disabled, function () {
+                params.delete("offline");
+                var qs = params.toString();
+                location.replace(
+                  location.pathname + (qs ? "?" + qs : "") + location.hash,
+                );
+              });
+              return; // pause the rest of the bootstrap until the reload fires
+            }
+          } catch (e) {}
+
+          // Normal boot path: mirror current flag to the SW (best-effort,
+          // non-blocking). The SW also reads the flag from IDB on first use
+          // so this message is purely a freshness signal.
+          var storedDisabled = false;
+          try {
+            try {
+              storedDisabled =
+                localStorage.getItem("_offlineCacheDisabled") === "1";
+            } catch (e) {}
+            applyToSW(storedDisabled, null);
+          } catch (e) {}
+
+          // Full-shell revalidation. Per-request network-first already keeps
+          // files the page loaded this visit in sync with remote, but it
+          // can't refresh files the page never requests (loader.html when
+          // we're on index, bg.webp, lock.html, ...). Ask the SW to re-fetch
+          // every entry in APP_SHELL once the page is idle and the user is
+          // online; the SW throttles this to once per 5 min so mashed
+          // reloads don't redownload ~2 MB each time.
+          //
+          // Skipped entirely when the kill switch is on: there's no cache to
+          // revalidate.
+          if (!storedDisabled) {
+            var sentRevalidate = false;
+            function requestShellRevalidate() {
+              if (sentRevalidate) return;
+              if (!navigator.onLine) return;
+              try {
+                if (
+                  "serviceWorker" in navigator &&
+                  navigator.serviceWorker.controller
+                ) {
+                  navigator.serviceWorker.controller.postMessage({
+                    type: "revalidateShell",
+                  });
+                  sentRevalidate = true;
+                }
+              } catch (e) {}
+            }
+            // Run when idle, with a hard timeout fallback. Also re-arm on
+            // online/visibilitychange so a tab that boots offline picks up
+            // a fresh shell the moment it comes back online.
+            if ("requestIdleCallback" in window) {
+              try {
+                window.requestIdleCallback(requestShellRevalidate, {
+                  timeout: 15000,
+                });
+              } catch (e) {
+                setTimeout(requestShellRevalidate, 8000);
+              }
+            } else {
+              setTimeout(requestShellRevalidate, 8000);
+            }
+            window.addEventListener("online", function () {
+              sentRevalidate = false;
+              requestShellRevalidate();
+            });
+            window.addEventListener("visibilitychange", function () {
+              if (document.visibilityState === "visible") {
+                // SW throttle handles dedupe; just nudge it.
+                sentRevalidate = false;
+                requestShellRevalidate();
+              }
+            });
+          }
+        })();
+
         // Site-wide lock check. /lock.json drives a maintenance / outage
         // screen at /lock.html; if enabled we redirect there before doing
         // anything else. Synchronous XHR is used so the splash never has

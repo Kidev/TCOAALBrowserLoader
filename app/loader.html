@@ -1131,6 +1131,80 @@
     <script>
       "use strict";
 
+      // Offline-cache kill switch. Mirrors the handler in index.html so
+      // users can recover via /loader.html?offline=off if the cached index
+      // is itself the problem. See sw.js for the SW-side flag.
+      (function () {
+        function applyToSW(disabled, done) {
+          try {
+            if (
+              "serviceWorker" in navigator &&
+              navigator.serviceWorker.controller
+            ) {
+              var ch = new MessageChannel();
+              ch.port1.onmessage = function () {
+                if (done) done();
+              };
+              navigator.serviceWorker.controller.postMessage(
+                { type: "setOfflineEnabled", enabled: !disabled },
+                [ch.port2],
+              );
+              setTimeout(function () {
+                if (done) {
+                  var d = done;
+                  done = null;
+                  d();
+                }
+              }, 1500);
+            } else if (done) {
+              done();
+            }
+          } catch (e) {
+            if (done) done();
+          }
+        }
+        window.__toggleOfflineCache = function (enabled) {
+          var disabled = enabled === false;
+          try {
+            if (disabled)
+              localStorage.setItem("_offlineCacheDisabled", "1");
+            else localStorage.removeItem("_offlineCacheDisabled");
+          } catch (e) {}
+          return new Promise(function (resolve) {
+            applyToSW(disabled, function () {
+              resolve({ offlineDisabled: disabled });
+            });
+          });
+        };
+        try {
+          var params = new URLSearchParams(location.search);
+          var v = params.get("offline");
+          if (v === "off" || v === "on") {
+            var disabled = v === "off";
+            try {
+              if (disabled)
+                localStorage.setItem("_offlineCacheDisabled", "1");
+              else localStorage.removeItem("_offlineCacheDisabled");
+            } catch (e) {}
+            applyToSW(disabled, function () {
+              params.delete("offline");
+              var qs = params.toString();
+              location.replace(
+                location.pathname + (qs ? "?" + qs : "") + location.hash,
+              );
+            });
+            return;
+          }
+        } catch (e) {}
+        try {
+          var stored = false;
+          try {
+            stored = localStorage.getItem("_offlineCacheDisabled") === "1";
+          } catch (e) {}
+          applyToSW(stored, null);
+        } catch (e) {}
+      })();
+
       // Site-wide lock check (see /lock.html). Synchronous so the loader
       // UI never renders when locked. Partial locks honour a localStorage
       // dismiss flag written by lock.html.
