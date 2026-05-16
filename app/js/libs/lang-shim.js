@@ -399,6 +399,49 @@
     return isTranslationModId(_activeMod) ? null : _activeMod;
   }
 
+  /**
+   * True when a non-translation overhaul mod is currently the active mod.
+   * Used to gate mods (e.g. the Unlocker) that only make sense against the
+   * stock dataset + translations and would corrupt or no-op against an
+   * overhaul's rewritten saves / tag system.
+   */
+  function isNonTranslationOverhaulActive() {
+    return !!_activeMod && !isTranslationModId(_activeMod);
+  }
+
+  /**
+   * Look up a mod's manifest entry by key. Returns null if mods.json isn't
+   * loaded or the key is unknown; callers must treat null as "no constraint
+   * data available" rather than crashing.
+   */
+  function getModEntry(modKey) {
+    if (!modKey || !_modsData) return null;
+    return _modsData[modKey] || null;
+  }
+
+  /**
+   * Whether a mod's manifest opts it into "base-game-only" semantics:
+   * activation is allowed when no mod or a translation is active, and
+   * forbidden when a non-translation overhaul is active. Currently set on
+   * the Unlocker (_unlockAll) since its injected globalInfo tags target
+   * the stock TCOAAL ending/gallery system.
+   */
+  function modRequiresBaseGame(modOrKey) {
+    var entry = typeof modOrKey === "string" ? getModEntry(modOrKey) : modOrKey;
+    return !!(entry && entry.requiresBaseGame);
+  }
+
+  /**
+   * True when the mod is currently activatable. Base-game-only mods become
+   * unavailable while a non-translation overhaul is active; all other mods
+   * are always available. Used by the Mods UI to draw an "Unavailable"
+   * badge in place of "Disabled", and by onModOk to refuse activation.
+   */
+  function isModAvailable(modOrKey) {
+    if (!modRequiresBaseGame(modOrKey)) return true;
+    return !isNonTranslationOverhaulActive();
+  }
+
   /** True when path is an absolute URL (translation mods host files remotely). */
   function isRemotePath(path) {
     return typeof path === "string" && /^https?:\/\//i.test(path);
@@ -592,6 +635,29 @@
     // Keep _activeSaveScope in sync so the DRM-side modAwareKey sees the
     // new translation-aware scope without waiting for a page reload.
     persistSaveScope();
+    // Switching to a non-translation overhaul: any base-game-only plugins
+    // (currently just the Unlocker) become invalid against the new dataset,
+    // so we drop them from _activePlugins now. Per spec, we deliberately do
+    // NOT remember they were enabled: returning to the base game leaves the
+    // user to re-enable them explicitly. The page reload that follows
+    // setActiveMod then boots without those plugins.
+    if (modId && !isTranslationModId(modId)) {
+      var changed = false;
+      for (var _i = _activePlugins.length - 1; _i >= 0; _i--) {
+        if (modRequiresBaseGame(_activePlugins[_i])) {
+          _activePlugins.splice(_i, 1);
+          changed = true;
+        }
+      }
+      if (changed) {
+        try {
+          localStorage.setItem(
+            "_activePlugins",
+            JSON.stringify(_activePlugins),
+          );
+        } catch (e) {}
+      }
+    }
     if (navigator.serviceWorker && navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({
         type: "setActiveMod",
@@ -809,7 +875,14 @@
 
   function loadActivePlugins() {
     for (var i = 0; i < _activePlugins.length; i++) {
-      loadPluginMod(_activePlugins[i]);
+      var pid = _activePlugins[i];
+      // Fail-safe: never inject a base-game-only plugin's script while a
+      // non-translation overhaul owns the dataset. setActiveMod is supposed
+      // to prune _activePlugins before reloading, but if the manifest grew
+      // a new requiresBaseGame flag between sessions (or _modsData wasn't
+      // available at the prior setActiveMod call) the stale entry survives.
+      if (!isModAvailable(pid)) continue;
+      loadPluginMod(pid);
     }
   }
 
@@ -2791,6 +2864,27 @@
       if (!installed && isBuiltIn(mod) && isPluginType(mod.type)) {
         // Built-in plugin: toggle enable/disable (no install step: shipped with app)
         if (!isPluginActive(mod.key)) {
+          if (!isModAvailable(mod)) {
+            // Base-game-only plugin while a non-translation overhaul is
+            // active. Surface the constraint as an info popup so the user
+            // understands why the toggle didn't take.
+            var blockerName = mod.name;
+            var activeKey = getActiveMod();
+            var mods = getModList();
+            for (var _bi = 0; _bi < mods.length; _bi++) {
+              if (mods[_bi].key === activeKey) {
+                blockerName = mods[_bi].name;
+                break;
+              }
+            }
+            this._showInfo(
+              mod.name +
+                " is only available on the base game. Disable " +
+                blockerName +
+                " first.",
+            );
+            return;
+          }
           setPluginActive(mod.key, true);
           SoundManager.playOk();
           var self = this;
@@ -3225,14 +3319,30 @@
       }
 
       if (showEnabledBadge && (isBuiltIn(mod) || installed)) {
-        win.contents.textColor = isActive ? "#88ff88" : "#aaaaaa";
-        win.drawText(
-          isActive ? "Enabled" : "Disabled",
-          rect.x,
-          lineY + smallLine + 2,
-          rect.width,
-          "right",
-        );
+        // Base-game-only mods (e.g. Unlocker) get a distinct "Unavailable"
+        // badge when a non-translation overhaul is active, so the row makes
+        // it clear that the toggle is gated by the active overhaul rather
+        // than the user having turned it off.
+        var unavailable = !isActive && !isModAvailable(mod);
+        if (unavailable) {
+          win.contents.textColor = "#ffaa66";
+          win.drawText(
+            "Unavailable",
+            rect.x,
+            lineY + smallLine + 2,
+            rect.width,
+            "right",
+          );
+        } else {
+          win.contents.textColor = isActive ? "#88ff88" : "#aaaaaa";
+          win.drawText(
+            isActive ? "Enabled" : "Disabled",
+            rect.x,
+            lineY + smallLine + 2,
+            rect.width,
+            "right",
+          );
+        }
       }
 
       win.contents.fontSize = win.standardFontSize();

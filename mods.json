@@ -17,6 +17,7 @@
     "description": "While enabled, the vision room, visions and stars are all available",
     "author": "kidev",
     "version": "2a55afc",
+    "requiresBaseGame": true,
     "files": ["img/icon.png", "js/plugins/UnlockAll.js"]
   },
   "AnalogMove": {
