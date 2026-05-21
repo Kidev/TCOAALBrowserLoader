@@ -138,6 +138,26 @@
   var SAVE_STORE = "saves";
   var _saveDb = null;
   var _savesRestored = false;
+  // Promise mirror of _savesRestored. The DRM payload wraps SceneManager.run
+  // to call DataManager.init() synchronously BEFORE the scene loop starts:
+  // earlier than Scene_Boot.isReady can gate. DataManager.init reads
+  // localStorage to enumerate auto*.rpgsave entries and rebuilds the
+  // globalInfo autoSaves dict; if the mod-scoped keys haven't been restored
+  // from IDB yet (e.g. after LS eviction), the dict is wiped. The bootstrap
+  // (index.html) awaits this promise before calling SceneManager.run so the
+  // restore window closes before DataManager.init runs. Stock browsers that
+  // never evict the keys are unaffected (the promise still resolves once
+  // the cursor scan completes, just with nothing to copy back).
+  var _resolveSavesReady = null;
+  var _savesReadyPromise = new Promise(function (resolve) {
+    _resolveSavesReady = resolve;
+  });
+  function markSavesRestored() {
+    if (_savesRestored) return;
+    _savesRestored = true;
+    if (_resolveSavesReady) _resolveSavesReady();
+  }
+  window.__langShimSavesReady = _savesReadyPromise;
 
   /* RPG Maker save keys we care about (with optional mod prefix + backup suffix). */
   function isSaveKey(key) {
@@ -238,7 +258,7 @@
   function restoreSavesFromIDB() {
     openSaveDb(function (db) {
       if (!db) {
-        _savesRestored = true;
+        markSavesRestored();
         return;
       }
       try {
@@ -261,14 +281,14 @@
             }
             c.continue();
           } else {
-            _savesRestored = true;
+            markSavesRestored();
           }
         };
         cursor.onerror = function () {
-          _savesRestored = true;
+          markSavesRestored();
         };
       } catch (e) {
-        _savesRestored = true;
+        markSavesRestored();
       }
     });
   }
@@ -2407,7 +2427,7 @@
       };
     }
 
-    // Help / Feedback title entry:  opens the "feedback." subdomain of the
+    // Help / Feedback title entry: opens the "feedback." subdomain of the
     // current host in a new tab. Sits right below "Mods" (or before Quit
     // when no mods are registered).
     if (typeof Window_TitleCommand !== "undefined") {
@@ -2425,11 +2445,7 @@
           for (var j = 0; j < this._list.length; j++) {
             var sym = this._list[j].symbol;
             var nm = this._list[j].name;
-            if (
-              sym === "quit" ||
-              sym === "exitGame" ||
-              nm === "Quit Game"
-            ) {
+            if (sym === "quit" || sym === "exitGame" || nm === "Quit Game") {
               insertIdx = j;
               break;
             }

@@ -201,9 +201,47 @@
 
   window.__browserOverridesApplied = false;
 
+  // Captured App.dataPath() result. Each overhaul mod hardcodes its own
+  // APPDATA_DIR ("CoffinAndyLeyley/" for base game and TCOAALili,
+  // "CoffinAndrewRenee/" for TCOAAR, "LostCoffin/" for TLCOAAA, etc.),
+  // so the fs shim cannot recognise the saves directory by a literal
+  // name. We wrap App.dataPath in __applyBrowserOverrides to memoize the
+  // result; readdirSync / existsSync then route any path equal to (or
+  // nested under) it to the autosave list logic regardless of the
+  // mod-specific folder name.
+  window.__appDataPath = null;
+  function isAppDataPath(p) {
+    if (!window.__appDataPath) return false;
+    var np = normPath(String(p)).replace(/\/+$/, "");
+    var dp = window.__appDataPath.replace(/\/+$/, "");
+    return np === dp || np.indexOf(dp + "/") === 0;
+  }
+
   window.__applyBrowserOverrides = function () {
     if (window.__browserOverridesApplied) return;
     window.__browserOverridesApplied = true;
+
+    // Wrap App.dataPath to capture its current return value. The DRM
+    // builds it from process.env.APPDATA + APPDATA_DIR; process.env is
+    // empty in the browser so the result collapses to "/<APPDATA_DIR>".
+    // We need this for the fs shim to recognise the saves directory
+    // regardless of which overhaul is active.
+    if (typeof App !== "undefined" && typeof App.dataPath === "function") {
+      var _origAppDataPath = App.dataPath;
+      App.dataPath = function () {
+        var result = _origAppDataPath.apply(this, arguments);
+        try {
+          window.__appDataPath = normPath(String(result)).replace(/\/+$/, "");
+        } catch (e) {}
+        return result;
+      };
+      // Prime the cache immediately so any subsequent fs call has a
+      // value to compare against, even before the DRM's first explicit
+      // call (DataManager.init does call it first, but be defensive).
+      try {
+        App.dataPath();
+      } catch (e) {}
+    }
 
     // Skip DRM hash check (reads a file from disk)
     if (typeof Crypto !== "undefined") {
@@ -542,7 +580,225 @@
         this.globalSet("autoSaves", nextDict);
       };
     }
+
+    // Upgrade placeholder save entries by parsing the actual save data.
+    //
+    // DataManager.init enumerates auto*.rpgsave / file*.rpgsave on disk
+    // and inserts placeholder entries (recoveryMeta: title="Recovered
+    // Game", characters=[], faces=[], playtime="") for files not
+    // already tracked in globalInfo. The save list UI then shows
+    // "Recovered Game" with no portrait or playtime until the user
+    // opens the file once. In browser mode the save data is sitting
+    // right there in localStorage; parsing it lets us populate the
+    // real title/portraits/playtime.
+    //
+    // The upgrade has to run AFTER $dataSystem is loaded, because
+    // makeSavefileInfo reads $dataSystem.gameTitle. DataManager.init
+    // runs in SceneManager.run BEFORE Scene_Boot.create kicks off the
+    // database load, so we wrap Scene_Boot.prototype.start instead:
+    // it's the first synchronous point where the database is ready
+    // AND globalInfo has been populated by DataManager.init.
+    //
+    // Mirrors the same swap-globals trick that lang-shim's import path
+    // uses (makeInfoFromContents): rehydrated contents have the right
+    // prototypes, so briefly assigning them to $gameSystem/$gameParty/
+    // $gameActors lets DataManager.makeSavefileInfo build a real info
+    // object without actually loading the save.
+    if (
+      typeof Scene_Boot !== "undefined" &&
+      typeof Scene_Boot.prototype.start === "function" &&
+      typeof JsonEx !== "undefined" &&
+      typeof LZString !== "undefined"
+    ) {
+      var _origSceneBootStart = Scene_Boot.prototype.start;
+      Scene_Boot.prototype.start = function () {
+        try {
+          upgradeRecoveredSaveInfo();
+        } catch (e) {
+          console.warn("[browser-shim] save info recovery failed:", e);
+        }
+        return _origSceneBootStart.apply(this, arguments);
+      };
+    }
+
+    // Also expose for callers that want to refresh on demand (e.g.
+    // before opening Scene_Save / Scene_Load if new files dropped in).
+    window.__upgradeRecoveredSaveInfo = function () {
+      try {
+        upgradeRecoveredSaveInfo();
+      } catch (e) {
+        console.warn("[browser-shim] save info recovery failed:", e);
+      }
+    };
+
+    // Window_SavefileList.prototype.drawItem styling parity.
+    //
+    // The base game (and TCOAALili / TLCOAAA) draw the auto-save row
+    // with green "Auto N" text on a dark blue-gray background, dimming
+    // opacity when no savefile info is available. TCOAAR's DRM ships a
+    // dimmer variant: dark-gray text outside save mode and no opacity
+    // dimming, so recovered/missing slots are visually indistinguishable
+    // from active ones. Apply the base-game styling uniformly so the UI
+    // looks the same regardless of which overhaul is active.
+    if (
+      typeof Window_SavefileList !== "undefined" &&
+      typeof Window_SavefileList.prototype.drawItem === "function"
+    ) {
+      Window_SavefileList.prototype.drawItem = function (index) {
+        var itemRect = this.itemRectForText(index);
+        var autoSaveCount = DataManager.autoSaveCount();
+        var adjustedIndex = index + 1;
+        if (adjustedIndex > autoSaveCount) {
+          adjustedIndex -= autoSaveCount;
+        } else {
+          adjustedIndex = -adjustedIndex + 1;
+        }
+        var saveInfo = DataManager.getSaveInfo(adjustedIndex);
+        this.resetTextColor();
+        this.changePaintOpacity(true);
+        if (adjustedIndex > 0) {
+          var fileText = TextManager.file + " " + adjustedIndex;
+          this.drawText(fileText, itemRect.x, itemRect.y, 180);
+        } else {
+          var padding = 20;
+          var textColor = "#B2E087";
+          var bgColor = "rgba(65, 73, 87, 0.2)";
+          var autoText = "Auto " + (Math.abs(adjustedIndex) + 1);
+          if (this._mode === "save") {
+            textColor = "#363636";
+          }
+          this.contents.fillRect(
+            itemRect.x - padding,
+            itemRect.y,
+            itemRect.width + padding * 2,
+            itemRect.height,
+            bgColor,
+          );
+          this.changePaintOpacity(saveInfo != null);
+          this.changeTextColor(textColor);
+          this.drawText(autoText, itemRect.x, itemRect.y, 180);
+          this.resetTextColor();
+        }
+        if (saveInfo) {
+          if (this._mode === "save" && adjustedIndex < 1) {
+            this.changePaintOpacity(false);
+          } else {
+            this.changePaintOpacity(true);
+          }
+          this.drawContents(saveInfo, itemRect, true);
+        }
+      };
+    }
   };
+
+  // Parse a single .rpgsave from localStorage (via the fs shim) into a
+  // savefile info object, without actually loading the game. Returns
+  // null when the file is missing, corrupt, or lacks the fields needed
+  // by makeSavefileInfo.
+  function parseSavefileInfo(dataPath, fname) {
+    try {
+      var fpath = Utils.join(dataPath, fname);
+      var data = Utils.readFile(fpath);
+      if (!data) return null;
+      var contents = JsonEx.parse(LZString.decompressFromBase64(data));
+      if (
+        !contents ||
+        !contents.system ||
+        !contents.party ||
+        !contents.actors
+      ) {
+        return null;
+      }
+      // Mirror DRM loadGame's _framesOnSave -> _secondsPlayed conversion
+      // so playtimeText renders on legacy saves.
+      if (typeof contents.system._secondsPlayed !== "number") {
+        contents.system._secondsPlayed =
+          (contents.system._framesOnSave || 0) / 60;
+      }
+      var prevSystem = window.$gameSystem;
+      var prevParty = window.$gameParty;
+      var prevActors = window.$gameActors;
+      try {
+        window.$gameSystem = contents.system;
+        window.$gameParty = contents.party;
+        window.$gameActors = contents.actors;
+        return DataManager.makeSavefileInfo();
+      } finally {
+        window.$gameSystem = prevSystem;
+        window.$gameParty = prevParty;
+        window.$gameActors = prevActors;
+      }
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // An entry "needs upgrade" when it's the recoveryMeta placeholder OR
+  // is missing the fields the savefile list draws. Catching the wider
+  // case means saves that were ever flushed with incomplete metadata
+  // (e.g. info parsed before $dataSystem loaded) still get a real
+  // pass next boot.
+  function needsInfoUpgrade(entry) {
+    if (!entry) return false;
+    if (entry.title === "Recovered Game") return true;
+    if (!entry.title) return true;
+    if (!entry.characters || !entry.characters.length) return true;
+    if (!entry.playtime) return true;
+    return false;
+  }
+
+  // Walk globalInfo's autoSaves dict and numeric save slots, replacing
+  // any placeholder entry with a real info object parsed from the
+  // underlying .rpgsave. Preserves the timestamp the DRM set from the
+  // filename (more deterministic than Date.now()).
+  function upgradeRecoveredSaveInfo() {
+    if (
+      typeof DataManager === "undefined" ||
+      typeof App === "undefined" ||
+      typeof App.dataPath !== "function" ||
+      typeof DataManager.loadGlobalInfo !== "function"
+    ) {
+      return;
+    }
+    var dataPath = App.dataPath();
+    var globalInfo = DataManager.loadGlobalInfo();
+    if (!Array.isArray(globalInfo)) return;
+    var changed = false;
+
+    if (globalInfo[0] && globalInfo[0].autoSaves) {
+      var dict = globalInfo[0].autoSaves;
+      for (var fname in dict) {
+        if (!Object.prototype.hasOwnProperty.call(dict, fname)) continue;
+        var entry = dict[fname];
+        if (needsInfoUpgrade(entry)) {
+          var info = parseSavefileInfo(dataPath, fname);
+          if (info) {
+            // Preserve the filename-derived timestamp so the sort order
+            // the DRM established in DataManager.init survives.
+            info.timestamp = (entry && entry.timestamp) || info.timestamp;
+            dict[fname] = info;
+            changed = true;
+          }
+        }
+      }
+    }
+
+    for (var i = 1; i < globalInfo.length; i++) {
+      var fe = globalInfo[i];
+      if (needsInfoUpgrade(fe)) {
+        var slotInfo = parseSavefileInfo(dataPath, "file" + i + ".rpgsave");
+        if (slotInfo) {
+          slotInfo.timestamp = (fe && fe.timestamp) || slotInfo.timestamp;
+          globalInfo[i] = slotInfo;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed && typeof DataManager.saveGlobalInfo === "function") {
+      DataManager.saveGlobalInfo(globalInfo);
+    }
+  }
 
   // String version of the overrides for appending to zlib-decompressed
   // payloads (the original DRM path). This calls the same function above.
@@ -632,8 +888,11 @@
             // would readFileSync them via XHR, get an empty buffer, and
             // fail to parse: corrupting language data.
             if (isLangOverlayProbe(ps)) return false;
-            // Save directory (CoffinAndyLeyley) -> report as existing
-            if (ps.indexOf("CoffinAndyLeyley") !== -1) return true;
+            // Save directory: report as existing for any mod's
+            // App.dataPath() (CoffinAndyLeyley, CoffinAndrewRenee,
+            // LostCoffin, ...), plus the legacy literal for safety.
+            if (isAppDataPath(ps) || ps.indexOf("CoffinAndyLeyley") !== -1)
+              return true;
             // Return true for all game-related paths.
             // The DRM uses existsSync for validation (folder, data dir).
             // Actual file access goes through readFileSync or XHR.
@@ -804,10 +1063,19 @@
               return ["dialogue.loc"];
             }
             // App data directory: DRM enumerates auto*.rpgsave here for
-            // cleanup, recovery, and the savefile list. The path comes
-            // from App.dataPath() which is `process.env.APPDATA/CoffinAndyLeyley`
-            // in browser-shim process.env is empty so the prefix collapses
-            // away, but the APPDATA_DIR segment is the stable marker.
+            // cleanup, recovery, and the savefile list. Each overhaul
+            // mod hardcodes its own APPDATA_DIR ("CoffinAndyLeyley/",
+            // "CoffinAndrewRenee/", "LostCoffin/", ...), so the
+            // directory name isn't a reliable marker. Instead, compare
+            // against App.dataPath()'s captured value. Sub-Logs paths
+            // resolve to an empty listing (no logs in browser mode).
+            if (isAppDataPath(np) && !/\/Logs\b/i.test(np)) {
+              return listAutoSaveFiles();
+            }
+            // Legacy fallback for builds where App.dataPath capture
+            // missed (e.g. timing in test pages): keep the base-game
+            // literal match so the base game keeps working even if the
+            // wrap never fired.
             if (/CoffinAndyLeyley/i.test(np) && !/\/Logs\b/i.test(np)) {
               return listAutoSaveFiles();
             }

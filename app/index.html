@@ -1520,10 +1520,31 @@
                     if (window.__achvShimHookBoot) window.__achvShimHookBoot();
                     delete window.onload;
                     bootDone = true;
-                    if (_bootOnload) {
-                      _bootOnload();
-                    } else if (typeof SceneManager !== "undefined") {
-                      SceneManager.run(Scene_Boot);
+
+                    function startScene() {
+                      if (_bootOnload) {
+                        _bootOnload();
+                      } else if (typeof SceneManager !== "undefined") {
+                        SceneManager.run(Scene_Boot);
+                      }
+                    }
+
+                    // The DRM payload wraps SceneManager.run to call
+                    // DataManager.init() synchronously, which enumerates
+                    // auto*.rpgsave keys from localStorage to rebuild the
+                    // globalInfo autoSaves dict. For overhaul mods the
+                    // keys live under "<modId>:RPG Auto<ts>"; if they
+                    // haven't been restored from IDB yet (LS eviction),
+                    // the cleanup loop sees an empty directory and wipes
+                    // the dict, making autosaves vanish from the load
+                    // menu even though they persist in IDB. Block boot
+                    // until lang-shim signals restoration is complete.
+                    if (window.__langShimSavesReady) {
+                      Promise.resolve(window.__langShimSavesReady).then(
+                        startScene,
+                      );
+                    } else {
+                      startScene();
                     }
                   }
 
