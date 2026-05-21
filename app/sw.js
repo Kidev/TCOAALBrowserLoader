@@ -67,6 +67,7 @@ const APP_SHELL = [
   "/img/bg.webp",
   "/img/mods.png",
   "/img/achievements.png",
+  "/img/help.png",
   "/img/tcoaal-steam-header.jpg",
   "/js/libs/pako_inflate.min.js",
   "/js/libs/browser-shim.js",
@@ -1121,6 +1122,7 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "img/mods.png" ||
     logicalPath === "img/bg.webp" ||
     logicalPath === "img/achievements.png" ||
+    logicalPath === "img/help.png" ||
     logicalPath === "img/tcoaal-steam-header.jpg"
   ) {
     // Normalise "/" -> "/index.html" for cache lookups so a boot from the

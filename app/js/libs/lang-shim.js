@@ -2407,6 +2407,105 @@
       };
     }
 
+    // Help / Feedback title entry:  opens the "feedback." subdomain of the
+    // current host in a new tab. Sits right below "Mods" (or before Quit
+    // when no mods are registered).
+    if (typeof Window_TitleCommand !== "undefined") {
+      var _pre_help_makeCmdList = Window_TitleCommand.prototype.makeCommandList;
+      Window_TitleCommand.prototype.makeCommandList = function () {
+        _pre_help_makeCmdList.call(this);
+        var insertIdx = -1;
+        for (var i = 0; i < this._list.length; i++) {
+          if (this._list[i].symbol === "mods") {
+            insertIdx = i + 1;
+            break;
+          }
+        }
+        if (insertIdx < 0) {
+          for (var j = 0; j < this._list.length; j++) {
+            var sym = this._list[j].symbol;
+            var nm = this._list[j].name;
+            if (
+              sym === "quit" ||
+              sym === "exitGame" ||
+              nm === "Quit Game"
+            ) {
+              insertIdx = j;
+              break;
+            }
+          }
+        }
+        var helpCmd = {
+          name: "Help",
+          symbol: "help",
+          enabled: true,
+          ext: null,
+        };
+        if (insertIdx >= 0) {
+          this._list.splice(insertIdx, 0, helpCmd);
+        } else {
+          this._list.push(helpCmd);
+        }
+      };
+
+      if (
+        typeof MenuOptions !== "undefined" &&
+        MenuOptions.iconImages &&
+        typeof ImageManager !== "undefined" &&
+        typeof Bitmap !== "undefined"
+      ) {
+        var helpSheet = ImageManager.loadNormalBitmap("img/help.png", 0);
+        var helpIcon = new Bitmap(26, 26);
+        helpSheet.addLoadListener(function () {
+          helpIcon.blt(
+            helpSheet,
+            0,
+            0,
+            helpSheet.width,
+            helpSheet.height,
+            0,
+            0,
+            26,
+            26,
+          );
+          helpIcon._loadingState = "loaded";
+          helpIcon._callLoadListeners();
+          if (
+            typeof SceneManager !== "undefined" &&
+            SceneManager._scene &&
+            SceneManager._scene._commandWindow
+          ) {
+            SceneManager._scene._commandWindow.refresh();
+          }
+        });
+        MenuOptions.iconImages["Help"] = helpIcon;
+      }
+    }
+
+    if (typeof Scene_Title !== "undefined") {
+      var _orig_help_createCmdWin = Scene_Title.prototype.createCommandWindow;
+      Scene_Title.prototype.createCommandWindow = function () {
+        _orig_help_createCmdWin.call(this);
+        this._commandWindow.setHandler("help", this.commandHelp.bind(this));
+      };
+
+      Scene_Title.prototype.commandHelp = function () {
+        var host =
+          typeof location !== "undefined" && location.hostname
+            ? location.hostname
+            : "";
+        var target =
+          /\./.test(host) && !/^\d+\.\d+\.\d+\.\d+$/.test(host)
+            ? host
+            : "tcoaal.app";
+        var url = "https://feedback." + target + "/";
+        try {
+          window.open(url, "_blank", "noopener,noreferrer");
+        } catch (e) {}
+        if (this._commandWindow) this._commandWindow.activate();
+      };
+    }
+
     function exportGlobalSave() {
       try {
         var json = StorageManager.load(0);

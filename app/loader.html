@@ -228,7 +228,8 @@
       }
 
       .github-link,
-      .tool-link {
+      .tool-link,
+      .feedback-link {
         color: rgba(255, 255, 255, 0.9);
         text-decoration: none;
         transition: all 0.3s ease;
@@ -257,8 +258,16 @@
         transform: translateY(-1px);
       }
 
+      .feedback-link:hover {
+        color: var(--white);
+        background: rgba(255, 183, 77, 0.15);
+        border-color: rgba(255, 183, 77, 0.35);
+        transform: translateY(-1px);
+      }
+
       .tool-link .tool-icon,
-      .github-link .github-icon {
+      .github-link .github-icon,
+      .feedback-link .feedback-icon {
         width: 18px;
         height: 18px;
         fill: currentColor;
@@ -908,7 +917,38 @@
           </svg>
           <span>More tools and utilities for TCOAAL</span>
         </a>
+        <a
+          href="#"
+          target="_blank"
+          rel="noopener"
+          class="feedback-link"
+          data-feedback-link
+          onclick="event.stopPropagation()"
+        >
+          <svg class="feedback-icon" viewBox="0 0 24 24">
+            <path
+              d="M5 3h14a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-7.2l-4.3 3.4a1 1 0 0 1-1.62-.78V18H5a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm6.94 4.1c-1.62 0-2.86 1-2.86 2.55h1.86c0-.62.4-1 .98-1 .55 0 .94.34.94.84 0 .42-.2.7-.85 1.12-.78.49-1.13.99-1.1 1.93l.01.28h1.82c0-.55.13-.82.78-1.23.86-.55 1.36-1.17 1.36-2.16 0-1.4-1.18-2.33-2.94-2.33Zm-.05 6.95a1.08 1.08 0 1 0 .01 2.16 1.08 1.08 0 0 0-.01-2.16Z"
+            />
+          </svg>
+          <span>Share feedback or report an issue</span>
+        </a>
       </div>
+
+      <script>
+        (function () {
+          // Resolve the feedback link to the "feedback." subdomain of the
+          // current host. Falls back to tcoaal.app when running on a host
+          // without a public dot-domain (e.g. localhost, raw IP).
+          var host = location.hostname || "";
+          var target =
+            /\./.test(host) && !/^\d+\.\d+\.\d+\.\d+$/.test(host)
+              ? host
+              : "tcoaal.app";
+          var url = "https://feedback." + target + "/";
+          var links = document.querySelectorAll("[data-feedback-link]");
+          for (var i = 0; i < links.length; i++) links[i].href = url;
+        })();
+      </script>
 
       <a
         href="https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/"
