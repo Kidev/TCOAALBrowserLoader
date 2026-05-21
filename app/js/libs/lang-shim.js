@@ -725,6 +725,62 @@
     } catch (e) {}
   }
 
+  // Four-finger touch toggles the browser's native fullscreen. The touchstart
+  // itself is the user gesture required by the Fullscreen API, so we can call
+  // requestFullscreen() inline. Bound in the capture phase so it runs before
+  // TouchInput's document listener (added later via SceneManager.initInput),
+  // and preventDefault is called only when the gesture actually fires so 1-3
+  // finger touches still reach the engine untouched. iOS Safari on iPhone has
+  // no Fullscreen API for arbitrary elements:  the call no-ops there, which
+  // is fine (the PWA "Add to Home Screen" path already covers that case).
+  (function () {
+    function fsElement() {
+      return (
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement ||
+        null
+      );
+    }
+    function requestFs(el) {
+      var fn =
+        el.requestFullscreen ||
+        el.webkitRequestFullscreen ||
+        el.mozRequestFullScreen ||
+        el.msRequestFullscreen;
+      if (!fn) return;
+      try {
+        var ret = fn.call(el);
+        if (ret && typeof ret.catch === "function") ret.catch(function () {});
+      } catch (e) {}
+    }
+    function exitFs() {
+      var fn =
+        document.exitFullscreen ||
+        document.webkitExitFullscreen ||
+        document.mozCancelFullScreen ||
+        document.msExitFullscreen;
+      if (!fn) return;
+      try {
+        var ret = fn.call(document);
+        if (ret && typeof ret.catch === "function") ret.catch(function () {});
+      } catch (e) {}
+    }
+    document.addEventListener(
+      "touchstart",
+      function (e) {
+        if (!e.touches || e.touches.length !== 4) return;
+        try {
+          e.preventDefault();
+        } catch (_) {}
+        if (fsElement()) exitFs();
+        else requestFs(document.documentElement);
+      },
+      { capture: true, passive: false },
+    );
+  })();
+
   // Replace the stock _setupEventHandlers for two reasons:
   //   1. {passive: false} on the wheel listener: Chrome treats document-level
   //      wheel listeners as passive by default, blocking _onWheel's
