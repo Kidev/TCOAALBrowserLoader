@@ -35,7 +35,7 @@ const STORE_NAME = "assets";
 // their old installation: e.g. a fix to the fetch handler or a new IDB
 // schema. Pure additive features (new message types the page can feature-
 // detect) do not need a bump.
-const SW_VERSION = 4;
+const SW_VERSION = 5;
 
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
@@ -154,8 +154,13 @@ async function cleanupOldShellCaches() {
  *      and any offline visit thereafter find the file cached.
  *   3. On total failure, fall through to a plain fetch() so the browser
  *      surfaces its own error.
+ *
+ * `preferNetwork` (set for Mods-menu thumbnails, which carry a "?fresh="
+ * marker) inverts step 1: the network copy wins so an updated mod's icon
+ * shows without an uninstall/reinstall. The installed IDB copy and the
+ * mod-asset cache still serve as offline fallbacks.
  */
-async function serveModAsset(logicalPath, request) {
+async function serveModAsset(logicalPath, request, preferNetwork) {
   const m = logicalPath.match(/^mods\/([^/]+)\/www\/(.+)$/);
   if (!m) return fetch(request);
   const modId = m[1];
@@ -166,25 +171,30 @@ async function serveModAsset(logicalPath, request) {
     db = await openDB();
   } catch {}
 
-  if (db) {
-    const idbKey = "mod:" + modId + ":" + relPath;
-    const value = await getAsset(db, idbKey);
-    if (value !== null) {
-      const buf =
-        value instanceof ArrayBuffer
-          ? value
-          : value && value.buffer instanceof ArrayBuffer
-            ? value.buffer
-            : value;
-      // dekit is a no-op when the TCOAAL header isn't present, so this is
-      // safe for plain PNGs/JSON shipped by mod authors and still correct
-      // for overhaul mods that ship encrypted assets.
-      const decrypted = dekit(buf, relPath);
-      return new Response(decrypted, {
-        status: 200,
-        headers: { "Content-Type": mimeFor(relPath) },
-      });
-    }
+  // Resolve the installed IDB copy on demand. dekit is a no-op when the
+  // TCOAAL header isn't present, so this is safe for plain PNGs/JSON shipped
+  // by mod authors and still correct for overhaul mods that ship encrypted
+  // assets.
+  async function fromIdb() {
+    if (!db) return null;
+    const value = await getAsset(db, "mod:" + modId + ":" + relPath);
+    if (value === null) return null;
+    const buf =
+      value instanceof ArrayBuffer
+        ? value
+        : value && value.buffer instanceof ArrayBuffer
+          ? value.buffer
+          : value;
+    const decrypted = dekit(buf, relPath);
+    return new Response(decrypted, {
+      status: 200,
+      headers: { "Content-Type": mimeFor(relPath) },
+    });
+  }
+
+  if (!preferNetwork) {
+    const idbResp = await fromIdb();
+    if (idbResp) return idbResp;
   }
 
   let cache = null;
@@ -203,6 +213,12 @@ async function serveModAsset(logicalPath, request) {
     if (cache) {
       const cached = await cache.match(request, { ignoreSearch: true });
       if (cached) return cached;
+    }
+    // Offline: a thumbnail skipped the IDB-first read above, so fall back to
+    // the installed copy now rather than failing the request.
+    if (preferNetwork) {
+      const idbResp = await fromIdb();
+      if (idbResp) return idbResp;
     }
     return fetch(request);
   }
@@ -1157,7 +1173,12 @@ self.addEventListener("fetch", (event) => {
   // (IDB for installed mods, MOD_ASSET_CACHE for already-browsed ones, then
   // network) so the Mods menu's icons survive an offline session.
   if (/^mods\/[^/]+\/www\//.test(logicalPath)) {
-    event.respondWith(serveModAsset(logicalPath, event.request));
+    // Thumbnails tagged "?fresh=" prefer the network so an updated mod's icon
+    // appears without the user having to uninstall/reinstall it.
+    const preferNetwork = url.searchParams.has("fresh");
+    event.respondWith(
+      serveModAsset(logicalPath, event.request, preferNetwork),
+    );
     return;
   }
 

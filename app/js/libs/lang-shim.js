@@ -725,6 +725,60 @@
     } catch (e) {}
   }
 
+  // "Seen updates" tracking for the NEW/UPDATED badge in the Mods menu.
+  // Maps modKey -> the lastUpdate value the user has already laid their
+  // cursor on. A mod is flagged until the user hovers/selects its row, at
+  // which point we store its current lastUpdate so the badge clears and only
+  // reappears the next time the build bumps lastUpdate.
+  var _modSeenUpdates = {};
+  try {
+    var rawSeen = localStorage.getItem("_modSeenUpdates");
+    if (rawSeen) _modSeenUpdates = JSON.parse(rawSeen) || {};
+  } catch (e) {}
+
+  function persistModSeen() {
+    try {
+      localStorage.setItem("_modSeenUpdates", JSON.stringify(_modSeenUpdates));
+    } catch (e) {}
+  }
+
+  // Record a mod's current lastUpdate as seen. Returns true when the stored
+  // value actually changed so the caller can refresh to drop a stale badge.
+  // Mods without a lastUpdate are never recorded (they can't carry a badge).
+  function markModSeen(mod) {
+    if (!mod || !mod.key || !mod.lastUpdate) return false;
+    if (_modSeenUpdates[mod.key] === mod.lastUpdate) return false;
+    _modSeenUpdates[mod.key] = mod.lastUpdate;
+    persistModSeen();
+    return true;
+  }
+
+  var MOD_BADGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // ~1 month
+
+  // Badge for a mod row: "NEW" (the user has never seen this mod), "UPDATED"
+  // (seen before but lastUpdate has since changed), or "" (no badge). Only
+  // mods updated within the last month are ever flagged, so a mod the user
+  // simply never hovered isn't badged forever and stale releases stay quiet.
+  function modBadge(mod) {
+    if (!mod || !mod.lastUpdate) return "";
+    var t = Date.parse(mod.lastUpdate);
+    if (isNaN(t)) return "";
+    if (Date.now() - t > MOD_BADGE_MAX_AGE_MS) return "";
+    if (!(mod.key in _modSeenUpdates)) return "NEW";
+    if (_modSeenUpdates[mod.key] !== mod.lastUpdate) return "UPDATED";
+    return "";
+  }
+
+  // Mod thumbnails must reflect the currently-deployed file even while the
+  // mod is installed (its files are otherwise served from a stale IDB copy).
+  // The "fresh" marker tells the service worker to fetch the icon from the
+  // network (see sw.js serveModAsset), and also varies the in-engine bitmap
+  // cache key so a reload after a deploy decodes the new icon.
+  function modIconUrl(icon) {
+    if (!icon) return icon;
+    return icon + (icon.indexOf("?") < 0 ? "?" : "&") + "fresh=1";
+  }
+
   // Four-finger touch toggles the browser's native fullscreen. The touchstart
   // itself is the user gesture required by the Fullscreen API, so we can call
   // requestFullscreen() inline. Bound in the capture phase so it runs before
@@ -3453,10 +3507,30 @@
       win.drawText(byText, byX, rect.y + 4, rect.width - (byX - rect.x));
       win.contents.fontSize = win.standardFontSize();
 
+      // Right side of line 1: an optional "NEW"/"UPDATED" badge pinned to the
+      // far right, with the last-update date drawn to its left. The badge
+      // clears once the user's cursor lands on the row (see the Window_Mod*
+      // select overrides below).
+      var badge = modBadge(mod);
+      var badgeReserve = 0;
+      if (badge) {
+        win.contents.fontSize = 16;
+        win.contents.textColor = badge === "NEW" ? "#7cff8a" : "#ffc04a";
+        win.drawText(badge, rect.x, rect.y + 4, rect.width, "right");
+        badgeReserve = win.textWidth(badge) + 10;
+        win.contents.fontSize = win.standardFontSize();
+      }
+
       if (mod.lastUpdate) {
         win.contents.fontSize = 16;
         win.resetTextColor();
-        win.drawText(mod.lastUpdate, rect.x, rect.y + 4, rect.width, "right");
+        win.drawText(
+          mod.lastUpdate,
+          rect.x,
+          rect.y + 4,
+          rect.width - badgeReserve,
+          "right",
+        );
         win.contents.fontSize = win.standardFontSize();
       }
 
@@ -3616,6 +3690,19 @@
       this._loadIcons();
       this.refresh();
       this.select(0);
+      // Past the initial auto-select: from here on a select() means the user
+      // moved the cursor onto the row, which counts as "seen" for the badge.
+      this._seenReady = true;
+    };
+
+    // Mark the pinned mod as seen once the user actually lands on it (hover or
+    // keyboard), not on the initial auto-select during initialize.
+    Window_ModActive.prototype.select = function (index) {
+      Window_Selectable.prototype.select.call(this, index);
+      if (this._seenReady && index >= 0) {
+        var mod = this._mods[index];
+        if (mod && markModSeen(mod)) this.refresh();
+      }
     };
 
     Window_ModActive.prototype.maxItems = function () {
@@ -3652,7 +3739,7 @@
       var self = this;
       var mod = this._mods[0];
       if (mod && mod.icon) {
-        var bmp = ImageManager.loadNormalBitmap(mod.icon, 0);
+        var bmp = ImageManager.loadNormalBitmap(modIconUrl(mod.icon), 0);
         this._iconBitmaps[mod.key] = bmp;
         bmp.addLoadListener(function () {
           self.refresh();
@@ -3722,7 +3809,21 @@
       this._loadIcons();
       this.refresh();
       this.select(0);
+      // Past the initial auto-select: subsequent select() calls come from the
+      // user hovering or navigating, which marks the row as seen.
+      this._seenReady = true;
       this.activate();
+    };
+
+    // Mark the highlighted mod as seen on hover/navigation so its NEW/UPDATED
+    // badge clears. Guarded by _seenReady so the initial auto-select doesn't
+    // silently consume the badge before the user has looked at the row.
+    Window_ModList.prototype.select = function (index) {
+      Window_Selectable.prototype.select.call(this, index);
+      if (this._seenReady && index >= 0 && index < this._mods.length) {
+        var mod = this._mods[index];
+        if (mod && markModSeen(mod)) this.refresh();
+      }
     };
 
     Window_ModList.prototype._loadIcons = function () {
@@ -3730,7 +3831,7 @@
       for (var i = 0; i < this._mods.length; i++) {
         var mod = this._mods[i];
         if (mod.icon) {
-          var bmp = ImageManager.loadNormalBitmap(mod.icon, 0);
+          var bmp = ImageManager.loadNormalBitmap(modIconUrl(mod.icon), 0);
           this._iconBitmaps[mod.key] = bmp;
           bmp.addLoadListener(function () {
             self.refresh();
