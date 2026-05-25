@@ -892,4 +892,281 @@
       }
     };
   }
+
+  // 9. Number input: per-digit clickable arrows + OK button
+  //
+  // Stock Window_NumberInput has three Sprite_Button instances (down/up/ok)
+  // sourced from img/system/ButtonSet.png. TCOAAL builds either ship it as
+  // an encrypted asset that the engine never decrypts for ButtonSet
+  // (System.json's hasEncryptedImages stays falsey) or omit it outright,
+  // so those buttons render as a blank square: number input becomes
+  // unusable without an arrow keyboard.
+  //
+  // We replace createButtons with our own setup:
+  //   - one up arrow above EACH digit and one down arrow below EACH digit
+  //     (no need to first select a digit before changing it)
+  //   - one OK button to the right of the window
+  //   - bitmaps drawn into per-button Bitmap canvases so they never depend
+  //     on an external image
+  // Stock keyboard navigation (arrow keys + Enter) still works in parallel.
+  //
+  // Also adds vertical swipe support on touch: drag up on a digit to
+  // increment, down to decrement, with the same per-line throttling the
+  // menu scrollable uses.
+
+  if (typeof Window_NumberInput !== "undefined") {
+    // Match the parent number input window's look: dark translucent fill
+    // with a thin white rounded border, white glyph drawn in the game's
+    // standard font so OK reads the same as the digits. The 'hot' state
+    // brightens the fill the same way Sprite_Destination / cursor sprites
+    // do, so the buttons feel like they belong to the same UI family.
+    var NI_ARROW_W = 28;
+    var NI_ARROW_H = 24;
+    var NI_OK_W = 60;
+    var NI_OK_H = 32;
+    var NI_GAP = 4;
+    var NI_RADIUS = 4;
+
+    function roundedRectPath(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.arcTo(x + w, y, x + w, y + r, r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+      ctx.lineTo(x + r, y + h);
+      ctx.arcTo(x, y + h, x, y + h - r, r);
+      ctx.lineTo(x, y + r);
+      ctx.arcTo(x, y, x + r, y, r);
+      ctx.closePath();
+    }
+
+    function drawButtonBg(ctx, x, y, w, h, hot) {
+      ctx.save();
+      // Inset by 0.5 so the 1px border sits on integer pixels (otherwise
+      // GPUs round it to 2px and the frame looks chunky next to the
+      // parent window's crisp 1px frame).
+      roundedRectPath(ctx, x + 0.5, y + 0.5, w - 1, h - 1, NI_RADIUS);
+      ctx.fillStyle = hot
+        ? "rgba(178, 224, 135, 0.32)" // matches the cursor highlight tint
+        : "rgba(10, 14, 22, 0.55)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(245, 245, 250, 0.85)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawArrowGlyph(ctx, x, y, w, h, dir) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+      var cx = x + w / 2;
+      var cy = y + h / 2;
+      var s = Math.min(w, h) * 0.32;
+      ctx.beginPath();
+      if (dir === "up") {
+        ctx.moveTo(cx, cy - s * 0.7);
+        ctx.lineTo(cx + s, cy + s * 0.55);
+        ctx.lineTo(cx - s, cy + s * 0.55);
+      } else {
+        ctx.moveTo(cx, cy + s * 0.7);
+        ctx.lineTo(cx + s, cy - s * 0.55);
+        ctx.lineTo(cx - s, cy - s * 0.55);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Pull the game's font + size so the OK text matches the digit glyphs.
+    function gameFontStack() {
+      try {
+        if ($gameSystem.isChinese()) return "SimHei, Heiti TC, sans-serif";
+        if ($gameSystem.isKorean()) return "Dotum, AppleGothic, sans-serif";
+      } catch (e) {}
+      return "GameFont, sans-serif";
+    }
+
+    function drawOkText(ctx, x, y, w, h) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.font = Math.floor(h * 0.55) + "px " + gameFontStack();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("OK", x + w / 2, y + h / 2 + 1);
+      ctx.restore();
+    }
+
+    function makeArrowBitmap(dir) {
+      var bm = new Bitmap(NI_ARROW_W, NI_ARROW_H * 2);
+      drawButtonBg(bm._context, 0, 0, NI_ARROW_W, NI_ARROW_H, false);
+      drawArrowGlyph(bm._context, 0, 0, NI_ARROW_W, NI_ARROW_H, dir);
+      drawButtonBg(bm._context, 0, NI_ARROW_H, NI_ARROW_W, NI_ARROW_H, true);
+      drawArrowGlyph(bm._context, 0, NI_ARROW_H, NI_ARROW_W, NI_ARROW_H, dir);
+      if (bm._setDirty) bm._setDirty();
+      return bm;
+    }
+
+    function makeOkBitmap() {
+      var bm = new Bitmap(NI_OK_W, NI_OK_H * 2);
+      drawButtonBg(bm._context, 0, 0, NI_OK_W, NI_OK_H, false);
+      drawOkText(bm._context, 0, 0, NI_OK_W, NI_OK_H);
+      drawButtonBg(bm._context, 0, NI_OK_H, NI_OK_W, NI_OK_H, true);
+      drawOkText(bm._context, 0, NI_OK_H, NI_OK_W, NI_OK_H);
+      if (bm._setDirty) bm._setDirty();
+      return bm;
+    }
+
+    // Build a Sprite_Button with the given bitmap. The bitmap is laid out
+    // vertically: top half is the cold (idle) frame, bottom half is the hot
+    // (pressed) frame -- matches the convention Sprite_Button.processTouch
+    // expects when it toggles between setColdFrame / setHotFrame.
+    function makeButton(bitmap, w, h, onClick) {
+      var btn = new Sprite_Button();
+      btn.bitmap = bitmap;
+      btn.setColdFrame(0, 0, w, h);
+      btn.setHotFrame(0, h, w, h);
+      btn.visible = false;
+      btn.setClickHandler(onClick);
+      return btn;
+    }
+
+    Window_NumberInput.prototype.createButtons = function () {
+      // Stock allocates 3 buttons here. We defer arrow creation to
+      // placeButtons (called from start()) because the digit count is only
+      // known once $gameMessage has been queried. The OK button is reused
+      // across openings so we instantiate it once.
+      this._buttons = [];
+      this._digitButtons = [];
+      var self = this;
+      this._okButton = makeButton(makeOkBitmap(), NI_OK_W, NI_OK_H, function () {
+        self.processOk();
+      });
+      this.addChild(this._okButton);
+    };
+
+    Window_NumberInput.prototype.placeButtons = function () {
+      // Tear down any per-digit arrows left over from a previous opening
+      // (max digit count can vary between calls).
+      for (var d = 0; d < this._digitButtons.length; d++) {
+        this.removeChild(this._digitButtons[d]);
+      }
+      this._digitButtons = [];
+
+      var pad = this.standardPadding();
+      var iw = this.itemWidth();
+      var arrowX0 = pad + (iw - NI_ARROW_W) / 2;
+      var upY = -NI_ARROW_H - NI_GAP;
+      var downY = this.height + NI_GAP;
+      var self = this;
+
+      for (var i = 0; i < this._maxDigits; i++) {
+        (function (digitIndex) {
+          var upBtn = makeButton(
+            makeArrowBitmap("up"),
+            NI_ARROW_W,
+            NI_ARROW_H,
+            function () {
+              self.select(digitIndex);
+              self.changeDigit(true);
+            },
+          );
+          var downBtn = makeButton(
+            makeArrowBitmap("down"),
+            NI_ARROW_W,
+            NI_ARROW_H,
+            function () {
+              self.select(digitIndex);
+              self.changeDigit(false);
+            },
+          );
+          upBtn.x = arrowX0 + digitIndex * iw;
+          upBtn.y = upY;
+          downBtn.x = arrowX0 + digitIndex * iw;
+          downBtn.y = downY;
+          self._digitButtons.push(upBtn, downBtn);
+          self.addChild(upBtn);
+          self.addChild(downBtn);
+        })(i);
+      }
+
+      // OK button to the right of the down-arrow row, vertically centered
+      // on the digit baseline so it stays on-screen near the input area.
+      this._okButton.x = this.width + NI_GAP;
+      this._okButton.y = Math.floor((this.height - NI_OK_H) / 2);
+    };
+
+    Window_NumberInput.prototype.updateButtonsVisiblity = function () {
+      // Stock only shows buttons when TouchInput.date > Input.date so the
+      // keyboard layout stays clean. We're touch-first here, so the
+      // buttons are always visible while the window is open.
+      this.showButtons();
+    };
+
+    Window_NumberInput.prototype.showButtons = function () {
+      if (this._okButton) this._okButton.visible = true;
+      for (var i = 0; i < this._digitButtons.length; i++) {
+        this._digitButtons[i].visible = true;
+      }
+    };
+
+    Window_NumberInput.prototype.hideButtons = function () {
+      if (this._okButton) this._okButton.visible = false;
+      for (var i = 0; i < this._digitButtons.length; i++) {
+        this._digitButtons[i].visible = false;
+      }
+    };
+
+    // Vertical swipe on a digit changes it (up = increment, down = decrement),
+    // one step per itemHeight worth of finger travel. Independent of the
+    // free-form gesture state in section 1 so the message-backlog swipe
+    // detector doesn't get confused by drags that happen inside the
+    // number input window.
+    var _niSwipe = null;
+    var _orig_niStart = Window_NumberInput.prototype.start;
+    Window_NumberInput.prototype.start = function () {
+      _niSwipe = null;
+      _orig_niStart.apply(this, arguments);
+    };
+
+    var _orig_niProcessTouch = Window_NumberInput.prototype.processTouch;
+    Window_NumberInput.prototype.processTouch = function () {
+      if (_orig_niProcessTouch) _orig_niProcessTouch.call(this);
+      if (!this.isOpenAndActive()) {
+        _niSwipe = null;
+        return;
+      }
+      if (TouchInput.isTriggered()) {
+        var lx = this.canvasToLocalX(TouchInput.x);
+        var ly = this.canvasToLocalY(TouchInput.y);
+        var hitIndex = this.hitTest(lx, ly);
+        if (hitIndex >= 0) {
+          if (hitIndex !== this.index() && this.isCursorMovable()) {
+            this.select(hitIndex);
+            SoundManager.playCursor();
+          }
+          _niSwipe = { y0: TouchInput.y, lastY: TouchInput.y, accum: 0 };
+        } else {
+          _niSwipe = null;
+        }
+      }
+      if (_niSwipe && TouchInput.isPressed()) {
+        var dy = TouchInput.y - _niSwipe.lastY;
+        _niSwipe.accum -= dy; // drag up -> increment
+        var step = this.itemHeight();
+        while (_niSwipe.accum >= step) {
+          this.changeDigit(true);
+          _niSwipe.accum -= step;
+        }
+        while (_niSwipe.accum <= -step) {
+          this.changeDigit(false);
+          _niSwipe.accum += step;
+        }
+        _niSwipe.lastY = TouchInput.y;
+      }
+      if (!TouchInput.isPressed()) {
+        _niSwipe = null;
+      }
+    };
+  }
 })();

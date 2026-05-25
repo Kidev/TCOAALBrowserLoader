@@ -731,7 +731,7 @@
   // TouchInput's document listener (added later via SceneManager.initInput),
   // and preventDefault is called only when the gesture actually fires so 1-3
   // finger touches still reach the engine untouched. iOS Safari on iPhone has
-  // no Fullscreen API for arbitrary elements:  the call no-ops there, which
+  // no Fullscreen API for arbitrary elements: the call no-ops there, which
   // is fine (the PWA "Add to Home Screen" path already covers that case).
   (function () {
     function fsElement() {
@@ -1662,7 +1662,12 @@
         _orig_sceneFileUpdate.call(this);
         if (!this._listWindow || !this._listWindow.active) return;
         if (this._saveConfirmWindow && this._saveConfirmWindow.visible) return;
-        var savefileId = this._listWindow.index() + 1;
+        // DRM payload's Scene_File.prototype.savefileId() maps list index ->
+        // real savefile id, accounting for autosaves displayed at the top
+        // (positive = file slot, <=0 = autosave). Stock MV's savefileId
+        // returns index+1, which matches the autosave-less layout. Either
+        // way this gives the correct id for the highlighted row.
+        var savefileId = this.savefileId();
         if (Input.isTriggered("saveExport")) {
           this._handleSaveExport(savefileId);
         } else if (Input.isTriggered("saveImport")) {
@@ -1746,7 +1751,7 @@
         ) {
           var tx = TouchInput.x;
           var ty = TouchInput.y;
-          var savefileId = this._listWindow.index() + 1;
+          var savefileId = this.savefileId();
           var rects = this._fileHintRects;
           for (var rk in rects) {
             var r = rects[rk];
@@ -1761,24 +1766,49 @@
         }
       };
 
+      // Resolve the savefile id (positive = file slot, <=0 = autosave) to
+      // its on-disk path via the DRM's StorageManager.localFilePath, which
+      // for autosaves looks up the filename by index into the autoSaves
+      // dict (keyed insertion-order, matching Window_SavefileList.drawItem).
+      // Returns null when no file backs the id (empty slot, or autosave
+      // dict shorter than the visible row count).
+      function savefilePath(savefileId) {
+        if (typeof StorageManager.localFilePath !== "function") return null;
+        try {
+          var p = StorageManager.localFilePath(savefileId);
+          return p || null;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function savefileBasename(path) {
+        if (!path) return "";
+        var parts = String(path).split(/[\/\\]/);
+        return parts[parts.length - 1] || "";
+      }
+
       // Export: download save data as .rpgsave file (native RPG Maker MV format:
       // LZString-compressed base64 of the JSON payload). Interchangeable with the
       // desktop game's save/fileN.rpgsave files.
-      // Slot-emptiness is checked via StorageManager.exists (uncached localStorage
-      // read) rather than DataManager.isThisGameFile because the DRM payload
-      // overrides the latter with a cached view that goes stale after delete.
+      //
+      // Works on both regular file slots and autosave rows: Utils.readFile
+      // routes through the fs shim, which yields the raw compressed-base64
+      // payload directly from localStorage for either flavor: no need to
+      // decompress + recompress via StorageManager (which can't address
+      // autosaves: webStorageKey assumes positive ids).
       Scene_File.prototype._handleSaveExport = function (savefileId) {
-        if (!StorageManager.exists(savefileId)) {
+        var path = savefilePath(savefileId);
+        if (!path || !Utils.exists(path)) {
           SoundManager.playBuzzer();
           return;
         }
         try {
-          var json = StorageManager.load(savefileId);
-          if (!json) {
+          var rpgsave = Utils.readFile(path);
+          if (!rpgsave) {
             SoundManager.playBuzzer();
             return;
           }
-          var rpgsave = LZString.compressToBase64(json);
           var blob = new Blob([rpgsave], {
             type: "application/octet-stream",
           });
@@ -1790,8 +1820,12 @@
           // (or no) translation without filename-based origin mismatches.
           var scope = getActiveSaveScope();
           var prefix = scope ? scope + "_" : "";
+          // Use the disk filename so autosaves export as auto<ts>.rpgsave
+          // (preserving the timestamp that identifies them) and regular
+          // slots export as fileN.rpgsave.
+          var base = savefileBasename(path) || "file" + savefileId + ".rpgsave";
           a.href = url;
-          a.download = prefix + "file" + savefileId + ".rpgsave";
+          a.download = prefix + base;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -2045,17 +2079,27 @@
 
       // Delete: remove save after confirmation. Same DRM-staleness avoidance
       // as import/export: check actual storage, not DataManager.isThisGameFile.
+      // Utils.exists handles both file slots and autosaves (the fs shim
+      // resolves both filename patterns to their localStorage keys).
       Scene_File.prototype._handleSaveDelete = function (savefileId) {
-        if (!StorageManager.exists(savefileId)) {
+        var path = savefilePath(savefileId);
+        if (!path || !Utils.exists(path)) {
           SoundManager.playBuzzer();
           return;
         }
         this._pendingDeleteId = savefileId;
+        this._pendingDeletePath = path;
         this._listWindow.deactivate();
         if (!this._saveConfirmWindow) {
           this._createSaveConfirmWindow();
         }
-        this._saveConfirmWindow.setAction("delete", savefileId);
+        // For autosaves, label the prompt by the user-facing row name ("Auto N")
+        // rather than the negative internal id.
+        var label =
+          savefileId > 0
+            ? "Save " + savefileId
+            : "Auto " + (Math.abs(savefileId) + 1);
+        this._saveConfirmWindow.setAction("delete", label);
         this._saveConfirmWindow.show();
         this._saveConfirmWindow.open();
         this._saveConfirmWindow.activate();
@@ -2083,15 +2127,32 @@
 
       Scene_File.prototype._onDeleteConfirm = function () {
         var id = this._pendingDeleteId;
+        var path = this._pendingDeletePath;
         try {
-          StorageManager.remove(id);
-          // Also remove backup if it exists
-          var bakKey = StorageManager.webStorageKey(id) + "bak";
-          localStorage.removeItem(bakKey);
-          // Update global info
-          var globalInfo = DataManager.loadGlobalInfo() || [];
-          delete globalInfo[id];
-          DataManager.saveGlobalInfo(globalInfo);
+          if (id > 0) {
+            StorageManager.remove(id);
+            // Also remove backup if it exists (autosaves don't have bak files)
+            var bakKey = StorageManager.webStorageKey(id) + "bak";
+            localStorage.removeItem(bakKey);
+            // Update global info
+            var globalInfo = DataManager.loadGlobalInfo() || [];
+            delete globalInfo[id];
+            DataManager.saveGlobalInfo(globalInfo);
+          } else {
+            // Autosave: delete the on-disk file via the fs shim (which also
+            // mirrors removal to IDB through the localStorage prototype
+            // interception) and prune the autoSaves dict so the row vanishes
+            // from the savefile list and getSaveInfo returns null. Without
+            // the dict prune the list still shows a stale row, just with
+            // the next autosave's data, because indices shift after deletion.
+            if (path) Utils.delete(path);
+            var giAuto = DataManager.loadGlobalInfo() || [];
+            if (giAuto[0] && giAuto[0].autoSaves && path) {
+              var fname = savefileBasename(path);
+              if (fname) delete giAuto[0].autoSaves[fname];
+              DataManager.saveGlobalInfo(giAuto);
+            }
+          }
           SoundManager.playOk();
         } catch (e) {
           console.error("[lang-shim] Save delete failed:", e);
@@ -2102,6 +2163,7 @@
         this._listWindow.refresh();
         this._listWindow.activate();
         this._pendingDeleteId = null;
+        this._pendingDeletePath = null;
       };
 
       Scene_File.prototype._onDeleteCancel = function () {
@@ -2109,6 +2171,7 @@
         this._saveConfirmWindow.hide();
         this._listWindow.activate();
         this._pendingDeleteId = null;
+        this._pendingDeletePath = null;
       };
 
       // Confirmation dialog window for save deletion
@@ -2125,8 +2188,12 @@
         this.openness = 0;
       };
 
-      Window_SaveConfirm.prototype.setAction = function (action, slotId) {
-        this._actionText = "Delete Save " + slotId + "?";
+      Window_SaveConfirm.prototype.setAction = function (action, label) {
+        // label is a user-facing string like "Save 3" or "Auto 1".
+        // Backwards-compatible with the old numeric arg: a bare number
+        // still produces "Delete Save N?".
+        var name = typeof label === "number" ? "Save " + label : String(label);
+        this._actionText = "Delete " + name + "?";
         this.refresh();
       };
 
