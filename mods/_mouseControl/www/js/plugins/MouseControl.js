@@ -609,6 +609,8 @@
     return (
       (typeof Scene_File !== "undefined" && scene instanceof Scene_File) ||
       (typeof Scene_Mods !== "undefined" && scene instanceof Scene_Mods) ||
+      (typeof Scene_Language !== "undefined" &&
+        scene instanceof Scene_Language) ||
       (typeof Scene_Achievements !== "undefined" &&
         scene instanceof Scene_Achievements)
     );

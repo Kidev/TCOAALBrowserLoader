@@ -24,7 +24,7 @@ var MODS_JSON = path.join(__dirname, "mods.json");
 var MODS_DIR = path.join(__dirname, "mods");
 
 var TRANSLATIONS_BASE = "https://translations.tcoaal.app/translations";
-var TRANSLATIONS_LANGS_URL = TRANSLATIONS_BASE + "/langs.txt";
+var TRANSLATIONS_MODS_URL = TRANSLATIONS_BASE + "/mods.txt";
 var TRANSLATION_AUTHOR = "TCOAAL Translation Project";
 
 // Remote-hosted overhaul mods. Mirrors the translations source: a flat
@@ -268,81 +268,125 @@ function titleCaseLang(slug) {
 }
 
 /**
- * Fetch the translations index and each language's manifest.json.
- * Writes translation mod entries into modsData keyed as "translation_<lang>".
- * Existing entries for other mod types are left untouched.
+ * Fetch the two-level translations index and each language's manifest.json.
+ *
+ * Layout (since the BASE/TCOAAR/... split):
+ *   translations/mods.txt                      -> "<MOD>_translations" dirs
+ *   translations/<MOD>_translations/langs.txt  -> language dirs for that MOD
+ *   translations/<MOD>_translations/<lang>/manifest.json + icon.png
+ *
+ * Each translation is keyed "translation_<MOD>_<lang>" and carries a "mod"
+ * field (the MOD code: BASE, TCOAAR, ...) identifying the context it overlays.
+ * MOD=BASE applies to the plain base game; any other MOD applies on top of the
+ * overhaul mod whose mods.json key equals that MOD code. Existing entries for
+ * other mod types are left untouched.
  */
 async function syncTranslations(modsData) {
-  console.log("[translations] Fetching " + TRANSLATIONS_LANGS_URL);
-  var langsTxt = await httpGetText(TRANSLATIONS_LANGS_URL);
-  if (!langsTxt) {
-    console.warn("[translations] Failed to fetch langs.txt");
+  console.log("[translations] Fetching " + TRANSLATIONS_MODS_URL);
+  var modsTxt = await httpGetText(TRANSLATIONS_MODS_URL);
+  if (!modsTxt) {
+    console.warn("[translations] Failed to fetch mods.txt");
     return 0;
   }
-  var langs = langsTxt
+  var modDirs = modsTxt
     .split(/\r?\n/)
     .map(function (s) {
       return s.trim();
     })
     .filter(function (s) {
-      return s.length > 0 && !/^#/.test(s);
+      return /_translations$/.test(s) && !/^[._#]/.test(s);
     });
 
-  if (langs.length === 0) {
-    console.warn("[translations] langs.txt is empty");
+  if (modDirs.length === 0) {
+    console.warn("[translations] mods.txt lists no <MOD>_translations dirs");
     return 0;
   }
 
-  // Prune stale translation entries that no longer appear in langs.txt.
-  var wantKeys = {};
-  for (var i = 0; i < langs.length; i++) {
-    wantKeys["translation_" + langs[i]] = true;
+  // Discover every (MOD, lang) pair first so we can prune in one pass.
+  var pairs = []; // { mod, lang, dir, key, baseUrl }
+  for (var d = 0; d < modDirs.length; d++) {
+    var dir = modDirs[d];
+    var mod = dir.replace(/_translations$/, "");
+    var langsUrl = TRANSLATIONS_BASE + "/" + dir + "/langs.txt";
+    console.log("[translations] " + mod + ": fetching " + langsUrl);
+    var langsTxt = await httpGetText(langsUrl);
+    if (!langsTxt) {
+      console.warn("[translations] " + mod + ": langs.txt unreachable");
+      continue;
+    }
+    var langs = langsTxt
+      .split(/\r?\n/)
+      .map(function (s) {
+        return s.trim();
+      })
+      .filter(function (s) {
+        return s.length > 0 && !/^[._#]/.test(s);
+      });
+    for (var li = 0; li < langs.length; li++) {
+      var lang = langs[li];
+      pairs.push({
+        mod: mod,
+        lang: lang,
+        dir: dir,
+        key: "translation_" + mod + "_" + lang,
+        baseUrl: TRANSLATIONS_BASE + "/" + dir + "/" + lang,
+      });
+    }
   }
+
+  if (pairs.length === 0) {
+    console.warn("[translations] no languages discovered");
+    return 0;
+  }
+
+  // Prune stale translation entries that no longer appear in the listing.
+  var wantKeys = {};
+  for (var w = 0; w < pairs.length; w++) wantKeys[pairs[w].key] = true;
   var existingKeys = Object.keys(modsData);
   for (var k = 0; k < existingKeys.length; k++) {
-    var key = existingKeys[k];
-    var entry = modsData[key];
+    var ekey = existingKeys[k];
+    var eentry = modsData[ekey];
     if (
-      key.indexOf("translation_") === 0 &&
-      entry &&
-      entry.type === "translation" &&
-      !wantKeys[key]
+      ekey.indexOf("translation_") === 0 &&
+      eentry &&
+      eentry.type === "translation" &&
+      !wantKeys[ekey]
     ) {
-      console.log("[translations] Removing stale entry: " + key);
-      delete modsData[key];
+      console.log("[translations] Removing stale entry: " + ekey);
+      delete modsData[ekey];
     }
   }
 
   var count = 0;
-  for (var j = 0; j < langs.length; j++) {
-    var lang = langs[j];
-    var modId = "translation_" + lang;
-    var baseUrl = TRANSLATIONS_BASE + "/" + lang;
-    var manifestUrl = baseUrl + "/manifest.json";
+  for (var j = 0; j < pairs.length; j++) {
+    var p = pairs[j];
+    var manifestUrl = p.baseUrl + "/manifest.json";
 
-    console.log("[translations] " + lang + ": fetching manifest");
+    console.log(
+      "[translations] " + p.mod + "/" + p.lang + ": fetching manifest",
+    );
     var manifestText = await httpGetText(manifestUrl);
     if (!manifestText) {
-      console.warn("[translations] " + lang + ": manifest.json unreachable");
+      console.warn("[translations] " + p.key + ": manifest.json unreachable");
       continue;
     }
     var manifest;
     try {
       manifest = JSON.parse(manifestText);
     } catch (e) {
-      console.warn("[translations] " + lang + ": invalid manifest.json");
+      console.warn("[translations] " + p.key + ": invalid manifest.json");
       continue;
     }
     var files = Array.isArray(manifest.files) ? manifest.files.slice() : [];
     if (files.length === 0) {
-      console.warn("[translations] " + lang + ": manifest has no files");
+      console.warn("[translations] " + p.key + ": manifest has no files");
       continue;
     }
 
     var lastUpdate = await httpHeadLastModified(manifestUrl);
 
-    var existing = modsData[modId] || {};
-    var displayName = manifest.name || titleCaseLang(lang);
+    var existing = modsData[p.key] || {};
+    var displayName = manifest.name || existing.name || titleCaseLang(p.lang);
     // Preserve a curated description already in mods.json (e.g. the endonym
     // "한국어" / "日本語") over whatever the remote manifest supplies: the
     // remote default is a generic "<Lang> translation" string that would
@@ -350,39 +394,60 @@ async function syncTranslations(modsData) {
     var description =
       existing.description ||
       manifest.description ||
-      titleCaseLang(lang) + " translation";
-    var author = manifest.author || existing.author || TRANSLATION_AUTHOR;
+      titleCaseLang(p.lang) + " translation";
+    // The author seeds hand-curated in mods.json (per translator) win over the
+    // remote manifest so a regeneration never clobbers them.
+    var author = existing.author || manifest.author || TRANSLATION_AUTHOR;
 
-    // Pick the dialogue source file actually shipped in the manifest.
-    // .csv and .txt are both supported by lang-shim's parser.
+    // Pick the dialogue source file actually shipped in the manifest. The
+    // flat-root translators use dialogue.csv / dialogue.txt; the overhaul
+    // translations (TCOAAR/TCOAAJ) instead ship a CLD .loc under
+    // "languages/<lang>/dialogue.loc". lang-shim's extractModLangData parses
+    // all of these. .loc/.csv/.txt are detected here; prefer this entry's own
+    // language folder over a bundled english fallback.
     var langFile = null;
     if (files.indexOf("dialogue.csv") >= 0) langFile = "dialogue.csv";
     else if (files.indexOf("dialogue.txt") >= 0) langFile = "dialogue.txt";
+    else {
+      var preferredLoc = "languages/" + p.lang + "/dialogue.loc";
+      if (files.indexOf(preferredLoc) >= 0) {
+        langFile = preferredLoc;
+      } else {
+        var locs = files.filter(function (f) {
+          return /^languages\/[^/]+\/dialogue\.(loc|pld)$/i.test(f);
+        });
+        var nonEng = locs.filter(function (f) {
+          return !/\/english\//i.test(f);
+        });
+        langFile = nonEng[0] || locs[0] || null;
+      }
+    }
     if (!langFile) {
       console.warn(
         "[translations] " +
-          lang +
-          ": no dialogue.csv/.txt in manifest; text will not translate",
+          p.key +
+          ": no dialogue file in manifest; text will not translate",
       );
     }
 
-    modsData[modId] = {
+    modsData[p.key] = {
       name: displayName,
-      icon: baseUrl + "/icon.png",
+      icon: p.baseUrl + "/icon.png",
       author: author,
       lastUpdate: existing.lastUpdate || lastUpdate || "",
-      path: baseUrl,
+      path: p.baseUrl,
       type: "translation",
+      mod: p.mod,
       description: description,
       langFile: langFile,
       version: manifest.version || existing.lastUpdate || lastUpdate || "",
       files: files,
     };
-    if (existing.addedDate) modsData[modId].addedDate = existing.addedDate;
+    if (existing.addedDate) modsData[p.key].addedDate = existing.addedDate;
 
     console.log(
       "[translations] " +
-        lang +
+        p.key +
         ": " +
         files.length +
         " files" +

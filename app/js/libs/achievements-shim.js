@@ -307,13 +307,29 @@
     if (_patchesApplied) return;
     _patchesApplied = true;
 
+    // Achievements are a base-game feature (the DRM's ending/gallery system).
+    // They make no sense under an overhaul mod, which rewrites the dataset, so
+    // the entry is hidden whenever an overhaul is active. The base game and its
+    // translations leave _activeMod empty (translations are a separate
+    // _activeLang overlay now), so an empty / translation-valued _activeMod
+    // means "base context" -> show.
+    function isBaseContext() {
+      try {
+        var m = localStorage.getItem("_activeMod");
+        return !m || m.indexOf("translation_") === 0;
+      } catch (e) {
+        return true;
+      }
+    }
+
     // Title menu command injection. The DRM payload's makeCommandList
     // filters strictly to MenuOptions.labels(): we wrap AFTER it and
-    // insert "Achievements" before Mods/Quit.
+    // insert "Achievements" before Mods/Quit (base context only).
     if (typeof Window_TitleCommand !== "undefined") {
       var _orig_makeCmdList = Window_TitleCommand.prototype.makeCommandList;
       Window_TitleCommand.prototype.makeCommandList = function () {
         _orig_makeCmdList.call(this);
+        if (!isBaseContext()) return;
         var insertIdx = this._list.length;
         for (var i = 0; i < this._list.length; i++) {
           var sym = this._list[i].symbol;

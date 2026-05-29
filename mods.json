@@ -6,8 +6,11 @@
     "type": "built-in plugin",
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
-    "version": "fd9702d",
-    "files": ["img/icon.png", "js/plugins/MouseControl.js"]
+    "version": "77bf86a",
+    "files": [
+      "img/icon.png",
+      "js/plugins/MouseControl.js"
+    ]
   },
   "_unlockAll": {
     "name": "Unlocker",
@@ -16,9 +19,12 @@
     "type": "built-in plugin",
     "description": "While enabled, the vision room, visions and stars are all available",
     "author": "kidev",
-    "version": "fd9702d",
+    "version": "77bf86a",
     "requiresBaseGame": true,
-    "files": ["img/icon.png", "js/plugins/UnlockAll.js"]
+    "files": [
+      "img/icon.png",
+      "js/plugins/UnlockAll.js"
+    ]
   },
   "AnalogMove": {
     "name": "Analog Move",
@@ -27,9 +33,12 @@
     "type": "built-in plugin",
     "description": "Changes party character movement to dot movement that does not depend on tiles",
     "author": "Sanshiro",
-    "version": "fd9702d",
+    "version": "77bf86a",
     "lastUpdate": "2024-03-29",
-    "files": ["img/icon.png", "js/plugins/SAN_AnalogMove.js"],
+    "files": [
+      "img/icon.png",
+      "js/plugins/SAN_AnalogMove.js"
+    ],
     "drmType": "none"
   },
   "MessageBacklog": {
@@ -39,9 +48,12 @@
     "type": "built-in plugin",
     "description": "Add a message backlog function to the game's message system (shortcut: TAB)",
     "author": "Yanfly",
-    "version": "fd9702d",
+    "version": "77bf86a",
     "lastUpdate": "2024-03-29",
-    "files": ["img/icon.png", "js/plugins/YEP_X_MessageBacklog.js"],
+    "files": [
+      "img/icon.png",
+      "js/plugins/YEP_X_MessageBacklog.js"
+    ],
     "drmType": "none"
   },
   "TCOAAR": {
@@ -1888,7 +1900,7 @@
       "mods/The coffin of Andy and July/mod.json",
       "package.json"
     ],
-    "version": "fd9702d",
+    "version": "77bf86a",
     "drmType": "none"
   },
   "TCOAALili": {
@@ -2949,7 +2961,7 @@
       "languages/english/dialogue.loc",
       "package.json"
     ],
-    "version": "fd9702d",
+    "version": "77bf86a",
     "drmType": "direct"
   },
   "TLCOAAA": {
@@ -3730,7 +3742,7 @@
       "js/rpg_windows.js",
       "package.json"
     ],
-    "version": "fd9702d",
+    "version": "77bf86a",
     "drmType": "direct"
   },
   "TDOAAL": {
@@ -3741,7 +3753,7 @@
     "description": "Adds voice acting to Chapter 1 (FenrirtheWulf, iamyourmagician, Adoxographist, PatchumiVT, Shami, WesternShadow, Zombi)",
     "lastUpdate": "2025-09-15",
     "author": "6ExtraOrdinary9",
-    "version": "fd9702d",
+    "version": "77bf86a",
     "files": [
       "audio/bgm/Sexy Raidish/1/Voice/A1",
       "audio/bgm/Sexy Raidish/1/Voice/A10",
@@ -4984,7 +4996,6 @@
     "drmType": "none"
   },
   "MOE": {
-    "addedDate": "2026-05-28",
     "name": "Mod of Extension",
     "icon": "https://extras.tcoaal.app/mods/MOE/www/img/titles1/title.png",
     "author": "Rainaki",
@@ -6071,19 +6082,20 @@
       "mod.json",
       "package.json"
     ],
-    "langFile": "languages/english/dialogue.loc",
-    "drmType": "none"
+    "addedDate": "2026-05-28",
+    "langFile": "languages/english/dialogue.loc"
   },
-  "translation_chinese": {
+  "translation_BASE_chinese": {
     "name": "Chinese",
-    "icon": "https://translations.tcoaal.app/translations/chinese/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/chinese/icon.png",
     "author": "修翼",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/chinese",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/chinese",
     "type": "translation",
+    "mod": "BASE",
     "description": "繁體中文",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "fonts/JhengHei.ttf",
@@ -6095,16 +6107,17 @@
       "img/pictures/5972d18a4e7f34a8.png"
     ]
   },
-  "translation_french": {
+  "translation_BASE_french": {
     "name": "French",
-    "icon": "https://translations.tcoaal.app/translations/french/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/french/icon.png",
     "author": "Team Coffret",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/french",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/french",
     "type": "translation",
+    "mod": "BASE",
     "description": "Français",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "icon.png",
@@ -6143,16 +6156,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_german": {
+  "translation_BASE_german": {
     "name": "German",
-    "icon": "https://translations.tcoaal.app/translations/german/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/german/icon.png",
     "author": "Marie",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/german",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/german",
     "type": "translation",
+    "mod": "BASE",
     "description": "Deutsch",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "icon.png",
@@ -6169,16 +6183,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_hungarian": {
+  "translation_BASE_hungarian": {
     "name": "Hungarian",
-    "icon": "https://translations.tcoaal.app/translations/hungarian/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/hungarian/icon.png",
     "author": "Alfonz, SlavicorDali",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/hungarian",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/hungarian",
     "type": "translation",
+    "mod": "BASE",
     "description": "Magyar",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "icon.png",
@@ -6226,16 +6241,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_italian": {
+  "translation_BASE_italian": {
     "name": "Italian",
-    "icon": "https://translations.tcoaal.app/translations/italian/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/italian/icon.png",
     "author": "RedStarITA, BigLion(Grem. di masterchess), Petardo238",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/italian",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/italian",
     "type": "translation",
+    "mod": "BASE",
     "description": "Italiano",
     "langFile": "dialogue.txt",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.txt",
       "icon.png",
@@ -6294,16 +6310,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_japanese": {
+  "translation_BASE_japanese": {
     "name": "Japanese",
-    "icon": "https://translations.tcoaal.app/translations/japanese/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/japanese/icon.png",
     "author": "ぬっこ",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/japanese",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/japanese",
     "type": "translation",
+    "mod": "BASE",
     "description": "日本語",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "fonts/BIZUDMincho-Regular.ttf",
@@ -6352,16 +6369,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_korean": {
+  "translation_BASE_korean": {
     "name": "Korean",
-    "icon": "https://translations.tcoaal.app/translations/korean/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/korean/icon.png",
     "author": "Screamingrock",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/korean",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/korean",
     "type": "translation",
-    "description": "Hangugeo",
+    "mod": "BASE",
+    "description": "한국어",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "font/NanumSquareRoundOTFR.otf",
@@ -6412,16 +6430,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_polish": {
+  "translation_BASE_polish": {
     "name": "Polish",
-    "icon": "https://translations.tcoaal.app/translations/polish/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/polish/icon.png",
     "author": "Namaenonaii, Aarchangl, MrBobru",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/polish",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/polish",
     "type": "translation",
+    "mod": "BASE",
     "description": "Polski",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "icon.png",
@@ -6469,28 +6488,33 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_portuguese-brazil": {
+  "translation_BASE_portuguese-brazil": {
     "name": "Portuguese Brazil",
-    "icon": "https://translations.tcoaal.app/translations/portuguese-brazil/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/portuguese-brazil/icon.png",
     "author": "Brendon, crimsonKss",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/portuguese-brazil",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/portuguese-brazil",
     "type": "translation",
+    "mod": "BASE",
     "description": "Português / Brasil",
     "langFile": "dialogue.txt",
-    "version": "2026-04-21",
-    "files": ["dialogue.txt", "icon.png"]
+    "version": "2026-05-29",
+    "files": [
+      "dialogue.txt",
+      "icon.png"
+    ]
   },
-  "translation_russian": {
+  "translation_BASE_russian": {
     "name": "Russian",
-    "icon": "https://translations.tcoaal.app/translations/russian/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/russian/icon.png",
     "author": "Lakomka",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/russian",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/russian",
     "type": "translation",
+    "mod": "BASE",
     "description": "Русский",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "font/RobotoSlab-Regular.ttf",
@@ -6541,16 +6565,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_spanish-castilian": {
+  "translation_BASE_spanish-castilian": {
     "name": "Spanish Castilian",
-    "icon": "https://translations.tcoaal.app/translations/spanish-castilian/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/spanish-castilian/icon.png",
     "author": "6dot9, DaForq, misstarsoul, coolguyfran, Melindro",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/spanish-castilian",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/spanish-castilian",
     "type": "translation",
+    "mod": "BASE",
     "description": "Español (Castellano)",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "icon.png",
@@ -6600,16 +6625,17 @@
       "img/titles1/91b682859f543183.png"
     ]
   },
-  "translation_spanish-mexican": {
+  "translation_BASE_spanish-mexican": {
     "name": "Spanish Mexican",
-    "icon": "https://translations.tcoaal.app/translations/spanish-mexican/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/spanish-mexican/icon.png",
     "author": "NekoBot",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/spanish-mexican",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/spanish-mexican",
     "type": "translation",
+    "mod": "BASE",
     "description": "Español",
     "langFile": "dialogue.txt",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.txt",
       "icon.png",
@@ -6621,28 +6647,33 @@
       "img/pictures/5972d18a4e7f34a8"
     ]
   },
-  "translation_turkish": {
+  "translation_BASE_turkish": {
     "name": "Turkish",
-    "icon": "https://translations.tcoaal.app/translations/turkish/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/turkish/icon.png",
     "author": "Anemoi",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/turkish",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/turkish",
     "type": "translation",
+    "mod": "BASE",
     "description": "Türkçe",
     "langFile": "dialogue.txt",
-    "version": "2026-04-21",
-    "files": ["dialogue.txt", "icon.png"]
+    "version": "2026-05-29",
+    "files": [
+      "dialogue.txt",
+      "icon.png"
+    ]
   },
-  "translation_ukrainian": {
+  "translation_BASE_ukrainian": {
     "name": "Ukrainian",
-    "icon": "https://translations.tcoaal.app/translations/ukrainian/icon.png",
+    "icon": "https://translations.tcoaal.app/translations/BASE_translations/ukrainian/icon.png",
     "author": "Saul Goodman, Miracle_Searcher",
-    "lastUpdate": "2026-04-21",
-    "path": "https://translations.tcoaal.app/translations/ukrainian",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/BASE_translations/ukrainian",
     "type": "translation",
+    "mod": "BASE",
     "description": "Українська",
     "langFile": "dialogue.csv",
-    "version": "2026-04-21",
+    "version": "2026-05-29",
     "files": [
       "dialogue.csv",
       "fonts/Piazzola Light.ttf",
@@ -6700,6 +6731,69 @@
       "img/pictures/efbd6b41ff1cd6ba.png",
       "img/system/e5230bf37c4fabb0.png",
       "img/titles1/91b682859f543183.png"
+    ]
+  },
+  "translation_TCOAAR_french": {
+    "name": "French",
+    "icon": "https://translations.tcoaal.app/translations/TCOAAR_translations/french/icon.png",
+    "author": "KillianMVPoP",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/TCOAAR_translations/french",
+    "type": "translation",
+    "mod": "TCOAAR",
+    "description": "Français",
+    "langFile": "languages/french/dialogue.loc",
+    "version": "2026-05-29",
+    "files": [
+      "img/system/Loading.png",
+      "img/titles1/Book.png",
+      "languages/french/dialogue.loc"
+    ]
+  },
+  "translation_TCOAAR_spanish-castilian": {
+    "name": "Spanish Castilian",
+    "icon": "https://translations.tcoaal.app/translations/TCOAAR_translations/spanish-castilian/icon.png",
+    "author": "LycanrockZ",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/TCOAAR_translations/spanish-castilian",
+    "type": "translation",
+    "mod": "TCOAAR",
+    "description": "Español (Castellano)",
+    "langFile": "languages/spanish-castilian/dialogue.loc",
+    "version": "2026-05-29",
+    "files": [
+      "languages/spanish-castilian/dialogue.loc"
+    ]
+  },
+  "translation_TCOAAR_portuguese-brazil": {
+    "name": "Portuguese Brazil",
+    "icon": "https://translations.tcoaal.app/translations/TCOAAR_translations/portuguese-brazil/icon.png",
+    "author": "Max027g",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/TCOAAR_translations/portuguese-brazil",
+    "type": "translation",
+    "mod": "TCOAAR",
+    "description": "Português / Brasil",
+    "langFile": "languages/portuguese-brazil/dialogue.loc",
+    "version": "2026-05-29",
+    "files": [
+      "languages/english/dialogue.loc",
+      "languages/portuguese-brazil/dialogue.loc"
+    ]
+  },
+  "translation_TCOAAJ_spanish-castilian": {
+    "name": "Spanish Castilian",
+    "icon": "https://translations.tcoaal.app/translations/TCOAAJ_translations/spanish-castilian/icon.png",
+    "author": "Salvaks",
+    "lastUpdate": "2026-05-29",
+    "path": "https://translations.tcoaal.app/translations/TCOAAJ_translations/spanish-castilian",
+    "type": "translation",
+    "mod": "TCOAAJ",
+    "description": "Español (Castellano)",
+    "langFile": "languages/spanish-castilian/dialogue.loc",
+    "version": "2026-05-29",
+    "files": [
+      "languages/spanish-castilian/dialogue.loc"
     ]
   }
 }

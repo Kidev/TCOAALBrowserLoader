@@ -843,7 +843,7 @@
         // Bump this constant in lockstep with SW_VERSION in app/sw.js
         // whenever an SW change requires existing users to drop their
         // previous install. Pure additive features don't need a bump.
-        var EXPECTED_SW_VERSION = 10;
+        var EXPECTED_SW_VERSION = 11;
 
         function maybeRecoverStaleSW() {
           if (!("serviceWorker" in navigator)) return;
@@ -1174,8 +1174,10 @@
         // where the SW can be slow to claim.
         function preloadLangData(db, files) {
           var activeMod = null;
+          var activeLang = null;
           try {
             activeMod = localStorage.getItem("_activeMod") || null;
+            activeLang = localStorage.getItem("_activeLang") || null;
           } catch (e) {}
 
           function fromLangDataJson() {
@@ -1191,8 +1193,11 @@
               .catch(function () {});
           }
 
-          if (activeMod) {
-            // Mod active: SW merges base + mod lang data.
+          if (activeMod || activeLang) {
+            // An overhaul and/or a translation overlay is active: the SW
+            // produces the layered merge (base -> overhaul -> translation) on
+            // /lang-data.json, so always go through it rather than reading a
+            // single IDB blob.
             return fromLangDataJson();
           }
 

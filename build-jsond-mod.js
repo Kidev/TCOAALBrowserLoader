@@ -21,7 +21,7 @@
  *                   decrypted to a plain dump (logical names like
  *                   data/Map001.json, img/pictures/foo.png, js/rpg_core.js),
  *                   with the mod's patches applied and its files overlaid on
- *                   top. Import the result via loader.html as the game itself: 
+ *                   top. Import the result via loader.html as the game itself:
  *                   no base dependency, no version mix. Use this when the mod
  *                   targets a different game version than the one installed.
  *
@@ -72,7 +72,10 @@ function hashPath(logicalPath) {
 
 /** Per-file XOR mask seed derived from the hashed filename. */
 function fileMask(hashedRelPath) {
-  const fname = decodeURIComponent(hashedRelPath).split("/").pop().toUpperCase();
+  const fname = decodeURIComponent(hashedRelPath)
+    .split("/")
+    .pop()
+    .toUpperCase();
   let m = 0;
   for (const ch of fname) m = (m << 1) ^ ch.charCodeAt(0);
   return m;
@@ -91,7 +94,10 @@ function decodeK9a(buf, logicalRel) {
   const extLen = buf[0];
   let keyByte = buf[1 + extLen];
   const payload = buf.subarray(1 + extLen + 1);
-  const base = logicalRel.split("/").pop().replace(/\.[^.]+$/, "");
+  const base = logicalRel
+    .split("/")
+    .pop()
+    .replace(/\.[^.]+$/, "");
   let mask = fileMask(base) & 0xff;
   if (keyByte === 0) keyByte = payload.length;
 
@@ -311,7 +317,8 @@ function resolveBaseText(baseRoot, logicalRel) {
 
   // 3. Old ".k9a" (logical name, different container/seed; pre-remaster).
   const k9a = path.join(baseRoot, logicalRel.replace(/\.[^./]+$/, ".k9a"));
-  if (isFile(k9a)) return decodeK9a(fs.readFileSync(k9a), logicalRel).toString("utf8");
+  if (isFile(k9a))
+    return decodeK9a(fs.readFileSync(k9a), logicalRel).toString("utf8");
 
   return null;
 }
@@ -357,8 +364,10 @@ function decodeBaseFile(absPath, relPath) {
     const logical = relPath.replace(/\.k9a$/i, "." + ext);
     return { logical, content: decodeK9a(buf, logical), verbatim: false };
   }
-  if (buf.length >= ASSET_SIG.length + 1 &&
-      buf.subarray(0, ASSET_SIG.length).equals(ASSET_SIG)) {
+  if (
+    buf.length >= ASSET_SIG.length + 1 &&
+    buf.subarray(0, ASSET_SIG.length).equals(ASSET_SIG)
+  ) {
     return { logical: relPath, content: buf, verbatim: true };
   }
   return { logical: relPath, content: buf, verbatim: false };
@@ -403,7 +412,9 @@ function runFull(opts, diffRoot, baseRoot, outWww) {
       patched.set(
         target,
         Buffer.from(
-          opts.pretty ? JSON.stringify(merged, null, 2) : JSON.stringify(merged),
+          opts.pretty
+            ? JSON.stringify(merged, null, 2)
+            : JSON.stringify(merged),
           "utf8",
         ),
       );
@@ -491,13 +502,28 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
-      case "--diff": opts.diff = argv[++i]; break;
-      case "--base": opts.base = argv[++i]; break;
-      case "--out": opts.out = argv[++i]; break;
-      case "--full": opts.full = true; break;
-      case "--force": opts.force = true; break;
-      case "--pretty": opts.pretty = true; break;
-      case "-h": case "--help": opts.help = true; break;
+      case "--diff":
+        opts.diff = argv[++i];
+        break;
+      case "--base":
+        opts.base = argv[++i];
+        break;
+      case "--out":
+        opts.out = argv[++i];
+        break;
+      case "--full":
+        opts.full = true;
+        break;
+      case "--force":
+        opts.force = true;
+        break;
+      case "--pretty":
+        opts.pretty = true;
+        break;
+      case "-h":
+      case "--help":
+        opts.help = true;
+        break;
       default:
         throw new Error("unknown argument: " + a);
     }
@@ -629,7 +655,9 @@ function main() {
       );
       process.exit(1);
     }
-    console.error("\n--force: writing successful files only, skipping the above.");
+    console.error(
+      "\n--force: writing successful files only, skipping the above.",
+    );
   }
 
   // Write.

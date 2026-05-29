@@ -10,7 +10,7 @@
     "sound": "string | null: game-asset path like 'audio/se/<hash>.ogg'. Played once when the lock screen appears, only if game assets have been imported (the SW decrypts the file). Browsers that block autoplay will play it on the first user interaction instead. Set to null/omit to play nothing.",
     "buttons": "array of flat label/href string pairs: ['label1', 'href1', 'label2', 'href2', ...]. Extra info links shown below the dismiss button (for complete locks: the only buttons). Open in a new tab."
   },
-  "enabled": true,
+  "enabled": false,
   "type": "partial",
   "id": "default",
   "title": "Working on updating the website",

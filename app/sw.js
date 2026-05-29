@@ -35,7 +35,7 @@ const STORE_NAME = "assets";
 // their old installation: e.g. a fix to the fetch handler or a new IDB
 // schema. Pure additive features (new message types the page can feature-
 // detect) do not need a bump.
-const SW_VERSION = 10;
+const SW_VERSION = 11;
 
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
@@ -68,6 +68,7 @@ const APP_SHELL = [
   "/img/mods.png",
   "/img/achievements.png",
   "/img/help.png",
+  "/img/en.png",
   "/img/tcoaal-steam-header.jpg",
   "/js/libs/pako_inflate.min.js",
   "/js/libs/browser-shim.js",
@@ -479,16 +480,21 @@ async function serveModIconOverride(logicalPath) {
     return null;
   }
   await ensureActiveModLoaded(db);
-  if (!_activeMod) return null;
-  const modPrefix = "mod:" + _activeMod + ":";
-  const hit = await getAssetCI(db, modPrefix + modRel);
-  if (hit === null) return null;
-  const keyForDecrypt = hit.actualKey.substring(modPrefix.length);
-  const decrypted = dekit(hit.value, keyForDecrypt);
-  return new Response(decrypted, {
-    status: 200,
-    headers: { "Content-Type": "image/png" },
-  });
+  await ensureActiveLangLoaded(db);
+  // Active language overlay wins over the overhaul, mirroring asset priority.
+  for (const overlayId of [_activeLang, _activeMod]) {
+    if (!overlayId) continue;
+    const modPrefix = "mod:" + overlayId + ":";
+    const hit = await getAssetCI(db, modPrefix + modRel);
+    if (hit === null) continue;
+    const keyForDecrypt = hit.actualKey.substring(modPrefix.length);
+    const decrypted = dekit(hit.value, keyForDecrypt);
+    return new Response(decrypted, {
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+    });
+  }
+  return null;
 }
 
 const DRM_CACHE_KEY = "__drm_cache__";
@@ -1001,6 +1007,14 @@ self.addEventListener("activate", (e) =>
 let _activeMod = null;
 let _activeModLoadPromise = null;
 
+// Active language (translation) overlay. Independent of _activeMod: a
+// translation layers ON TOP of the active context (base game OR an overhaul
+// mod). Value is a translation mod key ("translation_<MOD>_<lang>") or null
+// (English / the context's original text). Persisted in IDB ('__active_lang__')
+// so it survives SW restarts.
+let _activeLang = null;
+let _activeLangLoadPromise = null;
+
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
@@ -1043,6 +1057,22 @@ self.addEventListener("message", (event) => {
           tx.objectStore(STORE_NAME).put(_activeMod, "__active_mod__");
         } else {
           tx.objectStore(STORE_NAME).delete("__active_mod__");
+        }
+      })
+      .catch(() => {});
+    return;
+  }
+
+  if (data.type === "setActiveLang") {
+    _activeLang = data.id || null;
+    _activeLangLoadPromise = Promise.resolve();
+    openDB()
+      .then((db) => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        if (_activeLang) {
+          tx.objectStore(STORE_NAME).put(_activeLang, "__active_lang__");
+        } else {
+          tx.objectStore(STORE_NAME).delete("__active_lang__");
         }
       })
       .catch(() => {});
@@ -1123,6 +1153,115 @@ function ensureActiveModLoaded(db) {
   return _activeModLoadPromise;
 }
 
+/** Load the active language overlay from IDB (once, on first request). */
+function ensureActiveLangLoaded(db) {
+  if (_activeLangLoadPromise) return _activeLangLoadPromise;
+  _activeLangLoadPromise = (async () => {
+    try {
+      const val = await getAsset(db, "__active_lang__");
+      if (val && typeof val === "string") _activeLang = val;
+    } catch {}
+  })();
+  return _activeLangLoadPromise;
+}
+
+/**
+ * Resolve a logical asset path from one overlay store (keys
+ * "mod:<modId>:<rel>") used for both overhaul mods and translation overlays.
+ * Returns a Response on hit, or null to fall through to the next overlay /
+ * the base game. Mirrors the base game lookup chain:
+ *   direct (CI) -> extension-stripped (CI) -> hashed -> hashed+ext -> media-guess.
+ */
+async function tryModOverlay(db, modId, logicalPath) {
+  const modPrefix = "mod:" + modId + ":";
+
+  // M1. Direct path (case-insensitive: mod files may have different casing
+  //     than what the engine requests, e.g. Windows-authored mods).
+  const modDirectCI = await getAssetCI(db, modPrefix + logicalPath);
+  if (modDirectCI !== null) {
+    const keyForDecrypt = modDirectCI.actualKey.substring(modPrefix.length);
+    const decrypted = dekit(modDirectCI.value, keyForDecrypt);
+    return new Response(decrypted, {
+      status: 200,
+      headers: { "Content-Type": mimeFor(logicalPath) },
+    });
+  }
+
+  // M2. Extension-stripped (case-insensitive).
+  const modNoExt = logicalPath.replace(/\.[^./]+$/, "");
+  if (modNoExt !== logicalPath) {
+    const modStrippedCI = await getAssetCI(db, modPrefix + modNoExt);
+    if (modStrippedCI !== null) {
+      const keyForDecrypt = modStrippedCI.actualKey.substring(modPrefix.length);
+      const decrypted = dekit(modStrippedCI.value, keyForDecrypt);
+      return new Response(decrypted, {
+        status: 200,
+        headers: { "Content-Type": mimeFor(logicalPath) },
+      });
+    }
+  }
+
+  // M3. Hashed path.
+  const modHashed = await hashPath(logicalPath);
+  const modEncrypted = await getAsset(db, modPrefix + modHashed);
+  if (modEncrypted !== null) {
+    const decrypted = dekit(modEncrypted, modHashed);
+    return new Response(decrypted, {
+      status: 200,
+      headers: { "Content-Type": mimeFor(logicalPath) },
+    });
+  }
+
+  // M3b. Hashed path preserving the logical extension. Translation mods ship
+  //      files at "img/pictures/<hash>.png" rather than the base game's
+  //      extension-less layout, so keys look like "mod:ID:img/pictures/<hash>.png".
+  const extMatch = logicalPath.match(/\.[^./]+$/);
+  if (extMatch) {
+    const modHashedExt = await getAsset(
+      db,
+      modPrefix + modHashed + extMatch[0],
+    );
+    if (modHashedExt !== null) {
+      const decrypted = dekit(modHashedExt, modHashed);
+      return new Response(decrypted, {
+        status: 200,
+        headers: { "Content-Type": mimeFor(logicalPath) },
+      });
+    }
+  }
+
+  // M4. Pre-hashed extension-less media path override. When the base game's
+  //     DRM has already resolved a logical path to its disk-hashed form (e.g.
+  //     "img/pictures/057974b069d30654"), the engine requests it without an
+  //     extension. Translation mods ship the replacement as the same hashed
+  //     name with a real image extension (mod PNGs are not TCOAAL-encrypted).
+  //     Scoped to media top-dirs only (img/audio/movies) to avoid interfering
+  //     with data/ CLD lookups.
+  if (!extMatch) {
+    const MOD_EXT_GUESS = {
+      img: [".png", ".jpg"],
+      audio: [".ogg", ".m4a"],
+      movies: [".webm", ".mp4"],
+    };
+    const modTopDir = logicalPath.split("/")[0];
+    const modExts = MOD_EXT_GUESS[modTopDir];
+    if (modExts) {
+      for (const ext of modExts) {
+        const modGuess = await getAsset(db, modPrefix + logicalPath + ext);
+        if (modGuess !== null) {
+          const decrypted = dekit(modGuess, logicalPath);
+          return new Response(decrypted, {
+            status: 200,
+            headers: { "Content-Type": mimeFor(logicalPath + ext) },
+          });
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 // Fetch interception
 
 self.addEventListener("fetch", (event) => {
@@ -1175,6 +1314,7 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "img/bg.webp" ||
     logicalPath === "img/achievements.png" ||
     logicalPath === "img/help.png" ||
+    logicalPath === "img/en.png" ||
     logicalPath === "img/tcoaal-steam-header.jpg"
   ) {
     // Normalise "/" -> "/index.html" for cache lookups so a boot from the
@@ -1233,29 +1373,43 @@ async function serveFromIDB(logicalPath, request) {
     return fetch(request);
   }
 
-  // Ensure we know the active mod (loads once from IDB on first request).
+  // Ensure we know the active mod + language (loads once from IDB).
   await ensureActiveModLoaded(db);
+  await ensureActiveLangLoaded(db);
 
   // 0a. Language data: serve the CLD as plain JSON.
-  //     When a mod is active: load base CLD + mod language data -> merge.
-  //     When no mod: serve from cache or encrypted CLD directly.
+  //     Layered merge, lowest first: base CLD -> overhaul mod lang data ->
+  //     active-language (translation) lang data. The translation thus wins
+  //     over the overhaul's own text, which wins over the base game.
+  //     When neither overlay supplies lang data: serve the base CLD directly.
   if (logicalPath === "lang-data.json") {
     const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" };
 
-    if (_activeMod) {
-      // Mod active: try mod-specific lang data first.
-      // Overhaul mods (TCOAAR etc.) have their own complete language data;
-      // plugin mods may only override specific entries and need merging.
-      const modData = await loadModLangData(db, _activeMod);
-      if (modData) {
-        const baseData = await loadBaseCLD(db);
-        const result = baseData ? mergeLangData(baseData, modData) : modData;
+    const overhaulData = _activeMod
+      ? await loadModLangData(db, _activeMod)
+      : null;
+    const langData = _activeLang
+      ? await loadModLangData(db, _activeLang)
+      : null;
+
+    if (overhaulData || langData) {
+      let result = await loadBaseCLD(db);
+      // Overhaul mods (TCOAAR etc.) ship complete language data; plugin mods
+      // may override only specific entries. Either way merge over the base so
+      // required CLD fields are always present.
+      if (overhaulData) {
+        result = result ? mergeLangData(result, overhaulData) : overhaulData;
+      }
+      if (langData) {
+        result = result ? mergeLangData(result, langData) : langData;
+      }
+      if (result) {
         return new Response(JSON.stringify(result), {
           status: 200,
           headers: jsonHeaders,
         });
       }
-      // No mod lang data: fall through to base CLD below
+      // No base + no overlay data: fall through to base CLD path below.
     }
 
     // Serve base CLD (no mod, or mod without its own lang data)
@@ -1315,101 +1469,15 @@ async function serveFromIDB(logicalPath, request) {
     return fetch(request);
   }
 
-  // M. Active mod file priority.
-  //    When a mod is loaded, check mod:ID:path keys in IDB before base game.
-  //    Mirrors the base game lookup chain: direct -> extension-stripped -> hashed.
-  if (_activeMod) {
-    const modPrefix = "mod:" + _activeMod + ":";
-
-    // M1. Direct path in mod (case-insensitive: mod files may have different
-    //     casing than what the engine requests, e.g. Windows-authored mods)
-    const modDirectCI = await getAssetCI(db, modPrefix + logicalPath);
-    if (modDirectCI !== null) {
-      const keyForDecrypt = modDirectCI.actualKey.substring(modPrefix.length);
-      const decrypted = dekit(modDirectCI.value, keyForDecrypt);
-      return new Response(decrypted, {
-        status: 200,
-        headers: { "Content-Type": mimeFor(logicalPath) },
-      });
-    }
-
-    // M2. Extension-stripped in mod (case-insensitive)
-    const modNoExt = logicalPath.replace(/\.[^./]+$/, "");
-    if (modNoExt !== logicalPath) {
-      const modStrippedCI = await getAssetCI(db, modPrefix + modNoExt);
-      if (modStrippedCI !== null) {
-        const keyForDecrypt = modStrippedCI.actualKey.substring(
-          modPrefix.length,
-        );
-        const decrypted = dekit(modStrippedCI.value, keyForDecrypt);
-        return new Response(decrypted, {
-          status: 200,
-          headers: { "Content-Type": mimeFor(logicalPath) },
-        });
-      }
-    }
-
-    // M3. Hashed path in mod
-    const modHashed = await hashPath(logicalPath);
-    const modEncrypted = await getAsset(db, modPrefix + modHashed);
-    if (modEncrypted !== null) {
-      const decrypted = dekit(modEncrypted, modHashed);
-      return new Response(decrypted, {
-        status: 200,
-        headers: { "Content-Type": mimeFor(logicalPath) },
-      });
-    }
-
-    // M3b. Hashed path in mod preserving the logical extension.
-    //      Translation mods ship files at "img/pictures/<hash>.png" rather
-    //      than the base game's extension-less layout, so keys look like
-    //      "mod:ID:img/pictures/<hash>.png". Try that variant.
-    const extMatch = logicalPath.match(/\.[^./]+$/);
-    if (extMatch) {
-      const modHashedExt = await getAsset(
-        db,
-        modPrefix + modHashed + extMatch[0],
-      );
-      if (modHashedExt !== null) {
-        const decrypted = dekit(modHashedExt, modHashed);
-        return new Response(decrypted, {
-          status: 200,
-          headers: { "Content-Type": mimeFor(logicalPath) },
-        });
-      }
-    }
-
-    // M4. Pre-hashed extension-less media path override in mod.
-    //      When the base game's DRM has already resolved a logical path to
-    //      its disk-hashed form (e.g. "img/pictures/057974b069d30654"), the
-    //      engine requests it without an extension. Translation mods ship
-    //      the replacement as "img/pictures/057974b069d30654.png" (the same
-    //      hashed name with a real image extension, since mod PNGs are not
-    //      TCOAAL-encrypted). Try appending common media extensions directly
-    //      to the incoming logicalPath and looking up in the mod store.
-    //      Scoped to media top-dirs only (img/audio/movies) to avoid
-    //      interfering with data/ CLD lookups.
-    if (!extMatch) {
-      const MOD_EXT_GUESS = {
-        img: [".png", ".jpg"],
-        audio: [".ogg", ".m4a"],
-        movies: [".webm", ".mp4"],
-      };
-      const modTopDir = logicalPath.split("/")[0];
-      const modExts = MOD_EXT_GUESS[modTopDir];
-      if (modExts) {
-        for (const ext of modExts) {
-          const modGuess = await getAsset(db, modPrefix + logicalPath + ext);
-          if (modGuess !== null) {
-            const decrypted = dekit(modGuess, logicalPath);
-            return new Response(decrypted, {
-              status: 200,
-              headers: { "Content-Type": mimeFor(logicalPath + ext) },
-            });
-          }
-        }
-      }
-    }
+  // M. Overlay priority. Two overlays sit above the base game, highest first:
+  //      1. the active language (translation): "mod:<translation>:..."
+  //      2. the active overhaul mod             : "mod:<modId>:..."
+  //    A translation thus wins over the overhaul it sits on, which wins over
+  //    the base game. tryModOverlay mirrors the base game lookup chain.
+  for (const overlayId of [_activeLang, _activeMod]) {
+    if (!overlayId) continue;
+    const overlayResp = await tryModOverlay(db, overlayId, logicalPath);
+    if (overlayResp) return overlayResp;
   }
 
   // 1. Direct path (case-insensitive): engine JS, fonts, CSS, HTML, and any

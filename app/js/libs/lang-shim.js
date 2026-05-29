@@ -473,6 +473,9 @@
       var keys = Object.keys(_modsData);
       for (var i = 0; i < keys.length; i++) {
         var entry = _modsData[keys[i]];
+        // Translations are no longer surfaced in the Mods menu; they have
+        // their own Language menu (driven by getContextTranslations).
+        if (entry && isTranslationType(entry.type)) continue;
         list.push({
           key: keys[i],
           name: entry.name || keys[i],
@@ -598,6 +601,187 @@
     _activeMod = localStorage.getItem("_activeMod") || null;
   } catch (e) {}
 
+  // Active language (translation) overlay tracking. Independent of _activeMod:
+  // a translation now layers ON TOP of the active context (base game OR an
+  // overhaul mod) rather than being the active mod itself. Value is a
+  // translation key ("translation_<MOD>_<lang>") or null (English / original).
+  var _activeLang = null;
+  try {
+    _activeLang = localStorage.getItem("_activeLang") || null;
+  } catch (e) {}
+
+  // Legacy migration: pre-update builds stored a selected translation AS the
+  // active mod ("_activeMod = translation_<lang>", flat base-only layout).
+  // Convert it to the new active-language overlay so the user keeps their
+  // language across this update. Translation saves were always unprefixed
+  // (getActiveSaveScope() returns null for them), so no save migration is
+  // needed: clearing _activeMod leaves the save keys untouched.
+  if (_activeMod && _activeMod.indexOf("translation_") === 0) {
+    var _legacyKey = _activeMod;
+    var _legacyRest = _activeMod.substring("translation_".length);
+    // New-format keys already carry an uppercase MOD segment ("BASE_french");
+    // legacy flat keys are just the lowercase language ("french").
+    _activeLang = /^[A-Z]+_/.test(_legacyRest)
+      ? _activeMod
+      : "translation_BASE_" + _legacyRest;
+    _activeMod = null;
+    try {
+      localStorage.setItem("_activeLang", _activeLang);
+      localStorage.removeItem("_activeMod");
+    } catch (e) {}
+    // Purge the orphaned old-key install (its files: potentially many MB of
+    // translated images: are no longer referenced under the new key). Only
+    // when the key actually changed (flat "translation_french" ->
+    // "translation_BASE_french"); never when it was already new-format.
+    if (_legacyKey !== _activeLang) {
+      (function (oldKey) {
+        openAssetsDb(function (db) {
+          if (!db) return;
+          deleteAssetsByPrefix(db, "mod:" + oldKey + ":");
+          deleteAsset(db, "__mod_meta__:" + oldKey);
+          deleteAsset(db, "__mod_lang_data__:" + oldKey);
+        });
+      })(_legacyKey);
+    }
+    // Reconcile the SW's durable state immediately so this boot doesn't briefly
+    // apply the old translation-as-active-mod overlay (which would point at the
+    // now-orphaned "mod:translation_<lang>:" files) before the ready handler's
+    // postMessage flips it. The new "translation_BASE_<lang>" files live under
+    // a different key and aren't installed yet, so this session shows the
+    // original text; the background sync re-downloads them and the next launch
+    // (or re-picking the language in the Language menu, which installs it on
+    // the spot) restores it. Saves are untouched.
+    (function (newLang) {
+      openAssetsDb(function (db) {
+        if (!db) return;
+        deleteAsset(db, "__active_mod__");
+        putAsset(db, "__active_lang__", newLang);
+      });
+    })(_activeLang);
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: "setActiveMod",
+        id: null,
+      });
+      navigator.serviceWorker.controller.postMessage({
+        type: "setActiveLang",
+        id: _activeLang,
+      });
+    }
+  }
+
+  /**
+   * MOD code identifying the active translation context: "BASE" for the plain
+   * base game (or when only a plugin is active), otherwise the active
+   * overhaul's mods.json key (which must match a "<key>_translations" set on
+   * the translations server). Translations are matched to a context by their
+   * "mod" field.
+   */
+  function getActiveContextMod() {
+    if (_activeMod) {
+      var e = getModEntry(_activeMod);
+      var t = e && e.type;
+      if (t && !isTranslationType(t) && !isPluginType(t)) return _activeMod;
+    }
+    return "BASE";
+  }
+
+  /** Translations (from mods.json) that apply to the current context. */
+  function getContextTranslations() {
+    var out = [];
+    if (!_modsData) return out;
+    var ctx = getActiveContextMod();
+    var keys = Object.keys(_modsData);
+    for (var i = 0; i < keys.length; i++) {
+      var e = _modsData[keys[i]];
+      if (e && isTranslationType(e.type) && (e.mod || "BASE") === ctx) {
+        out.push({
+          key: keys[i],
+          name: e.name || keys[i],
+          icon: e.icon || "",
+          author: e.author || "Unknown",
+          description: e.description || "",
+          path: e.path || "",
+          version: e.version || "",
+          lastUpdate: e.lastUpdate || "",
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Whether the title screen should expose the Language menu entry. */
+  function shouldShowLanguage() {
+    return (
+      getActiveContextMod() === "BASE" || getContextTranslations().length > 0
+    );
+  }
+
+  function getActiveLang() {
+    return _activeLang;
+  }
+
+  // Drop a selected language that no longer belongs to the current context
+  // (e.g. the active overhaul changed under it). Validated every boot, before
+  // the menu or any reload can act on a stale value. The SW is told to drop
+  // it too so this boot's asset/lang-data lookups don't apply the wrong layer.
+  if (_activeLang) {
+    var _le = _modsData && _modsData[_activeLang];
+    if (
+      !_le ||
+      !isTranslationType(_le.type) ||
+      (_le.mod || "BASE") !== getActiveContextMod()
+    ) {
+      _activeLang = null;
+      try {
+        localStorage.removeItem("_activeLang");
+      } catch (e) {}
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "setActiveLang",
+          id: null,
+        });
+      }
+      openAssetsDb(function (db) {
+        if (db) deleteAsset(db, "__active_lang__");
+      });
+    }
+  }
+
+  /**
+   * Set (or clear) the active language overlay across localStorage, IDB, and
+   * the service worker, then invoke onDone. Mirrors setActiveMod. Callers
+   * follow this with a page reload so the new overlay takes effect everywhere.
+   */
+  function setActiveLang(langId, onDone) {
+    _activeLang = langId || null;
+    try {
+      if (langId) localStorage.setItem("_activeLang", langId);
+      else localStorage.removeItem("_activeLang");
+    } catch (e) {}
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: "setActiveLang",
+        id: langId || null,
+      });
+    }
+    openAssetsDb(function (db) {
+      if (!db) {
+        if (onDone) onDone();
+        return;
+      }
+      if (langId) {
+        putAsset(db, "__active_lang__", langId, function () {
+          if (onDone) onDone();
+        });
+      } else {
+        deleteAsset(db, "__active_lang__", function () {
+          if (onDone) onDone();
+        });
+      }
+    });
+  }
+
   // Mirror the computed save scope into localStorage so browser-shim's
   // modAwareKey (which the DRM uses for save fs reads/writes) can pick
   // the right prefix without needing access to the mods registry.
@@ -686,19 +870,47 @@
         id: modId || null,
       });
     }
+    // A selected language belongs to one context (the base game or a specific
+    // overhaul). Switching the active overhaul (or returning to base) makes a
+    // cross-context language invalid, so drop it here. The new context is just
+    // the new modId (an overhaul) or "BASE" (modId is null): _activeMod is
+    // never a translation/plugin in the current model.
+    var newCtx = modId || "BASE";
+    var langInvalid = false;
+    if (_activeLang) {
+      var le = getModEntry(_activeLang);
+      if (!le || (le.mod || "BASE") !== newCtx) langInvalid = true;
+    }
+    if (langInvalid) {
+      _activeLang = null;
+      try {
+        localStorage.removeItem("_activeLang");
+      } catch (e) {}
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "setActiveLang",
+          id: null,
+        });
+      }
+    }
     openAssetsDb(function (db) {
       if (!db) {
         if (onDone) onDone();
         return;
       }
+      function finish() {
+        if (langInvalid) {
+          deleteAsset(db, "__active_lang__", function () {
+            if (onDone) onDone();
+          });
+        } else if (onDone) {
+          onDone();
+        }
+      }
       if (modId) {
-        putAsset(db, "__active_mod__", modId, function () {
-          if (onDone) onDone();
-        });
+        putAsset(db, "__active_mod__", modId, finish);
       } else {
-        deleteAsset(db, "__active_mod__", function () {
-          if (onDone) onDone();
-        });
+        deleteAsset(db, "__active_mod__", finish);
       }
     });
   }
@@ -1026,7 +1238,7 @@
     }
   }
 
-  // Notify SW of active mod on page load
+  // Notify SW of active mod + language on page load
   if (navigator.serviceWorker) {
     navigator.serviceWorker.ready.then(function () {
       if (navigator.serviceWorker.controller) {
@@ -1034,7 +1246,91 @@
           type: "setActiveMod",
           id: _activeMod || null,
         });
+        navigator.serviceWorker.controller.postMessage({
+          type: "setActiveLang",
+          id: _activeLang || null,
+        });
       }
+    });
+  }
+
+  // Eagerly download the active context's translations so the Language menu
+  // works fully offline and switching is instant. Installing an overhaul (or,
+  // for the base game, the next online boot) pulls every file of every
+  // language under "<MOD>_translations" into IDB via the normal installMod
+  // path. This also catches users who installed mods before this update: the
+  // next online launch fills in their context's missing translations.
+  //
+  // Runs in the background (sequential to avoid hammering the host) and is
+  // idempotent: already-installed up-to-date languages are skipped.
+  var _translationsSyncing = {};
+  /**
+   * Eagerly install every translation belonging to MOD code `ctxMod` (e.g.
+   * "BASE", "TCOAAR") that isn't already installed and up to date. Background,
+   * sequential, idempotent. `ctxMod` defaults to the active context.
+   */
+  function ensureTranslationsFor(ctxMod) {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (!_modsData) return;
+    ctxMod = ctxMod || getActiveContextMod();
+    if (_translationsSyncing[ctxMod]) return;
+    var keys = Object.keys(_modsData);
+    var queue = [];
+    for (var i = 0; i < keys.length; i++) {
+      var e = _modsData[keys[i]];
+      if (
+        e &&
+        isTranslationType(e.type) &&
+        (e.mod || "BASE") === ctxMod &&
+        e.files &&
+        e.files.length > 0
+      ) {
+        queue.push(keys[i]);
+      }
+    }
+    if (!queue.length) return;
+    _translationsSyncing[ctxMod] = true;
+    function next() {
+      if (!queue.length) {
+        _translationsSyncing[ctxMod] = false;
+        return;
+      }
+      var key = queue.shift();
+      var entry = _modsData[key];
+      checkModInstalled(key, function (installed, meta) {
+        var curVer = entry.version || "";
+        var upToDate =
+          installed && (!curVer || !meta || meta.version === curVer);
+        if (upToDate) {
+          next();
+          return;
+        }
+        installMod(
+          key,
+          entry.path,
+          function () {},
+          function () {
+            next();
+          },
+          function () {
+            next();
+          },
+        );
+      });
+    }
+    next();
+  }
+
+  /** Sync the active context's translations (base game + already-active mod). */
+  function ensureContextTranslations() {
+    ensureTranslationsFor(getActiveContextMod());
+  }
+
+  // Re-attempt the sync when connectivity returns (e.g. first launch was
+  // offline, or the host was briefly unreachable).
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("online", function () {
+      ensureContextTranslations();
     });
   }
 
@@ -2638,7 +2934,7 @@
           }
         }
         var helpCmd = {
-          name: "Help",
+          name: "Report issue",
           symbol: "help",
           enabled: true,
           ext: null,
@@ -2680,7 +2976,8 @@
             SceneManager._scene._commandWindow.refresh();
           }
         });
-        MenuOptions.iconImages["Help"] = helpIcon;
+        // Icon map is keyed by the command's display name.
+        MenuOptions.iconImages["Report issue"] = helpIcon;
       }
     }
 
@@ -2705,6 +3002,113 @@
           window.open(url, "_blank", "noopener,noreferrer");
         } catch (e) {}
         if (this._commandWindow) this._commandWindow.activate();
+      };
+    }
+
+    // Language title entry: opens Scene_Language to pick a translation for the
+    // current context (base game or active overhaul). Inserted between Options
+    // and Credits. Defined AFTER the Mods/Help wrappers (and the DRM-language
+    // strip) so this wrapper runs last and the command isn't stripped. Shown
+    // only when the context actually has translations (always true for the
+    // base game, which at least offers English).
+    if (typeof Window_TitleCommand !== "undefined") {
+      var _pre_lang_makeCmdList = Window_TitleCommand.prototype.makeCommandList;
+      Window_TitleCommand.prototype.makeCommandList = function () {
+        _pre_lang_makeCmdList.call(this);
+        if (!shouldShowLanguage()) return;
+        // Already present? (defensive against double-application)
+        for (var d = 0; d < this._list.length; d++) {
+          if (this._list[d].symbol === "language") return;
+        }
+        // Prefer right after Options; else right before Credits/Gallery; else
+        // before Mods; else before Quit; else append.
+        var insertIdx = -1;
+        for (var i = 0; i < this._list.length; i++) {
+          var s = (this._list[i].symbol || "").toString().toLowerCase();
+          var n = (this._list[i].name || "").toString().toLowerCase();
+          if (s === "options" || n === "options") {
+            insertIdx = i + 1;
+            break;
+          }
+        }
+        if (insertIdx < 0) {
+          var fallbacks = [
+            "credits",
+            "gallery",
+            "rollcredits",
+            "mods",
+            "quit",
+            "exitgame",
+          ];
+          for (var j = 0; j < this._list.length; j++) {
+            var sj = (this._list[j].symbol || "").toString().toLowerCase();
+            var nj = (this._list[j].name || "").toString().toLowerCase();
+            if (fallbacks.indexOf(sj) >= 0 || nj === "quit game") {
+              insertIdx = j;
+              break;
+            }
+          }
+        }
+        var langCmd = {
+          name: "Language",
+          symbol: "language",
+          enabled: true,
+          ext: null,
+        };
+        if (insertIdx >= 0) this._list.splice(insertIdx, 0, langCmd);
+        else this._list.push(langCmd);
+      };
+
+      if (
+        typeof MenuOptions !== "undefined" &&
+        MenuOptions.iconImages &&
+        typeof ImageManager !== "undefined" &&
+        typeof Bitmap !== "undefined"
+      ) {
+        var langSheet = ImageManager.loadNormalBitmap(
+          "img/system/f633ab2ca861decf.png",
+          0,
+        );
+        var langIcon = new Bitmap(26, 26);
+        langSheet.addLoadListener(function () {
+          langIcon.blt(
+            langSheet,
+            0,
+            0,
+            langSheet.width,
+            langSheet.height,
+            0,
+            0,
+            26,
+            26,
+          );
+          langIcon._loadingState = "loaded";
+          langIcon._callLoadListeners();
+          if (
+            typeof SceneManager !== "undefined" &&
+            SceneManager._scene &&
+            SceneManager._scene._commandWindow
+          ) {
+            SceneManager._scene._commandWindow.refresh();
+          }
+        });
+        MenuOptions.iconImages["Language"] = langIcon;
+      }
+    }
+
+    if (typeof Scene_Title !== "undefined") {
+      var _orig_lang_createCmdWin = Scene_Title.prototype.createCommandWindow;
+      Scene_Title.prototype.createCommandWindow = function () {
+        _orig_lang_createCmdWin.call(this);
+        this._commandWindow.setHandler(
+          "language",
+          this.commandLanguage.bind(this),
+        );
+      };
+
+      Scene_Title.prototype.commandLanguage = function () {
+        this._commandWindow.close();
+        SceneManager.push(Scene_Language);
       };
     }
 
@@ -3307,6 +3711,11 @@
                   self._listWindow.activate();
                 });
               } else {
+                // An overhaul's translations are bundled with it: pull every
+                // language under "<mod.key>_translations" now, so they're ready
+                // (and offline-capable) by the time the user enables this mod
+                // and opens its Language menu.
+                ensureTranslationsFor(mod.key);
                 self._listWindow.refresh();
                 self._listWindow.activate();
               }
@@ -3940,6 +4349,338 @@
       SoundManager.playOk();
     };
 
+    // Language picker
+    //
+    // The Language menu lists, for the active context (base game or active
+    // overhaul), a default English row followed by every available
+    // translation. It reuses drawModRow for a layout identical to the Mods
+    // list (flag icon + name + "by author" + endonym), and Window_ModConfirm
+    // for the switch prompt. Selecting a language sets the active-language
+    // overlay and reloads, exactly like switching an overhaul in the Mods menu.
+
+    var ENGLISH_LANG_KEY = "__english__";
+
+    // Build the row models: English first (icon app/img/en.png; author = the
+    // active overhaul's author, or "Kit9" for the plain base game), then the
+    // context's translations.
+    function buildLangRows() {
+      var rows = [];
+      var ctx = getActiveContextMod();
+      var defAuthor = "Kit9";
+      if (ctx !== "BASE") {
+        var oe = getModEntry(getActiveMod());
+        if (oe && oe.author) defAuthor = oe.author;
+      }
+      rows.push({
+        key: ENGLISH_LANG_KEY,
+        name: "English",
+        author: defAuthor,
+        description: "English",
+        icon: "img/en.png",
+        path: "",
+        isEnglish: true,
+        active: !_activeLang,
+      });
+      var list = getContextTranslations();
+      for (var i = 0; i < list.length; i++) {
+        var t = list[i];
+        rows.push({
+          key: t.key,
+          name: t.name,
+          author: t.author,
+          description: t.description,
+          icon: t.icon,
+          path: "",
+          active: _activeLang === t.key,
+        });
+      }
+      return rows;
+    }
+
+    // Icon URL for a row. English uses the bundled flag. An installed
+    // translation resolves from IDB through the SW mod-asset path (offline
+    // capable); otherwise fall back to the remote flag URL.
+    function langRowIconUrl(L) {
+      if (L.isEnglish) return "img/en.png";
+      // Prefer the IDB copy (offline-capable) only when icon.png was actually
+      // downloaded for this translation; some translations omit it from their
+      // manifest, in which case the SW's /mods path would 404. Fall back to
+      // the remote flag URL (and ultimately the default icon when offline).
+      var entry = _modsData && _modsData[L.key];
+      var hasLocalIcon =
+        _modStatus[L.key] &&
+        _modStatus[L.key].installed &&
+        entry &&
+        entry.files &&
+        entry.files.indexOf("icon.png") >= 0;
+      if (hasLocalIcon) return "/mods/" + L.key + "/www/icon.png";
+      return L.icon || "";
+    }
+
+    window.Window_LangList = function () {
+      this.initialize.apply(this, arguments);
+    };
+
+    Window_LangList.prototype = Object.create(Window_Selectable.prototype);
+    Window_LangList.prototype.constructor = Window_LangList;
+
+    Window_LangList.prototype.initialize = function (
+      x,
+      y,
+      width,
+      height,
+      maxVisible,
+    ) {
+      this._langs = buildLangRows();
+      this._iconBitmaps = {};
+      this._maxVisible = maxVisible || 5;
+      Window_Selectable.prototype.initialize.call(this, x, y, width, height);
+      this._loadIcons();
+      this.refresh();
+      var sel = 0;
+      for (var i = 0; i < this._langs.length; i++) {
+        if (this._langs[i].active) {
+          sel = i;
+          break;
+        }
+      }
+      this.select(sel);
+      this.activate();
+    };
+
+    Window_LangList.prototype._loadIcons = function () {
+      var self = this;
+      for (var i = 0; i < this._langs.length; i++) {
+        var L = this._langs[i];
+        var url = langRowIconUrl(L);
+        if (url) {
+          var bmp = ImageManager.loadNormalBitmap(url, 0);
+          this._iconBitmaps[L.key] = bmp;
+          bmp.addLoadListener(function () {
+            self.refresh();
+          });
+        }
+      }
+      var def = getDefaultModIcon();
+      if (def) {
+        def.addLoadListener(function () {
+          self.refresh();
+        });
+      }
+    };
+
+    Window_LangList.prototype.maxItems = function () {
+      return this._langs.length;
+    };
+    Window_LangList.prototype.maxVisibleItems = function () {
+      return this._maxVisible;
+    };
+    Window_LangList.prototype.itemHeight = function () {
+      return Math.floor(
+        (this.height - this.padding * 2) / this.maxVisibleItems(),
+      );
+    };
+    Window_LangList.prototype._itemGap = function () {
+      return 6;
+    };
+    Window_LangList.prototype.itemRect = function (index) {
+      var rect = Window_Selectable.prototype.itemRect.call(this, index);
+      var gap = this._itemGap();
+      rect.y += Math.floor(gap / 2);
+      rect.height -= gap;
+      return rect;
+    };
+    Window_LangList.prototype.selectedLang = function () {
+      var idx = this.index();
+      return idx >= 0 && idx < this._langs.length ? this._langs[idx] : null;
+    };
+    Window_LangList.prototype.drawItem = function (index) {
+      var L = this._langs[index];
+      if (!L) return;
+      // Green border on the currently-applied language (mirrors the active
+      // plugin styling in Window_ModList) so it stays marked regardless of
+      // where the selection cursor sits.
+      if (L.active) {
+        var b = this.itemRect(index);
+        var c = "#88ff88";
+        var t = 2;
+        this.contents.fillRect(b.x, b.y, b.width, t, c);
+        this.contents.fillRect(b.x, b.y + b.height - t, b.width, t, c);
+        this.contents.fillRect(b.x, b.y, t, b.height, c);
+        this.contents.fillRect(b.x + b.width - t, b.y, t, b.height, c);
+      }
+      var rect = this.itemRectForText(index);
+      drawModRow(this, L, rect, !!L.active, this._iconBitmaps, {
+        showTypeTag: false,
+        showInstallStatus: false,
+        showEnabledBadge: false,
+      });
+    };
+    Window_LangList.prototype.playOkSound = function () {
+      SoundManager.playOk();
+    };
+
+    // Scene_Language: the title-menu language picker.
+    window.Scene_Language = function () {
+      this.initialize.apply(this, arguments);
+    };
+
+    Scene_Language.prototype = Object.create(Scene_MenuBase.prototype);
+    Scene_Language.prototype.constructor = Scene_Language;
+
+    Scene_Language.prototype.create = function () {
+      Scene_MenuBase.prototype.create.call(this);
+      this._helpWindow = new Window_Help(1);
+      this._helpWindow.setText("Language");
+      this.addWindow(this._helpWindow);
+
+      var y = this._helpWindow.height;
+      this._listWindow = new Window_LangList(
+        0,
+        y,
+        Graphics.boxWidth,
+        Graphics.boxHeight - y,
+        5,
+      );
+      this._listWindow.setHandler("ok", this.onLangOk.bind(this));
+      this._listWindow.setHandler("cancel", this.popScene.bind(this));
+      this.addWindow(this._listWindow);
+
+      this._confirmWindow = new Window_ModConfirm();
+      this._confirmWindow.setHandler("yes", this.onConfirmYes.bind(this));
+      this._confirmWindow.setHandler("no", this.onConfirmNo.bind(this));
+      this._confirmWindow.setHandler("cancel", this.onConfirmNo.bind(this));
+      this._confirmWindow.hide();
+      this._confirmWindow.deactivate();
+      this.addWindow(this._confirmWindow);
+    };
+
+    Scene_Language.prototype.start = function () {
+      Scene_MenuBase.prototype.start.call(this);
+      var self = this;
+      // Refresh install status so already-downloaded flags render from IDB
+      // (offline-capable) instead of the remote URL.
+      var list = getContextTranslations();
+      var remaining = list.length;
+      if (!remaining) return;
+      for (var i = 0; i < list.length; i++) {
+        checkModInstalled(list[i].key, function () {
+          remaining--;
+          if (remaining <= 0 && self._listWindow) {
+            self._listWindow._loadIcons();
+            self._listWindow.refresh();
+          }
+        });
+      }
+    };
+
+    Scene_Language.prototype.onLangOk = function () {
+      var L = this._listWindow.selectedLang();
+      if (!L) {
+        this._listWindow.activate();
+        return;
+      }
+      if (L.active) {
+        // Normally a no-op. But a just-migrated language can be the SELECTED
+        // value while its files haven't been (re)downloaded yet: such a boot
+        // runs in English until the background sync finishes and the page
+        // reloads. Re-selecting it must force the install + reload rather than
+        // leaving the user stuck, so only short-circuit when it's genuinely
+        // ready (English, or an installed translation).
+        var ready =
+          L.isEnglish || (_modStatus[L.key] && _modStatus[L.key].installed);
+        if (ready) {
+          SoundManager.playOk();
+          this._listWindow.activate();
+          return;
+        }
+      }
+      this._pendingLang = L;
+      var msg = L.isEnglish
+        ? "Switch to English?"
+        : "Switch language to " + L.name + "?";
+      this._listWindow.deactivate();
+      this._confirmWindow.setInfo(false);
+      this._confirmWindow.setMessage(msg);
+      this._confirmWindow.show();
+      this._confirmWindow.activate();
+      this._confirmWindow.select(1);
+      SoundManager.playOk();
+    };
+
+    Scene_Language.prototype._showInfo = function (message) {
+      this._pendingLang = null;
+      this._listWindow.deactivate();
+      this._confirmWindow.setInfo(true);
+      this._confirmWindow.setMessage(message);
+      this._confirmWindow.show();
+      this._confirmWindow.activate();
+      this._confirmWindow.select(0);
+      SoundManager.playBuzzer();
+    };
+
+    Scene_Language.prototype.onConfirmNo = function () {
+      this._confirmWindow.hide();
+      this._confirmWindow.deactivate();
+      this._pendingLang = null;
+      this._listWindow.activate();
+    };
+
+    Scene_Language.prototype.onConfirmYes = function () {
+      this._confirmWindow.hide();
+      this._confirmWindow.deactivate();
+      var L = this._pendingLang;
+      this._pendingLang = null;
+      if (!L) {
+        // Info-popup acknowledgement: nothing to apply.
+        this._listWindow.activate();
+        return;
+      }
+      var self = this;
+      function apply() {
+        setActiveLang(L.isEnglish ? null : L.key, function () {
+          AudioManager.stopAll();
+          location.reload();
+        });
+      }
+      if (L.isEnglish) {
+        apply();
+        return;
+      }
+      // Translations are eagerly downloaded, so this is normally already
+      // installed. If not, download on demand (online) or explain (offline).
+      if (_modStatus[L.key] && _modStatus[L.key].installed) {
+        apply();
+        return;
+      }
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        this._showInfo("You need an internet connection");
+        return;
+      }
+      var entry = _modsData && _modsData[L.key];
+      if (!entry || !entry.files || entry.files.length === 0) {
+        this._showInfo("This translation is unavailable");
+        return;
+      }
+      if (!_modStatus[L.key]) _modStatus[L.key] = {};
+      _modStatus[L.key]._downloading = true;
+      this._listWindow.refresh();
+      installMod(
+        L.key,
+        entry.path,
+        function () {},
+        function () {
+          _modStatus[L.key].installed = true;
+          _modStatus[L.key]._downloading = false;
+          apply();
+        },
+        function () {
+          _modStatus[L.key]._downloading = false;
+          self._showInfo("Download failed");
+        },
+      );
+    };
+
     // Suppress the selection cursor while the window is inactive so the
     // mods screen only ever shows ONE highlight box at a time. Vanilla MV
     // keeps the cursor rect sized to the selected item on every Selectable
@@ -3975,6 +4716,11 @@
     }
     hideCursorWhenInactive(Window_ModActive);
     hideCursorWhenInactive(Window_ModList);
+    hideCursorWhenInactive(Window_LangList);
+
+    // Background-download the active context's translations once boot has
+    // settled (deferred so it doesn't compete with the initial asset loads).
+    setTimeout(ensureContextTranslations, 2000);
 
     /*console.log(
       "[lang-shim] Mod system patches applied" +
