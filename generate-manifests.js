@@ -23,8 +23,7 @@ var https = require("https");
 var MODS_JSON = path.join(__dirname, "mods.json");
 var MODS_DIR = path.join(__dirname, "mods");
 
-var TRANSLATIONS_BASE =
-  "https://translations.tcoaal.app/translations";
+var TRANSLATIONS_BASE = "https://translations.tcoaal.app/translations";
 var TRANSLATIONS_LANGS_URL = TRANSLATIONS_BASE + "/langs.txt";
 var TRANSLATION_AUTHOR = "TCOAAL Translation Project";
 
@@ -379,6 +378,7 @@ async function syncTranslations(modsData) {
       version: manifest.version || existing.lastUpdate || lastUpdate || "",
       files: files,
     };
+    if (existing.addedDate) modsData[modId].addedDate = existing.addedDate;
 
     console.log(
       "[translations] " +
@@ -507,7 +507,8 @@ async function syncExtraMods(modsData) {
 
     var iconRel = pickExtrasIconRel(files);
     var icon = existing.icon || (iconRel ? baseUrl + "/" + iconRel : "");
-    var langFile = existing.langFile || detectExtrasLangFile(files) || undefined;
+    var langFile =
+      existing.langFile || detectExtrasLangFile(files) || undefined;
     var drmType = fs.existsSync(localWww) ? detectDrmType(localWww) : undefined;
 
     var lastUpdate = existing.lastUpdate;
@@ -526,6 +527,7 @@ async function syncExtraMods(modsData) {
       version: existing.version || lastUpdate || "",
       files: files,
     };
+    if (existing.addedDate) modsData[modId].addedDate = existing.addedDate;
     if (langFile) modsData[modId].langFile = langFile;
     if (drmType) modsData[modId].drmType = drmType;
 
@@ -568,11 +570,9 @@ function reorderModsData(modsData) {
     }
   }
   var ordered = {};
-  base
-    .concat(extras, translations)
-    .forEach(function (key) {
-      ordered[key] = modsData[key];
-    });
+  base.concat(extras, translations).forEach(function (key) {
+    ordered[key] = modsData[key];
+  });
   return ordered;
 }
 

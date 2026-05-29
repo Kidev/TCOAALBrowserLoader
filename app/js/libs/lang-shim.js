@@ -479,6 +479,7 @@
           icon: entry.icon || "",
           author: entry.author || "Unknown",
           lastUpdate: entry.lastUpdate || entry.last_update || "",
+          addedDate: entry.addedDate || "",
           repo: entry.repo || entry.github || "",
           path: entry.path || "mods/" + keys[i],
           type: entry.type || MOD_TYPE_OVERHAUL,
@@ -757,12 +758,20 @@
 
   // Badge for a mod row: "NEW" (the user has never seen this mod), "UPDATED"
   // (seen before but lastUpdate has since changed), or "" (no badge). Only
-  // mods updated within the last month are ever flagged, so a mod the user
-  // simply never hovered isn't badged forever and stale releases stay quiet.
+  // mods that are "fresh" within the last month are ever flagged, so a mod the
+  // user simply never hovered isn't badged forever and stale releases stay
+  // quiet. Freshness is the more recent of two dates: lastUpdate (when the
+  // mod's content last changed) and addedDate (when we first shipped the mod in
+  // the player). The latter lets a mod with an old upstream release still
+  // announce itself as NEW the moment it lands here. The NEW-vs-UPDATED split
+  // still keys off lastUpdate alone (see markModSeen).
   function modBadge(mod) {
     if (!mod || !mod.lastUpdate) return "";
-    var t = Date.parse(mod.lastUpdate);
-    if (isNaN(t)) return "";
+    var t = Math.max(
+      Date.parse(mod.addedDate) || 0,
+      Date.parse(mod.lastUpdate) || 0,
+    );
+    if (!t) return "";
     if (Date.now() - t > MOD_BADGE_MAX_AGE_MS) return "";
     if (!(mod.key in _modSeenUpdates)) return "NEW";
     if (_modSeenUpdates[mod.key] !== mod.lastUpdate) return "UPDATED";

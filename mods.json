@@ -7,10 +7,7 @@
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
     "version": "fd9702d",
-    "files": [
-      "img/icon.png",
-      "js/plugins/MouseControl.js"
-    ]
+    "files": ["img/icon.png", "js/plugins/MouseControl.js"]
   },
   "_unlockAll": {
     "name": "Unlocker",
@@ -21,10 +18,7 @@
     "author": "kidev",
     "version": "fd9702d",
     "requiresBaseGame": true,
-    "files": [
-      "img/icon.png",
-      "js/plugins/UnlockAll.js"
-    ]
+    "files": ["img/icon.png", "js/plugins/UnlockAll.js"]
   },
   "AnalogMove": {
     "name": "Analog Move",
@@ -35,10 +29,7 @@
     "author": "Sanshiro",
     "version": "fd9702d",
     "lastUpdate": "2024-03-29",
-    "files": [
-      "img/icon.png",
-      "js/plugins/SAN_AnalogMove.js"
-    ],
+    "files": ["img/icon.png", "js/plugins/SAN_AnalogMove.js"],
     "drmType": "none"
   },
   "MessageBacklog": {
@@ -50,10 +41,7 @@
     "author": "Yanfly",
     "version": "fd9702d",
     "lastUpdate": "2024-03-29",
-    "files": [
-      "img/icon.png",
-      "js/plugins/YEP_X_MessageBacklog.js"
-    ],
+    "files": ["img/icon.png", "js/plugins/YEP_X_MessageBacklog.js"],
     "drmType": "none"
   },
   "TCOAAR": {
@@ -1904,6 +1892,7 @@
     "drmType": "none"
   },
   "TCOAALili": {
+    "addedDate": "2026-05-25",
     "name": "The Coffin of Andy and Lili",
     "path": "mods/TCOAALili",
     "icon": "mods/TCOAALili/www/img/titles1/Book.png",
@@ -4995,6 +4984,7 @@
     "drmType": "none"
   },
   "MOE": {
+    "addedDate": "2026-05-28",
     "name": "Mod of Extension",
     "icon": "https://extras.tcoaal.app/mods/MOE/www/img/titles1/title.png",
     "author": "Rainaki",
@@ -6489,10 +6479,7 @@
     "description": "Português / Brasil",
     "langFile": "dialogue.txt",
     "version": "2026-04-21",
-    "files": [
-      "dialogue.txt",
-      "icon.png"
-    ]
+    "files": ["dialogue.txt", "icon.png"]
   },
   "translation_russian": {
     "name": "Russian",
@@ -6644,10 +6631,7 @@
     "description": "Türkçe",
     "langFile": "dialogue.txt",
     "version": "2026-04-21",
-    "files": [
-      "dialogue.txt",
-      "icon.png"
-    ]
+    "files": ["dialogue.txt", "icon.png"]
   },
   "translation_ukrainian": {
     "name": "Ukrainian",
