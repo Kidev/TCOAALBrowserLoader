@@ -28,6 +28,20 @@ var TRANSLATIONS_BASE =
 var TRANSLATIONS_LANGS_URL = TRANSLATIONS_BASE + "/langs.txt";
 var TRANSLATION_AUTHOR = "TCOAAL Translation Project";
 
+// Remote-hosted overhaul mods. Mirrors the translations source: a flat
+// listing file (mods.txt, one folder per line) discovers the published mod
+// folders, each of which exposes its content under "<folder>/www/...". Unlike
+// translations there is no per-folder manifest.json on the server, so the file
+// list is enumerated from a local working copy under mods/<folder>/www (the
+// extras content is not committed/deployed with this repo: see README).
+var EXTRAS_BASE = "https://extras.tcoaal.app/mods";
+var EXTRAS_MODS_URL = EXTRAS_BASE + "/mods.txt";
+
+/** True when path is an absolute http(s) URL (remote-hosted mods). */
+function isRemotePath(p) {
+  return typeof p === "string" && /^https?:\/\//i.test(p);
+}
+
 function walkDir(dir, base) {
   var results = [];
   var entries;
@@ -357,12 +371,12 @@ async function syncTranslations(modsData) {
       name: displayName,
       icon: baseUrl + "/icon.png",
       author: author,
-      lastUpdate: lastUpdate || existing.lastUpdate || "",
+      lastUpdate: existing.lastUpdate || lastUpdate || "",
       path: baseUrl,
       type: "translation",
       description: description,
       langFile: langFile,
-      version: manifest.version || lastUpdate || "",
+      version: manifest.version || existing.lastUpdate || lastUpdate || "",
       files: files,
     };
 
@@ -378,6 +392,188 @@ async function syncTranslations(modsData) {
   }
 
   return count;
+}
+
+/**
+ * Pick a representative icon path (relative to <folder>/www) for an overhaul
+ * mod from its file list. Overhaul mods advertise themselves with a title
+ * image; fall back to a conventional icon, then the first image present.
+ */
+function pickExtrasIconRel(files) {
+  var titles = files.filter(function (f) {
+    return /^img\/titles1\//i.test(f) && /\.(png|jpg|jpeg)$/i.test(f);
+  });
+  if (titles.length) return titles[0];
+  if (files.indexOf("img/icon.png") >= 0) return "img/icon.png";
+  var anyImg = files.filter(function (f) {
+    return /^img\/.*\.(png|jpg|jpeg)$/i.test(f);
+  });
+  return anyImg.length ? anyImg[0] : "";
+}
+
+/** Detect an overhaul mod's dialogue source file from its file list, if any. */
+function detectExtrasLangFile(files) {
+  for (var i = 0; i < files.length; i++) {
+    if (/^languages\/[^/]+\/dialogue\.(loc|pld|csv|txt)$/i.test(files[i])) {
+      return files[i];
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch the extras index (mods.txt) and emit an overhaul mod entry for each
+ * listed folder. Files are walked from the local working copy under
+ * mods/<folder>/www; the entry's path/icon point at the remote host so the
+ * client fetches assets from extras.tcoaal.app at install time.
+ *
+ * Entries are keyed by folder name and typed "overhaul": identical client
+ * semantics to local overhauls, differing only in remote asset delivery.
+ */
+async function syncExtraMods(modsData) {
+  console.log("[extras] Fetching " + EXTRAS_MODS_URL);
+  var modsTxt = await httpGetText(EXTRAS_MODS_URL);
+  if (!modsTxt) {
+    console.warn("[extras] Failed to fetch mods.txt");
+    return 0;
+  }
+  var folders = modsTxt
+    .split(/\r?\n/)
+    .map(function (s) {
+      return s.trim();
+    })
+    .filter(function (s) {
+      return s.length > 0 && !/^#/.test(s);
+    });
+
+  if (folders.length === 0) {
+    console.warn("[extras] mods.txt is empty");
+    return 0;
+  }
+
+  // Prune stale extras entries (remote path under EXTRAS_BASE) no longer
+  // listed in mods.txt.
+  var want = {};
+  for (var i = 0; i < folders.length; i++) want[folders[i]] = true;
+  var existingKeys = Object.keys(modsData);
+  for (var k = 0; k < existingKeys.length; k++) {
+    var ek = existingKeys[k];
+    var ee = modsData[ek];
+    if (
+      ee &&
+      typeof ee.path === "string" &&
+      ee.path.indexOf(EXTRAS_BASE + "/") === 0 &&
+      !want[ek]
+    ) {
+      console.log("[extras] Removing stale entry: " + ek);
+      delete modsData[ek];
+    }
+  }
+
+  var count = 0;
+  for (var j = 0; j < folders.length; j++) {
+    var folder = folders[j];
+    var modId = folder;
+    var baseUrl = EXTRAS_BASE + "/" + folder + "/www";
+    var localWww = path.join(MODS_DIR, folder, "www");
+
+    var files = walkDir(localWww, "");
+    var existing = modsData[modId] || {};
+    if (files.length === 0) {
+      if (existing.files && existing.files.length) {
+        // No local working copy this run: keep the last-known file list so a
+        // CI machine without the extras checkout doesn't wipe the manifest.
+        console.warn(
+          "[extras] " +
+            folder +
+            ": no local mods/" +
+            folder +
+            "/www; keeping existing " +
+            existing.files.length +
+            " file(s)",
+        );
+        files = existing.files.slice();
+      } else {
+        console.warn(
+          "[extras] " +
+            folder +
+            ": no local mods/" +
+            folder +
+            "/www and no existing file list; skipping",
+        );
+        continue;
+      }
+    }
+
+    var iconRel = pickExtrasIconRel(files);
+    var icon = existing.icon || (iconRel ? baseUrl + "/" + iconRel : "");
+    var langFile = existing.langFile || detectExtrasLangFile(files) || undefined;
+    var drmType = fs.existsSync(localWww) ? detectDrmType(localWww) : undefined;
+
+    var lastUpdate = existing.lastUpdate;
+    if (!lastUpdate && iconRel) {
+      lastUpdate = await httpHeadLastModified(baseUrl + "/" + iconRel);
+    }
+
+    modsData[modId] = {
+      name: existing.name || folder,
+      icon: icon,
+      author: existing.author || "",
+      lastUpdate: lastUpdate || "",
+      path: baseUrl,
+      type: "overhaul",
+      description: existing.description || "",
+      version: existing.version || lastUpdate || "",
+      files: files,
+    };
+    if (langFile) modsData[modId].langFile = langFile;
+    if (drmType) modsData[modId].drmType = drmType;
+
+    console.log(
+      "[extras] " +
+        folder +
+        ": " +
+        files.length +
+        " files" +
+        (drmType ? " [drm:" + drmType + "]" : ""),
+    );
+    count++;
+  }
+
+  return count;
+}
+
+/**
+ * Reorder modsData so remote extras overhaul mods sit immediately after the
+ * local (built-in + bundled) mods and before the translation mods. JSON object
+ * key order is insertion order, and both getModList() (client) and the Mods UI
+ * render in that order, so this controls where extras mods appear in the list.
+ */
+function reorderModsData(modsData) {
+  var base = [];
+  var extras = [];
+  var translations = [];
+  var keys = Object.keys(modsData);
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    var entry = modsData[key];
+    var type = entry && entry.type;
+    var p = entry && entry.path;
+    if (type === "translation" || key.indexOf("translation_") === 0) {
+      translations.push(key);
+    } else if (typeof p === "string" && p.indexOf(EXTRAS_BASE + "/") === 0) {
+      extras.push(key);
+    } else {
+      base.push(key);
+    }
+  }
+  var ordered = {};
+  base
+    .concat(extras, translations)
+    .forEach(function (key) {
+      ordered[key] = modsData[key];
+    });
+  return ordered;
 }
 
 /** Fetch author and last update date from a GitHub repo. */
@@ -414,7 +610,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Sync translation mods (hosted remotely) before walking local mod dirs.
+  // Sync remotely-hosted mods (translations + extras overhauls) before walking
+  // local mod dirs.
   var translationCount = await syncTranslations(modsData);
   if (translationCount > 0) {
     console.log(
@@ -422,13 +619,20 @@ async function main() {
     );
   }
 
+  var extrasCount = await syncExtraMods(modsData);
+  if (extrasCount > 0) {
+    console.log("[extras] Updated " + extrasCount + " extras mod entry(ies)");
+  }
+
   var count = 0;
   var keys = Object.keys(modsData);
   for (var i = 0; i < keys.length; i++) {
     var modId = keys[i];
     var entry = modsData[modId];
-    // Translation mods are remote-only; skip the local walk/author/DRM logic.
-    if (entry && entry.type === "translation") {
+    // Remote-hosted mods (translations + extras overhauls) are synced above;
+    // skip the local walk/author/DRM logic for anything with an absolute URL
+    // path so it isn't treated as a missing local mod and blanked out.
+    if (entry && (entry.type === "translation" || isRemotePath(entry.path))) {
       count++;
       continue;
     }
@@ -491,6 +695,10 @@ async function main() {
     );
     count++;
   }
+
+  // Place extras overhaul mods right after the local overhauls and before the
+  // translations, regardless of when their keys were inserted above.
+  modsData = reorderModsData(modsData);
 
   fs.writeFileSync(MODS_JSON, JSON.stringify(modsData, null, 2) + "\n");
 

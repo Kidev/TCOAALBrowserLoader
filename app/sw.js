@@ -35,7 +35,7 @@ const STORE_NAME = "assets";
 // their old installation: e.g. a fix to the fetch handler or a new IDB
 // schema. Pure additive features (new message types the page can feature-
 // detect) do not need a bump.
-const SW_VERSION = 5;
+const SW_VERSION = 10;
 
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
@@ -122,11 +122,7 @@ async function precacheBuiltinMods() {
       cache
         .add(new Request(url, { cache: "reload" }))
         .catch((e) =>
-          console.warn(
-            "[sw] builtin precache failed for",
-            url,
-            e && e.message,
-          ),
+          console.warn("[sw] builtin precache failed for", url, e && e.message),
         ),
     ),
   );
@@ -223,6 +219,17 @@ async function serveModAsset(logicalPath, request, preferNetwork) {
     return fetch(request);
   }
 }
+
+// Menu icons we add on top of the base game (the Achievements, Mods and Help
+// title-menu entries). A themed overhaul that re-skins the main menu can ship
+// its own versions under www/img/system/<name>.png so our additions stay on
+// theme. When such a mod is active and the engine requests one of our bundled
+// icons, serveModIconOverride() resolves the mod's replacement instead.
+const APP_ICON_MOD_OVERRIDES = {
+  "img/achievements.png": "img/system/achievements.png",
+  "img/mods.png": "img/system/mods.png",
+  "img/help.png": "img/system/help.png",
+};
 
 // IDB-backed durable copies of critical shell JSON. SHELL_CACHE is keyed by
 // SW_VERSION/SHELL_CACHE name and is wiped whenever cleanupOldShellCaches()
@@ -453,6 +460,35 @@ async function getAssetCI(db, key) {
   }
 
   return null;
+}
+
+/**
+ * Serve one of our bundled menu icons from the active mod's img/system/
+ * override when it ships one. Returns a Response when a themed replacement is
+ * found, or null so the caller falls back to the app-shell icon. Mirrors the
+ * active-mod lookup in serveFromIDB (case-insensitive direct key, dekit no-op
+ * for plain PNGs, correct decrypt for TCOAAL-encrypted assets).
+ */
+async function serveModIconOverride(logicalPath) {
+  const modRel = APP_ICON_MOD_OVERRIDES[logicalPath];
+  if (!modRel) return null;
+  let db;
+  try {
+    db = await openDB();
+  } catch {
+    return null;
+  }
+  await ensureActiveModLoaded(db);
+  if (!_activeMod) return null;
+  const modPrefix = "mod:" + _activeMod + ":";
+  const hit = await getAssetCI(db, modPrefix + modRel);
+  if (hit === null) return null;
+  const keyForDecrypt = hit.actualKey.substring(modPrefix.length);
+  const decrypted = dekit(hit.value, keyForDecrypt);
+  return new Response(decrypted, {
+    status: 200,
+    headers: { "Content-Type": "image/png" },
+  });
 }
 
 const DRM_CACHE_KEY = "__drm_cache__";
@@ -1148,6 +1184,12 @@ self.addEventListener("fetch", (event) => {
     const idbFallbackKey = SHELL_IDB_FALLBACK_KEYS[logicalPath] || null;
     event.respondWith(
       (async () => {
+        // Active-mod themed override for our menu icons (achievements/mods/
+        // help): a mod shipping img/system/<name>.png keeps the added title
+        // entries on-theme. No-op (returns null) for every other shell path.
+        const iconOverride = await serveModIconOverride(logicalPath);
+        if (iconOverride) return iconOverride;
+
         // Lazy-load the kill switch so the first request after a SW restart
         // gets the right behaviour. Falls back to "enabled" if IDB is down.
         try {
@@ -1176,9 +1218,7 @@ self.addEventListener("fetch", (event) => {
     // Thumbnails tagged "?fresh=" prefer the network so an updated mod's icon
     // appears without the user having to uninstall/reinstall it.
     const preferNetwork = url.searchParams.has("fresh");
-    event.respondWith(
-      serveModAsset(logicalPath, event.request, preferNetwork),
-    );
+    event.respondWith(serveModAsset(logicalPath, event.request, preferNetwork));
     return;
   }
 
@@ -1416,11 +1456,14 @@ async function serveFromIDB(logicalPath, request) {
 
   // 4. Extension-guessed fallback: the DRM payload requests extension-less
   //    logical paths (e.g. "data/Actors" instead of "data/Actors.json").
-  //    Try appending common extensions, hash, and look up in IDB.
+  //    Try appending common extensions and look the file up two ways: under
+  //    its plain logical name (a decrypted game dump stores "data/Actors.json"
+  //    directly; dekit() no-ops on plain content) and under its hashed name
+  //    (an encrypted install).
   if (!logicalPath.match(/\.[a-z0-9]+$/i)) {
     const GUESS = {
       data: [".json"],
-      img: [".png"],
+      img: [".png", ".jpg"],
       audio: [".ogg", ".m4a"],
       movies: [".webm"],
     };
@@ -1429,6 +1472,17 @@ async function serveFromIDB(logicalPath, request) {
     if (exts) {
       for (const ext of exts) {
         const withExt = logicalPath + ext;
+
+        // 4a. Plain logical file (decrypted dump).
+        const directExt = await getAssetCI(db, withExt);
+        if (directExt !== null) {
+          return new Response(dekit(directExt.value, directExt.actualKey), {
+            status: 200,
+            headers: { "Content-Type": mimeFor(withExt) },
+          });
+        }
+
+        // 4b. Hashed + encrypted form.
         const gHash = await hashPath(withExt);
         const gAsset = await getAsset(db, gHash);
         if (gAsset !== null) {
