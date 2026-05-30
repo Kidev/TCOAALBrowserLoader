@@ -4999,7 +4999,8 @@
     "name": "Side Dishes",
     "icon": "https://extras.tcoaal.app/mods/SD/www/img/icon.png",
     "author": "canopy",
-    "lastUpdate": "2026-05-30",
+    "addedDate": "2026-05-30",
+    "lastUpdate": "2024-10-14",
     "path": "https://extras.tcoaal.app/mods/SD/www",
     "type": "overhaul",
     "description": "Adds about an hour of content to episode 1",
@@ -6100,6 +6101,7 @@
     "drmType": "none"
   },
   "MOE": {
+    "addedDate": "2026-05-30",
     "name": "Mod of Extension",
     "icon": "https://extras.tcoaal.app/mods/MOE/www/img/titles1/title.png",
     "author": "Rainaki",
