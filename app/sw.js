@@ -67,6 +67,8 @@ const APP_SHELL = [
   "/img/bg.webp",
   "/img/mods.png",
   "/img/achievements.png",
+  "/img/achievement-locked.jpg",
+  "/img/achievement-unlocked.jpg",
   "/img/help.png",
   "/img/en.png",
   "/img/loading.png",
@@ -1337,6 +1339,8 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "img/mods.png" ||
     logicalPath === "img/bg.webp" ||
     logicalPath === "img/achievements.png" ||
+    logicalPath === "img/achievement-locked.jpg" ||
+    logicalPath === "img/achievement-unlocked.jpg" ||
     logicalPath === "img/help.png" ||
     logicalPath === "img/en.png" ||
     logicalPath === "img/loading.png" ||

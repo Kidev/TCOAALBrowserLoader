@@ -28,6 +28,16 @@
  * click-through (pointer-events:none) and only the buttons capture pointers,
  * so it never blocks taps on the rest of the screen. It is independent of the
  * active scene and survives scene transitions.
+ *
+ * Cinematic auto-hide: while a dialogue/message is on screen or a foreground
+ * event (cutscene / CG) is running on the map, every control is hidden so it
+ * never covers the art. To keep "tap to continue" working in that state, a
+ * fullscreen tap layer momentarily presses 'ok' on tap -- but only when the
+ * Mouse Control mod is inactive (the base game's DisableMouse plugin neuters
+ * clicks, so without Mouse Control nothing else would advance the text). When
+ * Mouse Control is active it already routes taps to the game, so the layer
+ * stays off and taps pass straight through. Both mods are usually active
+ * together, which is the common path.
  */
 
 (function () {
@@ -91,6 +101,54 @@
     if (typeof window.__quickSave === "function") window.__quickSave();
   }
 
+  // Cinematic gating
+
+  // True while a dialogue/message is on screen or a foreground event (cutscene
+  // / CG) is running on the map. Scoped to Scene_Map on purpose: menus, the
+  // title screen and battles still need the on-screen controller.
+  function isCinematic() {
+    try {
+      if (typeof SceneManager === "undefined") return false;
+      var scene = SceneManager._scene;
+      if (
+        !scene ||
+        typeof Scene_Map === "undefined" ||
+        !(scene instanceof Scene_Map)
+      )
+        return false;
+      if (
+        typeof $gameMessage !== "undefined" &&
+        $gameMessage &&
+        $gameMessage.isBusy()
+      )
+        return true;
+      if (
+        typeof $gameMap !== "undefined" &&
+        $gameMap &&
+        $gameMap.isEventRunning()
+      )
+        return true;
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Whether the Mouse Control mod is active (lang-shim tracks active plugin
+  // mods in localStorage._activePlugins). When active, taps already reach the
+  // game as 'ok' so our fallback tap layer stays off; when inactive, the base
+  // game's DisableMouse plugin kills clicks, so we supply tap-to-continue.
+  function isMouseControlActive() {
+    try {
+      var raw = localStorage.getItem("_activePlugins");
+      if (!raw) return false;
+      var arr = JSON.parse(raw);
+      return Array.isArray(arr) && arr.indexOf("_mouseControl") >= 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // DOM
 
   var STYLE = [
@@ -146,6 +204,16 @@
     // Quick-save cooldown: dim and ignore presses for the 1s debounce window
     // (lang-shim's window.__quickSave toggles .vc-cooldown on this button).
     "#vc-overlay .vc-save.vc-cooldown{opacity:0.4;pointer-events:none;}",
+    // Fullscreen tap-to-continue layer, shown from JS only during cinematic
+    // states with Mouse Control inactive. Transparent and pointer-events:auto
+    // so it captures taps without altering the visible art.
+    "#vc-overlay .vc-tap{position:absolute;inset:0;display:none;",
+    "  pointer-events:auto;background:transparent;",
+    "  -webkit-tap-highlight-color:transparent;}",
+    // Cinematic state (dialogue / cutscene / CG): hide every control so the
+    // art underneath is unobstructed.
+    "#vc-overlay.vc-cinematic .vc-pad,",
+    "#vc-overlay.vc-cinematic .vc-menubar{display:none;}",
   ].join("");
 
   // Classic floppy-disk "save" glyph as inline SVG (crisp + monochrome,
@@ -272,6 +340,16 @@
 
     overlay.appendChild(menubar);
 
+    // Fullscreen tap-to-continue layer for cinematic states. Hidden by
+    // default; the watch loop below shows it only while a dialogue/cutscene is
+    // up AND Mouse Control is inactive. A tap holds 'ok' (like the A button),
+    // so text advances and CG prompts proceed. Its events bubble to the
+    // overlay's swallow handlers below, so they don't leak to the game.
+    var tapLayer = document.createElement("div");
+    tapLayer.className = "vc-tap";
+    bindButton(tapLayer, "ok");
+    overlay.appendChild(tapLayer);
+
     // Stop button input from reaching the game underneath. The engine's
     // TouchInput listeners (and the Mouse Control mod, which rides on the same
     // TouchInput state) are all bubble-phase on `document`. The buttons stop
@@ -322,6 +400,27 @@
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) releaseAll();
     });
+
+    // Watch for cinematic states (dialogue / cutscene / CG) and hide the whole
+    // controller while one is up, dropping any held buttons so the character
+    // doesn't keep walking into it. The tap-to-continue layer is enabled only
+    // when Mouse Control is inactive (checked at each entry, so a live toggle
+    // is respected on the next cinematic).
+    var lastCinematic = false;
+    (function watch() {
+      var cine = isCinematic();
+      if (cine !== lastCinematic) {
+        lastCinematic = cine;
+        overlay.classList.toggle("vc-cinematic", cine);
+        if (cine) {
+          releaseAll();
+          tapLayer.style.display = isMouseControlActive() ? "none" : "block";
+        } else {
+          tapLayer.style.display = "none";
+        }
+      }
+      requestAnimationFrame(watch);
+    })();
   }
 
   if (document.body) {

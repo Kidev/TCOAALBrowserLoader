@@ -1018,6 +1018,56 @@
     return icon + (icon.indexOf("?") < 0 ? "?" : "&") + "fresh=1";
   }
 
+  // Image loader for NON-CRITICAL bitmaps that must NEVER escalate to the
+  // engine's blocking "Loading error" dialog.
+  //
+  // Used for mod / language / flag thumbnails (remote extras.tcoaal.app
+  // origins or app assets that may be absent offline) and the Continue
+  // menu's map backgrounds (a save may reference a hash not present in IDB).
+  // The stock ImageManager.loadNormalBitmap / Bitmap.load path routes a
+  // failed load through ResourceHandler -> Graphics.printLoadingError() +
+  // SceneManager.stop(), which is correct for game-critical assets but wrong
+  // here: a missing one must silently fall back, not freeze the scene (the
+  // symptom offline, where remote icons can never load). It also sidesteps
+  // the DRM's Bitmap._requestImage override, which would rewrite the URL
+  // through Crypto.resolveURL.
+  //
+  // The returned Bitmap stays width<=1 until the image decodes; on error it
+  // goes to state 'error' and notifies listeners so the caller can redraw /
+  // advance. Callers already guard on `isReady() && !isError() && width > 1`.
+  function loadSafeBitmap(url) {
+    var bitmap = Object.create(Bitmap.prototype);
+    bitmap._defer = true;
+    bitmap.initialize();
+    bitmap._url = url;
+    bitmap._loadingState = "requesting";
+    var image = new Image();
+    // Cross-origin thumbnails (extras.tcoaal.app) need CORS so the canvas /
+    // WebGL texture isn't tainted when blt into a window's contents. The
+    // remote host already serves these CORS-enabled (the DRM path XHRs them).
+    try {
+      if (new URL(url, location.href).origin !== location.origin) {
+        image.crossOrigin = "anonymous";
+      }
+    } catch (e) {}
+    image.addEventListener("load", function () {
+      bitmap._image = image;
+      bitmap._loadingState = "requestCompleted";
+      try {
+        bitmap.decode(); // -> 'loaded', builds the texture, fires listeners
+      } catch (e) {
+        bitmap._loadingState = "error";
+        bitmap._callLoadListeners();
+      }
+    });
+    image.addEventListener("error", function () {
+      bitmap._loadingState = "error";
+      bitmap._callLoadListeners();
+    });
+    image.src = url;
+    return bitmap;
+  }
+
   // Four-finger touch toggles the browser's native fullscreen. The touchstart
   // itself is the user gesture required by the Fullscreen API, so we can call
   // requestFullscreen() inline. Bound in the capture phase so it runs before
@@ -3106,10 +3156,14 @@
           cb(_mapBgImgCache[hash]);
           return;
         }
-        // Engine-native load path: the SW decrypts the hashed file. Poll the
-        // bitmap state (load listeners fire on success only) so a missing or
-        // erroring image advances to the next candidate folder, and an
-        // exhausted list resolves to null instead of hanging the pending count.
+        // The SW decrypts the hashed file. Poll the bitmap state (load
+        // listeners fire on success only) so a missing or erroring image
+        // advances to the next candidate folder, and an exhausted list
+        // resolves to null instead of hanging the pending count. Uses
+        // loadSafeBitmap rather than Bitmap.load so a genuinely-missing
+        // background (a save referencing a hash not in IDB) fails fast to
+        // state 'error' here instead of going through ResourceHandler's 3
+        // retries and then the blocking printLoadingError dialog.
         var dir = 0;
         function tryDir() {
           if (dir >= MAP_BG_DIRS.length) {
@@ -3117,7 +3171,7 @@
             cb(null);
             return;
           }
-          var bmp = Bitmap.load(MAP_BG_DIRS[dir] + hash + ".png");
+          var bmp = loadSafeBitmap(MAP_BG_DIRS[dir] + hash + ".png");
           var tries = 0;
           (function poll() {
             if (bmp.isReady() && !(bmp.isError && bmp.isError())) {
@@ -4483,7 +4537,7 @@
         var flags = getModFlagList(mods[i]);
         for (var j = 0; j < flags.length; j++) {
           if (!flags[j].url) continue;
-          var bmp = ImageManager.loadNormalBitmap(flags[j].url, 0);
+          var bmp = loadSafeBitmap(flags[j].url);
           win._iconBitmaps["flag:" + flags[j].key] = bmp;
           bmp.addLoadListener(function () {
             win.refresh();
@@ -4815,7 +4869,7 @@
       var self = this;
       var mod = this._mods[0];
       if (mod && mod.icon) {
-        var bmp = ImageManager.loadNormalBitmap(modIconUrl(mod.icon), 0);
+        var bmp = loadSafeBitmap(modIconUrl(mod.icon));
         this._iconBitmaps[mod.key] = bmp;
         bmp.addLoadListener(function () {
           self.refresh();
@@ -4908,7 +4962,7 @@
       for (var i = 0; i < this._mods.length; i++) {
         var mod = this._mods[i];
         if (mod.icon) {
-          var bmp = ImageManager.loadNormalBitmap(modIconUrl(mod.icon), 0);
+          var bmp = loadSafeBitmap(modIconUrl(mod.icon));
           this._iconBitmaps[mod.key] = bmp;
           bmp.addLoadListener(function () {
             self.refresh();
@@ -5114,7 +5168,7 @@
         var L = this._langs[i];
         var url = langRowIconUrl(L);
         if (url) {
-          var bmp = ImageManager.loadNormalBitmap(url, 0);
+          var bmp = loadSafeBitmap(url);
           this._iconBitmaps[L.key] = bmp;
           bmp.addLoadListener(function () {
             self.refresh();

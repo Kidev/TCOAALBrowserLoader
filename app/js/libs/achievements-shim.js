@@ -276,9 +276,42 @@
   var _iconLockedBmp = null;
   var _iconsStarted = false;
 
+  // Load an icon without escalating a failure to the engine's blocking
+  // "Loading error" dialog. The achievement images are bundled app assets,
+  // but if one is missing (e.g. offline before the shell precache landed)
+  // the stock Bitmap.load path would route the failure through
+  // ResourceHandler -> Graphics.printLoadingError + SceneManager.stop(),
+  // freezing the Achievements scene. Instead we build the bitmap from a raw
+  // Image and, on error, leave it unloaded so drawItem falls back to the
+  // placeholder rectangle.
+  function _loadSafeIcon(url) {
+    var bitmap = Object.create(Bitmap.prototype);
+    bitmap._defer = true;
+    bitmap.initialize();
+    bitmap._url = url;
+    bitmap._loadingState = "requesting";
+    var image = new Image();
+    image.addEventListener("load", function () {
+      bitmap._image = image;
+      bitmap._loadingState = "requestCompleted";
+      try {
+        bitmap.decode();
+      } catch (e) {
+        bitmap._loadingState = "error";
+        bitmap._callLoadListeners();
+      }
+    });
+    image.addEventListener("error", function () {
+      bitmap._loadingState = "error";
+      bitmap._callLoadListeners();
+    });
+    image.src = url;
+    return bitmap;
+  }
+
   function _preloadIcon(url, setter) {
     if (typeof Bitmap === "undefined") return;
-    var bmp = Bitmap.load(url);
+    var bmp = _loadSafeIcon(url);
     setter(bmp);
     bmp.addLoadListener(function () {
       var sc = typeof SceneManager !== "undefined" && SceneManager._scene;

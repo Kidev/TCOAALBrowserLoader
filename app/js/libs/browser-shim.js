@@ -586,6 +586,31 @@
       };
     }
 
+    // "Now Loading" image: force our bundled themed loading.png.
+    //
+    // The stock engine sets Graphics._loadingImage from a plain
+    // `new Image()` whose src is the canonical "img/system/Loading.png",
+    // which the SW/server swap for /img/loading.png. But the DRM payload
+    // overrides Graphics.setLoadingImage to route through
+    // ImageManager.loadNormalBitmap -> Bitmap._requestImage ->
+    // Crypto.resolveURL, which (when an overhaul is active and its Copylist
+    // is loaded) resolves the canonical path to the MOD's own encrypted
+    // asset. The canonical-path swap never fires and the player sees the
+    // mod/game loading image instead of ours. Bypass the whole pipeline:
+    // load /img/loading.png straight into Graphics._loadingImage as a raw
+    // Image (exactly what Graphics.draw consumes), so the themed image
+    // shows in every context, online or offline.
+    if (typeof Graphics !== "undefined") {
+      Graphics.setLoadingImage = function () {
+        var img = new Image();
+        img.src = "/img/loading.png";
+        Graphics._loadingImage = img;
+      };
+      // Re-apply now in case the engine already called the original during
+      // boot before these overrides were installed.
+      Graphics.setLoadingImage();
+    }
+
     // Lang.search: single-language browser variant. The SW synthesises
     // /lang-data.json by merging the base CLD with any active translation
     // mod, so we don't enumerate languages client-side; one entry is enough.
