@@ -2840,6 +2840,15 @@
         this._saveConfirmWindow.hide();
         this._listWindow.refresh();
         this._listWindow.activate();
+        // The continue-menu map background caches the resolved map id per save
+        // path and only re-evaluates when the hovered index changes. After a
+        // delete the cursor stays on the (now empty) slot, so drop the cached
+        // id and force Scene_Load to re-resolve the background next frame:
+        // otherwise the deleted save's map stays drawn.
+        if (window.__saveDisplay && window.__saveDisplay.invalidate) {
+          window.__saveDisplay.invalidate(id);
+        }
+        this._mapBgIndex = null;
         this._pendingDeleteId = null;
         this._pendingDeletePath = null;
       };
@@ -3229,6 +3238,10 @@
               }
               done();
             });
+          } else {
+            // No ground layer for this map: clear any leftover from the
+            // previously hovered slot so it isn't drawn under the parallax.
+            self._mapBgGround.bitmap = null;
           }
           if (info.par) {
             loadMapBgImage(info.par, function (b) {
@@ -3241,6 +3254,10 @@
               }
               done();
             });
+          } else {
+            // No parallax for this map: clear the previous slot's parallax so
+            // it isn't left drawn on top of the new ground.
+            self._mapBgPar.bitmap = null;
           }
         });
       };
