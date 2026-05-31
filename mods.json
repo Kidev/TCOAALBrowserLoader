@@ -1910,7 +1910,6 @@
       "mods/The coffin of Andy and July/img/pictures/wake_1b.png.olid",
       "mods/The coffin of Andy and July/img/titles1/Book.png.olid",
       "mods/The coffin of Andy and July/languages/english.json",
-      "mods/The coffin of Andy and July/mod.json",
       "package.json"
     ],
     "version": "bfab8c0",
@@ -7197,7 +7196,6 @@
       "js/rpg_sprites.js",
       "js/rpg_windows.js",
       "languages/english/dialogue.loc",
-      "mod.json",
       "package.json"
     ],
     "langFile": "languages/english/dialogue.loc",
