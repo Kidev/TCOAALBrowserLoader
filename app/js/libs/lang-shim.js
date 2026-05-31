@@ -710,6 +710,24 @@
     return out;
   }
 
+  /**
+   * Translations (from mods.json) that target a specific mod, keyed by the
+   * mod's mods.json id ("BASE" for the plain base game). Used to draw the
+   * informative flag row next to a mod's type tag in the Mods list.
+   */
+  function getModTranslations(modKey) {
+    var out = [];
+    if (!_modsData) return out;
+    var keys = Object.keys(_modsData);
+    for (var i = 0; i < keys.length; i++) {
+      var e = _modsData[keys[i]];
+      if (e && isTranslationType(e.type) && (e.mod || "BASE") === modKey) {
+        out.push({ key: keys[i], icon: e.icon || "" });
+      }
+    }
+    return out;
+  }
+
   /** Whether the title screen should expose the Language menu entry. */
   function shouldShowLanguage() {
     return (
@@ -3868,6 +3886,66 @@
       return mod.path && mod.path.indexOf("mods/_") === 0;
     }
 
+    // Language flags to show beside a mod's tag: English first (always: the
+    // original language), then each available translation. Only language-
+    // bearing mods (overhauls) get flags; plugins and translation rows get
+    // none. Each entry is { key, url }; the English flag is the bundled
+    // app/img/en.png.
+    function getModFlagList(mod) {
+      if (!mod || isPluginType(mod.type) || isTranslationType(mod.type)) {
+        return [];
+      }
+      var list = [{ key: "__english__", url: "img/en.png" }];
+      var trs = getModTranslations(mod.key);
+      for (var i = 0; i < trs.length; i++) {
+        list.push({
+          key: trs[i].key,
+          url: langRowIconUrl({ key: trs[i].key, icon: trs[i].icon }),
+        });
+      }
+      return list;
+    }
+
+    // Preload the flag icons for every mod in `win._mods`, storing them in
+    // win._iconBitmaps under "flag:<key>" so drawModTagFlags can draw them
+    // synchronously. Called from each list window's _loadIcons.
+    function loadModFlagIcons(win) {
+      var mods = win._mods || [];
+      for (var i = 0; i < mods.length; i++) {
+        var flags = getModFlagList(mods[i]);
+        for (var j = 0; j < flags.length; j++) {
+          if (!flags[j].url) continue;
+          var bmp = ImageManager.loadNormalBitmap(flags[j].url, 0);
+          win._iconBitmaps["flag:" + flags[j].key] = bmp;
+          bmp.addLoadListener(function () {
+            win.refresh();
+          });
+        }
+      }
+    }
+
+    // Draw the small, informative row of language flags for a mod, starting at
+    // x and vertically centred on the line whose top is `topY`. Each flag is
+    // scaled to the tag's text height with a small gap between them. Purely
+    // informative: not interactive. Bitmaps come from win._iconBitmaps
+    // ("flag:<key>"), preloaded by loadModFlagIcons.
+    function drawModTagFlags(win, mod, x, topY, iconCache) {
+      var flags = getModFlagList(mod);
+      if (!flags.length) return;
+      var flagH = win.contents.fontSize + 2;
+      var gap = 6;
+      var fy = topY + Math.floor((win.lineHeight() - flagH) / 2);
+      var maxX = win.contents.width - 4;
+      for (var i = 0; i < flags.length; i++) {
+        var bmp = iconCache && iconCache["flag:" + flags[i].key];
+        if (!bmp || !bmp.isReady() || bmp.width <= 1) continue;
+        var fw = Math.max(1, Math.round((bmp.width * flagH) / bmp.height));
+        if (x + fw > maxX) break;
+        win.contents.blt(bmp, 0, 0, bmp.width, bmp.height, x, fy, fw, flagH);
+        x += fw + gap;
+      }
+    }
+
     // Shared per-row renderer for Window_ModList and Window_ModActive so
     // both surfaces display a mod with the exact same layout (icon, name,
     // by-author, last-update, type tag, install status, description, and
@@ -3979,12 +4057,15 @@
         var activeKind = isTranslationType(mod.type)
           ? "translation"
           : "overhaul";
+        var activeLabel = "[Active " + activeKind + " mod]";
         win.contents.textColor = "#88ff88";
-        win.drawText(
-          "[Active " + activeKind + " mod]",
-          textX,
+        win.drawText(activeLabel, textX, lineY + 2, availW);
+        drawModTagFlags(
+          win,
+          mod,
+          textX + win.textWidth(activeLabel) + 10,
           lineY + 2,
-          availW,
+          iconCache,
         );
       } else if (showTypeTag) {
         var rawType = (mod.type || "overhaul")
@@ -3999,6 +4080,15 @@
             ? "#ffcc66"
             : "#ff8888";
         win.drawText(typeLabel, textX, lineY + 2, availW);
+        // Informative: each language flag available for this mod, drawn at the
+        // tag's text size with a small gap between them. Not interactive.
+        drawModTagFlags(
+          win,
+          mod,
+          textX + win.textWidth(typeLabel) + 10,
+          lineY + 2,
+          iconCache,
+        );
       }
 
       if (showInstallStatus) {
@@ -4163,6 +4253,7 @@
           self.refresh();
         });
       }
+      loadModFlagIcons(this);
       var def = getDefaultModIcon();
       if (def) {
         def.addLoadListener(function () {
@@ -4256,6 +4347,7 @@
           });
         }
       }
+      loadModFlagIcons(this);
       var defIcon = getDefaultModIcon();
       if (defIcon) {
         defIcon.addLoadListener(function () {

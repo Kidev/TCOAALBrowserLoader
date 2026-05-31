@@ -108,6 +108,8 @@ async function precacheShell() {
 const BUILTIN_MOD_ASSETS = [
   "/mods/_mouseControl/www/img/icon.png",
   "/mods/_mouseControl/www/js/plugins/MouseControl.js",
+  "/mods/_virtualController/www/img/icon.png",
+  "/mods/_virtualController/www/js/plugins/VirtualController.js",
   "/mods/_unlockAll/www/img/icon.png",
   "/mods/_unlockAll/www/js/plugins/UnlockAll.js",
   "/mods/_AnalogMove/www/img/icon.png",

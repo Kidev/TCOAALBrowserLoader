@@ -12,6 +12,19 @@
       "js/plugins/MouseControl.js"
     ]
   },
+  "_virtualController": {
+    "name": "Virtual Controller",
+    "icon": "mods/_virtualController/www/img/icon.png",
+    "path": "mods/_virtualController",
+    "type": "built-in plugin",
+    "description": "On-screen controller: a D-pad on the left and four action buttons on the right",
+    "author": "kidev",
+    "version": "440193a",
+    "files": [
+      "img/icon.png",
+      "js/plugins/VirtualController.js"
+    ]
+  },
   "_unlockAll": {
     "name": "Unlocker",
     "path": "mods/_unlockAll",
