@@ -432,6 +432,11 @@ async function syncTranslations(modsData) {
 
     modsData[p.key] = {
       name: displayName,
+      // Preserve the curated manual field at a stable position (right after
+      // name). JSON.stringify omits it when undefined. Appending it at the end
+      // instead would let a user's top-placed addedDate become a duplicate key
+      // that JSON.parse silently drops on the next run.
+      addedDate: existing.addedDate,
       icon: p.baseUrl + "/icon.png",
       author: author,
       lastUpdate: existing.lastUpdate || lastUpdate || "",
@@ -443,7 +448,6 @@ async function syncTranslations(modsData) {
       version: manifest.version || existing.lastUpdate || lastUpdate || "",
       files: files,
     };
-    if (existing.addedDate) modsData[p.key].addedDate = existing.addedDate;
 
     console.log(
       "[translations] " +
@@ -574,7 +578,11 @@ async function syncExtraMods(modsData) {
     var icon = existing.icon || (iconRel ? baseUrl + "/" + iconRel : "");
     var langFile =
       existing.langFile || detectExtrasLangFile(files) || undefined;
-    var drmType = fs.existsSync(localWww) ? detectDrmType(localWww) : undefined;
+    // Detect from the local working copy when present; otherwise keep the
+    // last-known value so a CI run without the extras checkout doesn't drop it.
+    var drmType =
+      (fs.existsSync(localWww) ? detectDrmType(localWww) : undefined) ||
+      existing.drmType;
 
     var lastUpdate = existing.lastUpdate;
     if (!lastUpdate && iconRel) {
@@ -583,6 +591,9 @@ async function syncExtraMods(modsData) {
 
     modsData[modId] = {
       name: existing.name || folder,
+      // Curated manual field kept at a stable position (see translations
+      // rebuild above); omitted by JSON.stringify when undefined.
+      addedDate: existing.addedDate,
       icon: icon,
       author: existing.author || "",
       lastUpdate: lastUpdate || "",
@@ -592,7 +603,6 @@ async function syncExtraMods(modsData) {
       version: existing.version || lastUpdate || "",
       files: files,
     };
-    if (existing.addedDate) modsData[modId].addedDate = existing.addedDate;
     if (langFile) modsData[modId].langFile = langFile;
     if (drmType) modsData[modId].drmType = drmType;
 

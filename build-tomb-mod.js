@@ -10,7 +10,9 @@
  *   assets       full files copied verbatim (new maps, images, ...).
  *   imageDeltas  "img/.../X.png.olid"  OLID binary image deltas over a base PNG.
  *   languages    "languages/<lang>.json"  deep-merge deltas over a base language.
- *   plugins      RPG Maker plugins (build-time generators are pre-baked, not shipped).
+ *   plugins      RPG Maker plugins. Runtime plugins are shipped verbatim and
+ *                registered in js/plugins.js; build-time generators
+ *                (CanopyImageBuilder) are pre-baked offline and not shipped.
  *
  * Some mods (e.g. Side Dishes) additionally ship a build-time PIXI image
  * compositor, CanopyImageBuilder, that assembles brand-new images from base
@@ -934,6 +936,107 @@ const FILE_CATEGORIES = [
   "plugins",
 ];
 
+// Plugins in a mod's `plugins` manifest fall into two kinds. Build-time
+// generators (CanopyImageBuilder) assemble assets offline; their outputs are
+// pre-baked by this tool and the plugin itself needs Node + a GPU canvas, so it
+// is inert (or crashing) in the browser and must NOT be shipped. Every other
+// entry is a genuine RPG Maker *runtime* plugin (e.g. HIME_MultipleInventories)
+// that the engine only loads if it is both present on disk AND listed in
+// js/plugins.js: so we ship the file verbatim and register it.
+const BUILD_TIME_PLUGINS = new Set(["CanopyImageBuilder"]);
+
+/**
+ * Extract a plugin's default parameters from its RPG Maker annotation block,
+ * mirroring what the editor bakes into plugins.js: each `@param X` declares a
+ * key, the following `@default Y` (before the next `@param`) seeds its value.
+ * Without this, a shipped plugin runs with every parameter undefined because
+ * PluginManager.parameters reads only what is in plugins.js, not the @default
+ * fallbacks.
+ */
+function extractPluginParams(src) {
+  const params = {};
+  let current = null;
+  for (const line of src.split(/\r?\n/)) {
+    const pm = line.match(/^\s*\*?\s*@param\s+(.+?)\s*$/);
+    if (pm) {
+      current = pm[1];
+      if (!(current in params)) params[current] = "";
+      continue;
+    }
+    const dm = line.match(/^\s*\*?\s*@default\s?(.*)$/);
+    if (dm && current !== null) params[current] = dm[1].trim();
+  }
+  return params;
+}
+
+/** Existing plugin names in a $plugins array body. Parses the (possibly
+ *  trailing-comma'd) body when it can; otherwise falls back to a name scan. */
+function existingPluginNames(body) {
+  const names = new Set();
+  try {
+    // RPG Maker tolerates a trailing comma before "]"; JSON does not.
+    const arr = JSON.parse("[" + body.replace(/,\s*$/, "") + "]");
+    for (const e of arr) if (e && e.name) names.add(e.name);
+    return names;
+  } catch {
+    for (const m of body.matchAll(/"name"\s*:\s*"([^"]+)"/g)) names.add(m[1]);
+    return names;
+  }
+}
+
+/**
+ * Register newly shipped runtime plugins in the output js/plugins.js so the
+ * engine actually loads them (it ignores plugin files absent from $plugins). In
+ * full mode plugins.js was already written from the base in Phase 1; in thin
+ * mode we read it from the base and ship a patched copy. New entries are
+ * appended *textually* (no reserialize, so existing formatting and any trailing
+ * comma survive) right before the closing "]"; plugins already listed are left
+ * untouched. `plugins` is [{ name, params }].
+ */
+function registerPlugins(outWww, baseRoot, plugins, failures) {
+  const failAll = (reason) => {
+    for (const p of plugins) {
+      failures.push({ rel: "js/plugins/" + p.name + ".js", reason });
+    }
+  };
+
+  const outPluginsJs = path.join(outWww, "js/plugins.js");
+  const text = isFile(outPluginsJs)
+    ? fs.readFileSync(outPluginsJs, "utf8")
+    : resolveBaseText(baseRoot, "js/plugins.js");
+  if (text == null) {
+    return failAll("cannot register plugin: js/plugins.js not found");
+  }
+
+  const open = text.match(/\$plugins\s*=\s*\[/);
+  const closeIdx = text.lastIndexOf("]");
+  if (!open || closeIdx <= open.index + open[0].length - 1) {
+    return failAll("cannot register plugin: $plugins array not found");
+  }
+  const bodyStart = open.index + open[0].length; // just after "["
+  const body = text.slice(bodyStart, closeIdx);
+
+  const present = existingPluginNames(body);
+  const toAdd = plugins.filter((p) => !present.has(p.name));
+  if (!toAdd.length) return; // every plugin already registered in the base
+
+  const entries = toAdd
+    .map((p) =>
+      JSON.stringify({
+        name: p.name,
+        status: true,
+        description: "",
+        parameters: p.params,
+      }),
+    )
+    .join(",\n");
+
+  let head = text.slice(0, closeIdx).replace(/\s+$/, ""); // drop newline before "]"
+  if (!head.endsWith("[") && !head.endsWith(",")) head += ",";
+  const rebuilt = head + "\n" + entries + "\n" + text.slice(closeIdx);
+  writeOut(outWww, "js/plugins.js", Buffer.from(rebuilt, "utf8"));
+}
+
 /**
  * Build a layered view of the mod: the --diff mod plus any --overlay mods on
  * top. Returns { manifest, resolve(relPath) -> absPath|null, canopyInputDir }.
@@ -1036,6 +1139,8 @@ async function build(opts) {
     imageDeltas: 0,
     canopy: 0,
     languages: 0,
+    plugins: 0,
+    pluginsSkipped: 0,
   };
   const failures = [];
 
@@ -1129,6 +1234,35 @@ async function build(opts) {
     }
     writeOut(outWww, logical, fs.readFileSync(abs));
     stats.assets++;
+  }
+
+  // Phase 2b: runtime plugins. Ship genuine RPG Maker plugins verbatim and
+  // register them in js/plugins.js (the engine ignores unlisted plugin files).
+  // Build-time generators (CanopyImageBuilder) are pre-baked elsewhere and stay
+  // out of the shipped game.
+  const runtimePlugins = []; // [{ name, params }]
+  for (const rel of files.plugins) {
+    const logical = rel.replace(/^\//, ""); // js/plugins/<name>.js
+    const name = path.basename(logical).replace(/\.js$/i, "");
+    if (BUILD_TIME_PLUGINS.has(name)) {
+      stats.pluginsSkipped++;
+      continue;
+    }
+    const abs = mod.resolve(logical);
+    if (!abs) {
+      failures.push({ rel, reason: "plugin missing from mod" });
+      continue;
+    }
+    const src = fs.readFileSync(abs);
+    writeOut(outWww, logical, src);
+    runtimePlugins.push({
+      name,
+      params: extractPluginParams(src.toString("utf8")),
+    });
+    stats.plugins++;
+  }
+  if (runtimePlugins.length) {
+    registerPlugins(outWww, baseRoot, runtimePlugins, failures);
   }
 
   // Phase 3: image deltas (.olid).
@@ -1241,8 +1375,11 @@ async function build(opts) {
       `  CanopyImageBuilder images: ${stats.canopy}\n` +
       `  languages baked (dialogue.loc): ${stats.languages}\n` +
       (stats.icon ? `  mod icon: img/icon.png\n` : "") +
-      (files.plugins.length
-        ? `  plugins skipped (build-time/inert in browser): ${files.plugins.length}\n`
+      (stats.plugins
+        ? `  runtime plugins (shipped + registered): ${stats.plugins}\n`
+        : "") +
+      (stats.pluginsSkipped
+        ? `  plugins skipped (build-time/inert in browser): ${stats.pluginsSkipped}\n`
         : "") +
       `  failures: ${failures.length}`,
   );
@@ -1396,8 +1533,9 @@ Usage:
 
 Handles every mod.json files category: dataDeltas (.jsond JSON Patch), assets
 (verbatim), imageDeltas (.olid), languages (baked into plain-JSON dialogue.loc),
-plus offline-rendered CanopyImageBuilder images. Image categories need:
-npm install @napi-rs/canvas
+runtime plugins (shipped + registered in js/plugins.js; build-time generators
+like CanopyImageBuilder are pre-baked, not shipped), plus offline-rendered
+CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
 `;
 
 async function main() {
