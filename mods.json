@@ -6,7 +6,7 @@
     "type": "built-in plugin",
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "files": [
       "img/icon.png",
       "js/plugins/MouseControl.js"
@@ -19,7 +19,7 @@
     "type": "built-in plugin",
     "description": "On-screen controller: a D-pad on the left and four action buttons on the right",
     "author": "kidev",
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "files": [
       "img/icon.png",
       "js/plugins/VirtualController.js"
@@ -32,7 +32,7 @@
     "type": "built-in plugin",
     "description": "While enabled, the vision room, visions and stars are all available",
     "author": "kidev",
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "requiresBaseGame": true,
     "files": [
       "img/icon.png",
@@ -46,7 +46,7 @@
     "type": "built-in plugin",
     "description": "Changes party character movement to dot movement that does not depend on tiles",
     "author": "Sanshiro",
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "lastUpdate": "2024-03-29",
     "files": [
       "img/icon.png",
@@ -61,7 +61,7 @@
     "type": "built-in plugin",
     "description": "Add a message backlog function to the game's message system (shortcut: TAB)",
     "author": "Yanfly",
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "lastUpdate": "2024-03-29",
     "files": [
       "img/icon.png",
@@ -1910,9 +1910,10 @@
       "mods/The coffin of Andy and July/img/pictures/wake_1b.png.olid",
       "mods/The coffin of Andy and July/img/titles1/Book.png.olid",
       "mods/The coffin of Andy and July/languages/english.json",
+      "mods/The coffin of Andy and July/mod.json",
       "package.json"
     ],
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "drmType": "none"
   },
   "TCOAALili": {
@@ -2973,7 +2974,7 @@
       "languages/english/dialogue.loc",
       "package.json"
     ],
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "drmType": "direct"
   },
   "TLCOAAA": {
@@ -3754,7 +3755,7 @@
       "js/rpg_windows.js",
       "package.json"
     ],
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "drmType": "direct"
   },
   "TDOAAL": {
@@ -3765,7 +3766,7 @@
     "description": "Adds voice acting to Chapter 1 (FenrirtheWulf, iamyourmagician, Adoxographist, PatchumiVT, Shami, WesternShadow, Zombi)",
     "lastUpdate": "2025-09-15",
     "author": "6ExtraOrdinary9",
-    "version": "bfab8c0",
+    "version": "424d6e4",
     "files": [
       "audio/bgm/Sexy Raidish/1/Voice/A1",
       "audio/bgm/Sexy Raidish/1/Voice/A10",
@@ -5010,7 +5011,7 @@
   "SD": {
     "name": "Side Dishes",
     "addedDate": "2026-05-30",
-    "icon": "https://extras.tcoaal.app/mods/SD/www/img/icon.png",
+    "icon": "https://extras.tcoaal.app/mods/SD/www/img/titles1/title.png",
     "author": "canopy",
     "lastUpdate": "2024-10-14",
     "path": "https://extras.tcoaal.app/mods/SD/www",
@@ -5420,7 +5421,6 @@
       "img/faces/sk_sure[BUST].png",
       "img/faces/sk_surprise[BUST].png",
       "img/faces/sk_teary[BUST].png",
-      "img/icon.png",
       "img/parallaxes/ground10.png",
       "img/parallaxes/ground11.png",
       "img/parallaxes/ground12.png",
@@ -6066,6 +6066,7 @@
       "img/tilesets/Outside_A5.png",
       "img/titles1/Book.png",
       "img/titles1/black.png",
+      "img/titles1/title.png",
       "img/titles2/Floral.png",
       "img/titles2/Medieval.png",
       "index.html",
@@ -7202,8 +7203,8 @@
     "drmType": "none"
   },
   "TCOAAC": {
-    "addedDate": "2026-05-31",
     "name": "The Coffin of Andy and Catley",
+    "addedDate": "2026-05-31",
     "icon": "https://extras.tcoaal.app/mods/TCOAAC/www/img/titles1/Book.png",
     "author": "lectryn",
     "lastUpdate": "2024",
@@ -7674,7 +7675,6 @@
       "img/faces/sk_sure[BUST].png",
       "img/faces/sk_surprise[BUST].png",
       "img/faces/sk_teary[BUST].png",
-      "img/icon.png",
       "img/parallaxes/ground10.png",
       "img/parallaxes/ground11.png",
       "img/parallaxes/ground12.png",
@@ -8217,6 +8217,7 @@
       "img/titles1/Book.png",
       "img/titles1/Book_cat.png",
       "img/titles1/black.png",
+      "img/titles1/title.png",
       "img/titles2/Floral.png",
       "img/titles2/Medieval.png",
       "index.html",

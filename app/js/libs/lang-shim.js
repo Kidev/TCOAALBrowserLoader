@@ -3409,6 +3409,11 @@
       // produced: no save contents, missing map JSON, missing engine deps, or
       // a render error.
       var _sceneSnapCache = {};
+      // Per-slot flag: the saved moment is a full blackout (cutscene fade), so
+      // the live game loads into a black screen. The preview neutralizes that
+      // to show the last map, but the seamless cut-in must instead fade the
+      // preview to black so the load doesn't flash straight to black.
+      var _sceneSnapBlackout = {};
       // Globals the saved state stands in for while the spriteset is built and
       // snapped. Swapped in only across synchronous spans, always restored
       // before any async yield, so the live (title-era) globals are never seen
@@ -3429,6 +3434,96 @@
         "$gameTroop",
         "$dataMap",
       ];
+
+      // True when a rendered snapshot is essentially a black screen: the
+      // hallmark of a save captured during a cutscene fade (no dialogue yet),
+      // where the previewed map would be far more useful than a black void.
+      // Samples a coarse grid from one full readback; a pixel counts as "dark"
+      // when nearly transparent or near-black. Requires >=99% dark so genuinely
+      // dim-but-meaningful scenes (a night tint, a shadowed room) are kept.
+      function isBitmapMostlyBlack(bmp) {
+        try {
+          var ctx = bmp && bmp._context;
+          var w = bmp && bmp.width;
+          var h = bmp && bmp.height;
+          if (!ctx || !w || !h) return false;
+          var data = ctx.getImageData(0, 0, w, h).data;
+          var cols = 24;
+          var rows = 18;
+          var dark = 0;
+          var total = 0;
+          for (var iy = 0; iy < rows; iy++) {
+            var py = Math.min(h - 1, Math.floor(((iy + 0.5) / rows) * h));
+            for (var ix = 0; ix < cols; ix++) {
+              var px = Math.min(w - 1, Math.floor(((ix + 0.5) / cols) * w));
+              var o = (py * w + px) * 4;
+              total++;
+              if (
+                data[o + 3] < 8 ||
+                (data[o] < 12 && data[o + 1] < 12 && data[o + 2] < 12)
+              ) {
+                dark++;
+              }
+            }
+          }
+          return total > 0 && dark / total >= 0.99;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      // Strip the darkening sources that produce a full-black cutscene frame:
+      // the screen tint (a [-255,-255,-255] blackout tone is kept by
+      // swapInSavedState as a "lasting tone"), the brightness fade, and any
+      // picture overlays (a full-screen black picture used as a manual fade).
+      // Only invoked once the snapshot already tested >=99% black, so the only
+      // thing these can be hiding is the map itself: there is no meaningful
+      // picture to lose. Returns a restore fn: the screen lives on the shared
+      // `_saveContentsCache` (browser-shim), reused across Continue visits, so
+      // these edits MUST be undone after the re-render or the next visit's
+      // first snap would already be de-blacked and blackout would go
+      // undetected (-> a seamless cut-in that flashes to black).
+      function neutralizeBlackout(screen) {
+        if (!screen) return function () {};
+        var savedTone = screen._tone;
+        var savedToneTarget = screen._toneTarget;
+        var savedToneDuration = screen._toneDuration;
+        var savedBrightness = screen._brightness;
+        var savedPics = null;
+        screen._tone = [0, 0, 0, 0];
+        screen._toneTarget = [0, 0, 0, 0];
+        screen._toneDuration = 0;
+        screen._brightness = 255;
+        if (screen._pictures) {
+          savedPics = screen._pictures.map(function (p) {
+            return p
+              ? { p: p, o: p._opacity, to: p._targetOpacity, d: p._duration }
+              : null;
+          });
+          screen._pictures.forEach(function (p) {
+            if (p) {
+              p._opacity = 0;
+              p._targetOpacity = 0;
+              p._duration = 0;
+            }
+          });
+        }
+        return function restore() {
+          screen._tone = savedTone;
+          screen._toneTarget = savedToneTarget;
+          screen._toneDuration = savedToneDuration;
+          screen._brightness = savedBrightness;
+          if (savedPics) {
+            savedPics.forEach(function (s) {
+              if (s) {
+                s.p._opacity = s.o;
+                s.p._targetOpacity = s.to;
+                s.p._duration = s.d;
+              }
+            });
+          }
+        };
+      }
 
       function renderSaveSceneSnapshot(savefileId, cb) {
         if (Object.prototype.hasOwnProperty.call(_sceneSnapCache, savefileId)) {
@@ -3459,8 +3554,9 @@
           cb(null);
           return;
         }
-        function finish(bmp) {
+        function finish(bmp, blackout) {
           _sceneSnapCache[savefileId] = bmp || null;
+          _sceneSnapBlackout[savefileId] = !!blackout;
           cb(bmp || null);
         }
         fetch("data/Map" + pad3(mapId) + ".json")
@@ -3489,6 +3585,22 @@
         });
         window.$gameMap = contents.map;
         window.$gamePlayer = contents.player;
+        // Followers gathered onto the leader (the engine's gatherFollowers,
+        // common during cutscenes/dialogue) sit on the player's exact tile and
+        // render as a sprite stacked directly under the player avatar, reading
+        // as a duplicate of the controlled character. Blank the image of any
+        // follower co-located with the player so only the player shows at that
+        // tile; trailing followers on other tiles keep their graphic. The save
+        // is a throwaway parsed copy, so this never touches the live party.
+        var _ply = contents.player;
+        if (_ply && _ply._followers && _ply._followers._data) {
+          _ply._followers._data.forEach(function (f) {
+            if (f && f._x === _ply._x && f._y === _ply._y) {
+              f._characterName = "";
+              f._characterIndex = 0;
+            }
+          });
+        }
         window.$gameScreen = contents.screen;
         window.$gameSwitches = contents.switches;
         window.$gameVariables = contents.variables;
@@ -3606,6 +3718,7 @@
 
         function finalizeSnap() {
           var bmp = null;
+          var blackout = false;
           var restore2 = swapInSavedState(contents, dataMap);
           try {
             // A couple of updates settle character frames, parallax origin,
@@ -3620,6 +3733,30 @@
               picHost.update();
             }
             bmp = Bitmap.snap(stage);
+            // Save captured during a cutscene fade-to-black: the frame is all
+            // black and useless as a preview. Drop the fade/tint/overlay and
+            // re-render once to show the last visible map instead. If it's
+            // still black afterward the map genuinely has no content to show,
+            // so discard it and let the caller fall back to ground/parallax.
+            if (bmp && isBitmapMostlyBlack(bmp)) {
+              blackout = true;
+              var restoreBlk = neutralizeBlackout(contents.screen);
+              spriteset.update();
+              spriteset.update();
+              if (picHost) {
+                picHost.update();
+                picHost.update();
+              }
+              var bmp2 = Bitmap.snap(stage);
+              // Undo the screen edits before anything else reads the cached
+              // contents, so a later Continue visit re-detects this blackout.
+              restoreBlk();
+              if (bmp2 && !isBitmapMostlyBlack(bmp2)) {
+                bmp = bmp2;
+              } else {
+                bmp = null;
+              }
+            }
           } catch (e) {
             console.warn("[lang-shim] scene preview snap failed:", e);
             bmp = null;
@@ -3631,7 +3768,7 @@
           try {
             stage.destroy({ children: true });
           } catch (e) {}
-          done(bmp);
+          done(bmp, blackout);
         }
       }
 
@@ -3643,6 +3780,7 @@
         // Drop cached snapshots on each fresh Continue visit so an in-game
         // save-over (which happens between visits) is reflected next time.
         _sceneSnapCache = {};
+        _sceneSnapBlackout = {};
         this._mapBgContainer = new Sprite();
         // Opaque black backdrop: ground/parallax art has large fully
         // transparent regions, so without this the default menu background
@@ -3841,15 +3979,27 @@
       // the running game.
       //
       // Only when a snapshot is actually showing for the selected slot; any
-      // other case (snapshot not resolved, in-game load) keeps the stock fade.
+      // other case (snapshot not resolved, in-game load, or a blackout-origin
+      // slot whose live game loads into black) keeps the stock fade: for a
+      // blackout slot that stock fade-to-black is exactly what's wanted, so the
+      // previewed map fades out instead of flashing straight to black.
       var _origLoadOnLoadSuccess = Scene_Load.prototype.onLoadSuccess;
       Scene_Load.prototype.onLoadSuccess = function () {
+        // A blackout-origin slot (cutscene fade) previews the last map, but the
+        // live game loads into black. Cutting straight in would flash to black;
+        // keep the stock fade-to-black instead so the preview map fades out.
+        var sfId = 0;
+        try {
+          sfId = this.savefileId();
+        } catch (e) {}
+        var slotBlackout = !!_sceneSnapBlackout[sfId];
         var seamless =
           this._mapBgEnabled &&
           this._mapBgContainer &&
           this._mapBgContainer.visible &&
           this._mapBgFadeIn &&
-          this._windowLayer;
+          this._windowLayer &&
+          !slotBlackout;
         _origLoadOnLoadSuccess.call(this);
         if (!this._loadSuccess || !seamless) return;
         // Kill the black fade the success path just started.
