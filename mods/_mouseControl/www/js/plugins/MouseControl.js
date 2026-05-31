@@ -114,6 +114,20 @@
   var SWIPE_BACKLOG_RATIO = 1.4; // |dx| must exceed |dy| * this for "horizontal"
   var _swipe = null;
 
+  // When the on-screen Virtual Controller overlay is active it owns the menu
+  // (its dedicated ☰ button) and multi-touch is expected (e.g. d-pad + an
+  // action button at once), so the two-finger-tap-to-menu gesture below must
+  // stand down to avoid popping the menu on a normal two-handed input. The
+  // overlay element is the live, reload-accurate signal: VirtualController.js
+  // builds #vc-overlay when active and disabling a plugin reloads the page.
+  function virtualControllerActive() {
+    return (
+      !!window.__virtualControllerLoaded ||
+      (typeof document !== "undefined" &&
+        !!document.getElementById("vc-overlay"))
+    );
+  }
+
   function isMapFreeWalk() {
     return (
       typeof Scene_Map !== "undefined" &&
@@ -198,10 +212,15 @@
         this._screenPressed = true;
         this._pressedTime = 0;
         if (event.touches.length >= 2) {
-          this._onCancel(x, y);
-          // Also simulate escape key for DRM compatibility (same as right-click)
-          if (isOnMap()) {
-            simulateEscape();
+          // Two-finger tap = cancel / escape (open the menu). Suppressed while
+          // the Virtual Controller overlay is active: it has its own menu
+          // button and multi-touch is part of normal play there.
+          if (!virtualControllerActive()) {
+            this._onCancel(x, y);
+            // Also simulate escape key for DRM compatibility (same as right-click)
+            if (isOnMap()) {
+              simulateEscape();
+            }
           }
           _swipe = null;
         } else {
@@ -1041,9 +1060,14 @@
       this._buttons = [];
       this._digitButtons = [];
       var self = this;
-      this._okButton = makeButton(makeOkBitmap(), NI_OK_W, NI_OK_H, function () {
-        self.processOk();
-      });
+      this._okButton = makeButton(
+        makeOkBitmap(),
+        NI_OK_W,
+        NI_OK_H,
+        function () {
+          self.processOk();
+        },
+      );
       this.addChild(this._okButton);
     };
 
