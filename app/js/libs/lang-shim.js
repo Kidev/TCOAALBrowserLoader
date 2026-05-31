@@ -3482,6 +3482,19 @@
           c.opacity = Math.max(0, c.opacity - 32);
           if (c.opacity === 0) c.visible = false;
         }
+        // Load transition: dissolve only the menu chrome over the (now opaque)
+        // map snapshot. The window layer's alpha is baked into each window when
+        // it renders into the layer's filter target, so this fades the help +
+        // savefile windows together while the snapshot: which matches the map
+        // Scene_Map is about to show: stays put. isBusy holds the scene swap
+        // until the dissolve finishes; see onLoadSuccess.
+        if (
+          this._menuDissolve &&
+          this._windowLayer &&
+          this._windowLayer.alpha > 0
+        ) {
+          this._windowLayer.alpha = Math.max(0, this._windowLayer.alpha - 0.06);
+        }
       };
 
       Scene_Load.prototype._refreshMapBg = function () {
@@ -3597,6 +3610,83 @@
 
       Scene_Load.prototype._hideMapBg = function () {
         this._mapBgFadeIn = false;
+      };
+
+      // Seamless load from the Continue menu.
+      //
+      // The hovered slot already renders its map snapshot behind the menu, and
+      // Scene_Map is about to show that exact map. So instead of the stock
+      // fade-to-black -> fade-to-game, run the normal success path (sound, audio
+      // fade-out, version reload, goto) but neutralize its black visual fade and
+      // dissolve only the menu chrome over the snapshot. With the from-black
+      // fade-in on Scene_Map also suppressed, the menu simply melts away into
+      // the running game.
+      //
+      // Only when a snapshot is actually showing for the selected slot; any
+      // other case (snapshot not resolved, in-game load) keeps the stock fade.
+      var _origLoadOnLoadSuccess = Scene_Load.prototype.onLoadSuccess;
+      Scene_Load.prototype.onLoadSuccess = function () {
+        var seamless =
+          this._mapBgEnabled &&
+          this._mapBgContainer &&
+          this._mapBgContainer.visible &&
+          this._mapBgFadeIn &&
+          this._windowLayer;
+        _origLoadOnLoadSuccess.call(this);
+        if (!this._loadSuccess || !seamless) return;
+        // Kill the black fade the success path just started.
+        if (this._fadeSprite) {
+          this._fadeSprite.opacity = 0;
+          this._fadeDuration = 0;
+        }
+        // Hold the snapshot opaque and begin dissolving the menu over it.
+        this._mapBgFadeIn = true;
+        this._mapBgContainer.opacity = 255;
+        this._menuDissolve = true;
+        if (this._listWindow) this._listWindow.deactivate();
+        // Tell Scene_Map to cut straight in rather than fade from black.
+        window.__skipLoadFadeIn = true;
+      };
+
+      // Keep the scene rendered (snapshot visible, menu dissolving) until the
+      // dissolve completes, so the swap to Scene_Map lands on a fully faded
+      // menu instead of popping mid-fade.
+      var _origLoadIsBusy = Scene_Load.prototype.isBusy;
+      Scene_Load.prototype.isBusy = function () {
+        if (
+          this._menuDissolve &&
+          this._windowLayer &&
+          this._windowLayer.alpha > 0
+        ) {
+          return true;
+        }
+        return _origLoadIsBusy.call(this);
+      };
+    }
+
+    // Suppress Scene_Map's from-black fade-in for the seamless Continue load
+    // (set by Scene_Load.onLoadSuccess). Only consumed for a non-transfer load
+    // coming straight from Scene_Load; a version-mismatch reload (_transfer) or
+    // any other entry keeps the stock fade. The flag is always cleared after
+    // start so it can never leak into a later scene change.
+    if (typeof Scene_Map !== "undefined") {
+      var _origMapNeedsFadeIn = Scene_Map.prototype.needsFadeIn;
+      Scene_Map.prototype.needsFadeIn = function () {
+        if (
+          window.__skipLoadFadeIn &&
+          !this._transfer &&
+          typeof Scene_Load !== "undefined" &&
+          SceneManager.isPreviousScene(Scene_Load)
+        ) {
+          return false;
+        }
+        return _origMapNeedsFadeIn.call(this);
+      };
+
+      var _origMapStartFade = Scene_Map.prototype.start;
+      Scene_Map.prototype.start = function () {
+        _origMapStartFade.call(this);
+        window.__skipLoadFadeIn = false;
       };
     }
 
