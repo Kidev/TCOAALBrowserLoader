@@ -3,7 +3,11 @@
  *
  *   Left   : 4-direction D-pad (up / down / left / right).
  *   Right  : 4 action buttons arranged like a gamepad (A / B / X / Y).
- *   Centre : a dedicated menu/escape button (Start-style).
+ *   Top-R  : a quick-save button + a menu/escape button (Start-style), in a
+ *            row above the action buttons. The quick-save button just forwards
+ *            to lang-shim's window.__quickSave (the core quick-save feature,
+ *            also bound to the 'M' key there, so it works without this mod).
+ *            The menu button opens the game menu.
  *
  * Each control feeds RPG Maker MV's Input system by toggling
  * Input._currentState[<button>] on press / release. The engine's own
@@ -51,7 +55,7 @@
     { name: "cancel", glyph: "B", cls: "vc-b" },
   ];
 
-  // Dedicated menu/escape button, centred between the two clusters.
+  // Dedicated menu/escape button, sitting in the top row above the actions.
   var MENU = { name: "escape", glyph: "☰", cls: "vc-menu" };
 
   // Input bridge
@@ -77,6 +81,14 @@
     for (var name in held) {
       if (held[name]) release(name);
     }
+  }
+
+  // Quick save is a core feature owned by lang-shim (window.__quickSave): it
+  // performs the save, the 1s cooldown, the toast, and binds the 'M' key
+  // globally so the shortcut works even without this mod. The on-screen button
+  // below just forwards to it.
+  function quickSave() {
+    if (typeof window.__quickSave === "function") window.__quickSave();
   }
 
   // DOM
@@ -119,14 +131,32 @@
     "#vc-overlay .vc-b{color:#f0b9b9;}",
     "#vc-overlay .vc-x{color:#bcd2f5;}",
     "#vc-overlay .vc-y{color:#f0e3a8;}",
-    // Menu / escape button: a pill centred along the bottom edge.
-    "#vc-overlay .vc-menu{position:absolute;left:50%;",
-    "  bottom:max(18px,env(safe-area-inset-bottom));",
-    "  transform:translateX(-50%);width:min(18vw,92px);",
+    // Top control row: quick-save + menu/escape, sitting above the action
+    // cluster on the right (clear of the gap between the two clusters). The row
+    // spans the action cluster's width and the two pills split it, so each is
+    // narrower than the old single menu button.
+    "#vc-overlay .vc-menubar{position:absolute;",
+    "  right:max(18px,env(safe-area-inset-right));",
+    "  bottom:calc(max(18px,env(safe-area-inset-bottom)) + min(38vw,168px) + 26px);",
+    "  width:min(38vw,168px);display:flex;gap:8px;pointer-events:none;}",
+    "#vc-overlay .vc-menubar .vc-btn{position:relative;flex:1 1 0;min-width:0;",
     "  height:clamp(30px,7vw,42px);border-radius:22px;",
     "  font-size:clamp(15px,4vw,22px);pointer-events:auto;}",
-    "#vc-overlay .vc-menu.vc-active{transform:translateX(-50%) scale(0.9);}",
+    "#vc-overlay .vc-menubar .vc-btn svg{width:1.45em;height:1.45em;display:block;}",
+    // Quick-save cooldown: dim and ignore presses for the 1s debounce window
+    // (lang-shim's window.__quickSave toggles .vc-cooldown on this button).
+    "#vc-overlay .vc-save.vc-cooldown{opacity:0.4;pointer-events:none;}",
   ].join("");
+
+  // Classic floppy-disk "save" glyph as inline SVG (crisp + monochrome,
+  // inheriting the button's text colour, unlike a coloured emoji).
+  var SAVE_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+    'aria-hidden="true">' +
+    '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>' +
+    '<polyline points="17 21 17 13 7 13 7 21"/>' +
+    '<polyline points="7 3 7 8 15 8"/></svg>';
 
   function bindButton(el, name) {
     function down(e) {
@@ -160,6 +190,43 @@
     }
   }
 
+  // Like bindButton, but for a one-shot action (fires once on release rather
+  // than holding an Input key down). Used by the quick-save button.
+  function bindTap(el, fn) {
+    function down(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.add("vc-active");
+      if (el.setPointerCapture && e.pointerId != null) {
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch (ex) {}
+      }
+    }
+    function up(e) {
+      if (e) e.preventDefault();
+      var fired = el.classList.contains("vc-active");
+      el.classList.remove("vc-active");
+      if (fired) fn();
+    }
+    function cancel() {
+      el.classList.remove("vc-active");
+    }
+    if (window.PointerEvent) {
+      el.addEventListener("pointerdown", down);
+      el.addEventListener("pointerup", up);
+      el.addEventListener("pointercancel", cancel);
+      el.addEventListener("lostpointercapture", cancel);
+    } else {
+      el.addEventListener("touchstart", down, { passive: false });
+      el.addEventListener("touchend", up);
+      el.addEventListener("touchcancel", cancel);
+      el.addEventListener("mousedown", down);
+      el.addEventListener("mouseup", up);
+      el.addEventListener("mouseleave", cancel);
+    }
+  }
+
   function makeCluster(className, defs) {
     var pad = document.createElement("div");
     pad.className = "vc-pad " + className;
@@ -187,11 +254,23 @@
     overlay.appendChild(makeCluster("vc-dpad", DPAD));
     overlay.appendChild(makeCluster("vc-actions", ACTIONS));
 
+    // Top row above the action cluster: quick-save (one-shot) + menu/escape.
+    var menubar = document.createElement("div");
+    menubar.className = "vc-menubar";
+
+    var saveBtn = document.createElement("div");
+    saveBtn.className = "vc-btn vc-save";
+    saveBtn.innerHTML = SAVE_SVG;
+    bindTap(saveBtn, quickSave);
+    menubar.appendChild(saveBtn);
+
     var menuBtn = document.createElement("div");
     menuBtn.className = "vc-btn " + MENU.cls;
     menuBtn.textContent = MENU.glyph;
     bindButton(menuBtn, MENU.name);
-    overlay.appendChild(menuBtn);
+    menubar.appendChild(menuBtn);
+
+    overlay.appendChild(menubar);
 
     // Stop button input from reaching the game underneath. The engine's
     // TouchInput listeners (and the Mouse Control mod, which rides on the same

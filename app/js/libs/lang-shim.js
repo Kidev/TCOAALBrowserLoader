@@ -5592,5 +5592,131 @@
     window.addEventListener("drop", onDrop, false);
   })();
 
+  // Quick save: a core feature, available regardless of any mod.
+  // A quick save is a normal *file* save: the shortcut for menu -> save ->
+  // pick a slot. File slots use positive ids and are uncapped (browser-shim
+  // grows DataManager.maxSavefiles with usage); the game's auto-saves
+  // (negative ids, capped at 5) are managed by the engine and untouched here.
+  //
+  // Exposes window.__quickSave (called by the Virtual Controller mod's
+  // on-screen button) and binds the 'M' key globally, so the shortcut works
+  // even when that mod isn't installed. A 1s cooldown debounces both paths.
+  (function installQuickSave() {
+    if (typeof window === "undefined" || !window.addEventListener) return;
+    if (window.__quickSave) return;
+
+    var COOLDOWN = 1000;
+    var lastSaveAt = 0;
+    var toastEl = null;
+    var toastTimer = null;
+
+    // Saving is only meaningful on the map with saving enabled: the same
+    // gate the engine's Scene_Save enforces before DataManager.saveGame.
+    function canQuickSave() {
+      return (
+        typeof DataManager !== "undefined" &&
+        typeof SceneManager !== "undefined" &&
+        typeof Scene_Map !== "undefined" &&
+        SceneManager._scene instanceof Scene_Map &&
+        typeof $gameSystem !== "undefined" &&
+        $gameSystem &&
+        $gameSystem.isSaveEnabled()
+      );
+    }
+
+    // Lowest empty file slot (positive id). Slots are uncapped, so one is
+    // always free; the trailing return is a defensive fallback.
+    function firstAvailableSlot() {
+      var max = DataManager.maxSavefiles();
+      for (var i = 1; i <= max; i++) {
+        if (!DataManager.isThisGameFile(i)) return i;
+      }
+      return max + 1;
+    }
+
+    // Transient feedback toast, self-contained (no mod overlay required).
+    function toast(msg) {
+      if (!document.body) return;
+      if (!toastEl) {
+        toastEl = document.createElement("div");
+        toastEl.id = "qs-toast";
+        toastEl.style.cssText = [
+          "position:fixed;left:50%;top:12%;transform:translateX(-50%)",
+          "z-index:100001;pointer-events:none;white-space:nowrap",
+          "background:rgba(20,20,26,0.82);color:#f4f4f4;padding:8px 16px",
+          "border:2px solid rgba(255,255,255,0.32);border-radius:18px",
+          "font-family:Arial,Helvetica,sans-serif;font-weight:bold",
+          "font-size:clamp(13px,3.4vw,18px)",
+          "text-shadow:0 1px 2px rgba(0,0,0,0.8)",
+          "opacity:0;transition:opacity 0.18s",
+        ].join(";");
+        document.body.appendChild(toastEl);
+      }
+      toastEl.textContent = msg;
+      void toastEl.offsetWidth; // restart the fade if already visible
+      toastEl.style.opacity = "1";
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () {
+        if (toastEl) toastEl.style.opacity = "0";
+      }, 1400);
+    }
+
+    function quickSave() {
+      var now = Date.now();
+      if (now - lastSaveAt < COOLDOWN) return;
+      lastSaveAt = now;
+
+      // Best-effort: dim the Virtual Controller's save button if it's on
+      // screen (no-op when that mod isn't active).
+      var btn = document.querySelector("#vc-overlay .vc-save");
+      if (btn) {
+        btn.classList.add("vc-cooldown");
+        setTimeout(function () {
+          btn.classList.remove("vc-cooldown");
+        }, COOLDOWN);
+      }
+
+      if (!canQuickSave()) {
+        if (typeof SoundManager !== "undefined") SoundManager.playBuzzer();
+        //toast("Can't save here");
+        return;
+      }
+      var id = firstAvailableSlot();
+      $gameSystem.onBeforeSave();
+      if (DataManager.saveGame(id)) {
+        if (
+          typeof StorageManager !== "undefined" &&
+          StorageManager.cleanBackup
+        ) {
+          StorageManager.cleanBackup(id);
+        }
+        SoundManager.playSave();
+        toast("Saved: slot " + id);
+      } else {
+        SoundManager.playBuzzer();
+        toast("Save failed");
+      }
+    }
+
+    window.__quickSave = quickSave;
+
+    // 'M' quick-saves from the keyboard. Ignore auto-repeat and presses while
+    // typing into a field (e.g. the save-note input) so it never fires twice
+    // or steals a keystroke.
+    window.addEventListener("keydown", function (e) {
+      if (e.repeat || (e.key !== "m" && e.key !== "M")) return;
+      var t = e.target;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      quickSave();
+    });
+  })();
+
   window.__langShimHookBoot = hookSceneBoot;
 })();
