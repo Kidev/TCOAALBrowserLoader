@@ -2898,6 +2898,11 @@
         if (window.__saveDisplay && window.__saveDisplay.invalidate) {
           window.__saveDisplay.invalidate(id);
         }
+        // Also drop the rendered scene snapshot for this slot (declared in the
+        // map-bg block below; var-hoisted into this function scope).
+        if (typeof _sceneSnapCache !== "undefined" && _sceneSnapCache) {
+          delete _sceneSnapCache[id];
+        }
         this._mapBgIndex = null;
         this._pendingDeleteId = null;
         this._pendingDeletePath = null;
@@ -3193,11 +3198,214 @@
         tryDir();
       }
 
+      // Full-scene snapshot of a save: reconstruct the saved game objects,
+      // build a real Spriteset_Map (tilemap + events at their saved
+      // positions/pages + vehicles + followers + player + on-screen pictures +
+      // weather + screen tone) and render one frame to a Bitmap. This is what
+      // the game looked like at the instant of saving. Cached per savefileId;
+      // returns null (caller falls back to ground/parallax) when it can't be
+      // produced: no save contents, missing map JSON, missing engine deps, or
+      // a render error.
+      var _sceneSnapCache = {};
+      // Globals the saved state stands in for while the spriteset is built and
+      // snapped. Swapped in only across synchronous spans, always restored
+      // before any async yield, so the live (title-era) globals are never seen
+      // in a swapped state by the menu's update loop.
+      var SCENE_GLOBAL_KEYS = [
+        "$gameMap",
+        "$gamePlayer",
+        "$gameScreen",
+        "$gameSwitches",
+        "$gameVariables",
+        "$gameSelfSwitches",
+        "$gameActors",
+        "$gameParty",
+        "$gameSystem",
+        "$gameTimer",
+        "$gameTemp",
+        "$gameMessage",
+        "$gameTroop",
+        "$dataMap",
+      ];
+
+      function renderSaveSceneSnapshot(savefileId, cb) {
+        if (Object.prototype.hasOwnProperty.call(_sceneSnapCache, savefileId)) {
+          cb(_sceneSnapCache[savefileId]);
+          return;
+        }
+        var sd = window.__saveDisplay;
+        if (
+          !sd ||
+          !sd.contents ||
+          typeof Spriteset_Map === "undefined" ||
+          !Bitmap.snap ||
+          typeof Game_Temp === "undefined" ||
+          typeof PIXI === "undefined" ||
+          !window.$dataTilesets
+        ) {
+          cb(null);
+          return;
+        }
+        var contents = null;
+        try {
+          contents = sd.contents(savefileId);
+        } catch (e) {
+          contents = null;
+        }
+        var mapId = contents && contents.map && contents.map._mapId;
+        if (!contents || !mapId) {
+          cb(null);
+          return;
+        }
+        function finish(bmp) {
+          _sceneSnapCache[savefileId] = bmp || null;
+          cb(bmp || null);
+        }
+        fetch("data/Map" + pad3(mapId) + ".json")
+          .then(function (r) {
+            return r && r.ok ? r.json() : null;
+          })
+          .then(function (dataMap) {
+            if (!dataMap) {
+              finish(null);
+              return;
+            }
+            buildAndSnapScene(contents, dataMap, finish);
+          })
+          .catch(function () {
+            finish(null);
+          });
+      }
+
+      // Install the saved game state into the globals, returning a restore fn.
+      // $gameTemp/$gameMessage/$gameTroop aren't in the save payload; fresh
+      // (inert) instances stand in so any child the spriteset touches is safe.
+      function swapInSavedState(contents, dataMap) {
+        var saved = {};
+        SCENE_GLOBAL_KEYS.forEach(function (k) {
+          saved[k] = window[k];
+        });
+        window.$gameMap = contents.map;
+        window.$gamePlayer = contents.player;
+        window.$gameScreen = contents.screen;
+        window.$gameSwitches = contents.switches;
+        window.$gameVariables = contents.variables;
+        window.$gameSelfSwitches = contents.selfSwitches;
+        window.$gameActors = contents.actors;
+        window.$gameParty = contents.party;
+        window.$gameSystem = contents.system;
+        window.$gameTimer = contents.timer;
+        // Neutralize transient screen transitions so a save captured mid-fade
+        // (e.g. an autosave during a map transfer: _brightness 0 -> a fully
+        // opaque black fade sprite) still previews the actual scene. The
+        // lasting color tone and zoom are kept; only the fade/flash/shake
+        // overlays are reset. Idempotent across the two swapIn calls.
+        if (contents.screen && contents.screen.clearFade) {
+          contents.screen.clearFade();
+          contents.screen.clearFlash();
+          contents.screen.clearShake();
+        } else if (contents.screen) {
+          contents.screen._brightness = 255;
+        }
+        window.$dataMap = dataMap;
+        // The raw fetched map JSON has no `.meta` (the engine adds it on load
+        // via extractMetadata). Plugins like OrangeOverlay read $dataMap.meta
+        // and each event's .meta during spriteset build, so reproduce that
+        // here. onLoad keys off `object === $dataMap`, hence after the assign.
+        if (
+          typeof DataManager !== "undefined" &&
+          DataManager.onLoad &&
+          !dataMap.meta
+        ) {
+          try {
+            DataManager.onLoad(window.$dataMap);
+          } catch (e) {}
+        }
+        window.$gameTemp = new Game_Temp();
+        if (typeof Game_Message !== "undefined")
+          window.$gameMessage = new Game_Message();
+        if (typeof Game_Troop !== "undefined")
+          window.$gameTroop = new Game_Troop();
+        return function restore() {
+          SCENE_GLOBAL_KEYS.forEach(function (k) {
+            window[k] = saved[k];
+          });
+        };
+      }
+
+      function buildAndSnapScene(contents, dataMap, done) {
+        var stage = null;
+        var spriteset = null;
+        var buildErr = null;
+        var restore = swapInSavedState(contents, dataMap);
+        try {
+          stage = new PIXI.Container();
+          spriteset = new Spriteset_Map();
+          stage.addChild(spriteset);
+        } catch (e) {
+          buildErr = e;
+        } finally {
+          restore();
+        }
+        if (buildErr) {
+          console.warn("[lang-shim] scene preview build failed:", buildErr);
+          try {
+            if (stage) stage.destroy({ children: true });
+          } catch (e2) {}
+          done(null);
+          return;
+        }
+        // Building kicked off async image loads (tileset, characters,
+        // parallax, pictures, Shadow1) through the normal SW path. Wait for
+        // the cache to settle (capped ~3.2s) with globals back to live, then
+        // settle + snap in one synchronous swapped span.
+        var tries = 0;
+        (function waitReady() {
+          var ready = false;
+          try {
+            ready = ImageManager.isReady();
+          } catch (e) {
+            ready = true;
+          }
+          if (ready || tries++ > 200) {
+            finalizeSnap();
+          } else {
+            setTimeout(waitReady, 16);
+          }
+        })();
+
+        function finalizeSnap() {
+          var bmp = null;
+          var restore2 = swapInSavedState(contents, dataMap);
+          try {
+            // A couple of updates settle character frames, parallax origin,
+            // tone filter and picture sprites before the single render.
+            spriteset.update();
+            spriteset.update();
+            bmp = Bitmap.snap(stage);
+          } catch (e) {
+            console.warn("[lang-shim] scene preview snap failed:", e);
+            bmp = null;
+          } finally {
+            restore2();
+          }
+          // children:true tears down the spriteset tree; textures are left
+          // intact (they belong to the shared ImageManager cache).
+          try {
+            stage.destroy({ children: true });
+          } catch (e) {}
+          done(bmp);
+        }
+      }
+
       var _origLoadCreate = Scene_Load.prototype.create;
       Scene_Load.prototype.create = function () {
         _origLoadCreate.call(this);
         this._mapBgEnabled = SceneManager.isPreviousScene(Scene_Title);
         if (!this._mapBgEnabled) return;
+        // Drop cached snapshots on each fresh Continue visit so an in-game
+        // save-over (which happens between visits) is reflected next time.
+        _sceneSnapCache = {};
         this._mapBgContainer = new Sprite();
         // Opaque black backdrop: ground/parallax art has large fully
         // transparent regions, so without this the default menu background
@@ -3217,9 +3425,13 @@
         }
         this._mapBgGround = new Sprite();
         this._mapBgPar = new Sprite();
+        // Full-scene snapshot (a single rendered Spriteset_Map still). When set
+        // it supersedes the ground/par fallback layers, which are cleared.
+        this._mapBgScene = new Sprite();
         this._mapBgContainer.addChild(this._mapBgBlack);
         this._mapBgContainer.addChild(this._mapBgGround);
         this._mapBgContainer.addChild(this._mapBgPar);
+        this._mapBgContainer.addChild(this._mapBgScene);
         this._mapBgContainer.visible = false;
         this._mapBgContainer.opacity = 0;
         this._mapBgFadeIn = false;
@@ -3262,6 +3474,37 @@
         var sd = window.__saveDisplay;
         var mapId = sd && sd.mapId ? sd.mapId(savefileId) : 0;
         var token = ++this._mapBgToken;
+        if (!mapId) {
+          this._hideMapBg();
+          return;
+        }
+        // Prefer a faithful full-scene snapshot; on any failure fall back to
+        // the ground+parallax composite for this same hover (same token).
+        renderSaveSceneSnapshot(savefileId, function (snap) {
+          if (token !== self._mapBgToken) return;
+          if (snap) {
+            self._mapBgGround.bitmap = null;
+            self._mapBgPar.bitmap = null;
+            self._mapBgScene.bitmap = snap;
+            self._fitMapBgSprite(self._mapBgScene, snap);
+            self._showMapBg();
+          } else {
+            self._mapBgScene.bitmap = null;
+            self._refreshMapBgGroundPar(token);
+          }
+        });
+      };
+
+      // Legacy ground+parallax composite, used as the snapshot fallback. Keeps
+      // the caller's hover token so a stale async result is ignored.
+      Scene_Load.prototype._refreshMapBgGroundPar = function (token) {
+        var self = this;
+        var savefileId = 0;
+        try {
+          savefileId = this.savefileId();
+        } catch (e) {}
+        var sd = window.__saveDisplay;
+        var mapId = sd && sd.mapId ? sd.mapId(savefileId) : 0;
         if (!mapId) {
           this._hideMapBg();
           return;

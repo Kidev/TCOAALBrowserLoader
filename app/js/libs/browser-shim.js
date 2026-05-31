@@ -275,6 +275,43 @@
     }
   }
 
+  // Full save contents for the Continue-menu scene preview. Unlike saveMapId
+  // (which JSON.parses only to read _mapId), this returns the complete
+  // JsonEx.parse result so the consumer gets real engine instances
+  // ($gameMap, $gamePlayer, Game_Event[], $gameScreen, ...) it can swap into
+  // the globals and feed to a Spriteset_Map. Cached by on-disk path and
+  // dropped by the same invalidate() path as the map-id cache. Returns null
+  // when JsonEx is unavailable or the save can't be read/parsed.
+  var _saveContentsCache = {};
+  function saveContents(savefileId) {
+    try {
+      if (typeof JsonEx === "undefined" || !JsonEx.parse) return null;
+      if (
+        typeof StorageManager === "undefined" ||
+        typeof StorageManager.localFilePath !== "function"
+      )
+        return null;
+      var path = StorageManager.localFilePath(savefileId);
+      if (!path) return null;
+      if (Object.prototype.hasOwnProperty.call(_saveContentsCache, path))
+        return _saveContentsCache[path];
+      var res = null;
+      try {
+        var raw = Utils.readFile(path);
+        if (raw) {
+          var json = LZString.decompressFromBase64(String(raw).trim());
+          if (json) res = JsonEx.parse(json);
+        }
+      } catch (e) {
+        res = null;
+      }
+      _saveContentsCache[path] = res;
+      return res;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Per-save annotation storage. Keyed off the scoped web-storage key for
   // regular slots (so notes follow the active mod's save scope) and the
   // on-disk path for autosaves.
@@ -387,6 +424,7 @@
   window.__saveDisplay = {
     detectEpisode: detectEpisode,
     mapId: saveMapId,
+    contents: saveContents,
     episodeFor: function (savefileId) {
       return detectEpisode(saveMapId(savefileId));
     },
@@ -400,10 +438,12 @@
       var m = getAutoNoteMarker(savefileId);
       return !!m && getSaveNote(savefileId) === m;
     },
-    // Invalidate the cached map id after a save's contents change.
+    // Invalidate the cached map id and parsed contents after a save changes.
     invalidate: function (savefileId) {
       try {
-        delete _mapIdCache[StorageManager.localFilePath(savefileId)];
+        var p = StorageManager.localFilePath(savefileId);
+        delete _mapIdCache[p];
+        delete _saveContentsCache[p];
       } catch (e) {}
     },
     // Character capacity of the title line, refreshed whenever a row draws.
@@ -1023,6 +1063,7 @@
       var _origStorageSave = StorageManager.save;
       StorageManager.save = function (savefileId, json) {
         _mapIdCache = {};
+        _saveContentsCache = {};
         var result = _origStorageSave.apply(this, arguments);
         // Give the slot its creation time as a default, editable note.
         try {
