@@ -949,7 +949,41 @@
                 } catch (e) {}
               }
               if (navigator.serviceWorker.controller) {
+                // Controlled load: clear the reclaim guard so a later
+                // hard reload in this same session gets its own attempt.
+                try {
+                  sessionStorage.removeItem("__swReclaimTried");
+                } catch (e) {}
                 return Promise.resolve();
+              }
+              // Hard reload (Ctrl/Shift+F5) bypasses the Service Worker for
+              // the navigation AND every subresource it triggers, so the
+              // page loads uncontrolled even though the SW is active. Our
+              // engine JS and assets live only in IDB (served + decrypted by
+              // the SW), so those fetches hit the network and fail -> black
+              // screen until a plain F5 reloads under SW control.
+              //
+              // Detect that case: an *active* SW exists but isn't
+              // controlling us: and reload once to reclaim control. The
+              // reg.active check distinguishes a hard reload from a genuine
+              // first visit (where being uncontrolled is normal and we must
+              // proceed to load scripts via the network/server). A
+              // sessionStorage guard prevents a reload loop if control can't
+              // be regained for some other reason.
+              if (reg.active) {
+                var reclaimTried = false;
+                try {
+                  reclaimTried =
+                    sessionStorage.getItem("__swReclaimTried") === "1";
+                } catch (e) {}
+                if (!reclaimTried) {
+                  try {
+                    sessionStorage.setItem("__swReclaimTried", "1");
+                  } catch (e) {}
+                  location.reload();
+                  // Halt the bootstrap: the reload is on its way.
+                  return new Promise(function () {});
+                }
               }
               // Wait for the SW to take control (skipWaiting + claim)
               return new Promise(function (resolve) {
