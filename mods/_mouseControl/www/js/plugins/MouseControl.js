@@ -226,6 +226,12 @@
         } else {
           var deferred = !isMapFreeWalk();
           _pressStartedOnPlayer = isOnMap() && isOnPlayerTile(x, y);
+          // A new single-touch gesture starts un-consumed: clear any
+          // long-press flag the previous gesture left on Scene_File so a
+          // fast tap right after a long-press isn't wrongly suppressed in
+          // _onTouchEnd (lang-shim re-sets it only after ~30 held frames).
+          var scn0 = typeof SceneManager !== "undefined" && SceneManager._scene;
+          if (scn0 && scn0._lpFired) scn0._lpFired = false;
           _swipe = {
             x0: x,
             y0: y,
@@ -312,6 +318,16 @@
     var dy = sw.lastY - sw.y0;
 
     if (!sw.isSwipe) {
+      // Long-press inside the Continue / Save list already consumed this
+      // gesture (lang-shim's _updateAnnotateLongPress highlighted a row or
+      // opened the note editor). Releasing must NOT also fire the tap
+      // trigger, which would load/save the highlighted file. _lpFired only
+      // lives on Scene_File, so other scenes are unaffected.
+      var scn = typeof SceneManager !== "undefined" && SceneManager._scene;
+      if (scn && scn._lpFired) {
+        _baseOnTouchEnd.call(this, event);
+        return;
+      }
       // Tap on the player tile = interact with facing event.
       if (
         _pressStartedOnPlayer &&

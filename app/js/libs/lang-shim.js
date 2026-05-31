@@ -2169,8 +2169,14 @@
         }
       };
 
-      // Long-press a save row to edit its note (touch / mobile parity for
-      // the [N] Annotate shortcut). Held ~0.5s without drift over the list.
+      // Long-press a save row (touch / mobile parity for the [N] Annotate
+      // shortcut). Held ~0.5s without drift over the list. Two-stage, so a
+      // single hold is unambiguous next to "tap = load/save":
+      //   - hold a row that ISN'T highlighted -> just highlight it
+      //   - hold the row that's ALREADY highlighted -> open the note editor
+      // Either way the gesture is consumed: MouseControl checks `_lpFired`
+      // on release and suppresses the tap trigger, so the hold never also
+      // loads/saves the file.
       Scene_File.prototype._pointInListWindow = function (x, y) {
         var w = this._listWindow;
         if (!w) return false;
@@ -2220,7 +2226,20 @@
           this._pointInListWindow(x, y)
         ) {
           this._lpFired = true;
-          this._handleAnnotate(this.savefileId());
+          var lw = this._listWindow;
+          var hit = lw.hitTest(lw.canvasToLocalX(x), lw.canvasToLocalY(y));
+          if (hit >= 0 && hit !== lw.index() && lw.isCursorMovable()) {
+            // First stage: the held row isn't the highlighted one yet, so
+            // move the cursor onto it. The release is suppressed (see
+            // MouseControl), so this is a pure select -- a second hold on
+            // the now-highlighted row opens the editor.
+            lw.select(hit);
+            SoundManager.playCursor();
+          } else {
+            // Held the already-highlighted row (or empty list space): edit
+            // its note.
+            this._handleAnnotate(this.savefileId());
+          }
         }
       };
 
