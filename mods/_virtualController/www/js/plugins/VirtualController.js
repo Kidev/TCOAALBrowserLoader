@@ -193,6 +193,47 @@
     bindButton(menuBtn, MENU.name);
     overlay.appendChild(menuBtn);
 
+    // Stop button input from reaching the game underneath. The engine's
+    // TouchInput listeners (and the Mouse Control mod, which rides on the same
+    // TouchInput state) are all bubble-phase on `document`. The buttons stop
+    // their own pointer events, but a touch/click on a button also fires
+    // *compatibility* mouse/touch events that the buttons don't bind, so they
+    // bubble to document and the game reads them as a tap on the map/menu:
+    // moving the character to the spot under the button, or counting it as a
+    // "tap outside the menu" and closing it. Swallowing those events here at
+    // the overlay (an ancestor of every button, so it sees them during bubble,
+    // after the buttons' own handlers have run) blocks them without breaking
+    // the buttons, independent of plugin load order. The overlay container is
+    // pointer-events:none, so only button-originated events bubble through it.
+    function swallow(e) {
+      e.stopPropagation();
+    }
+    function swallowPassive(e) {
+      // touchstart/touchmove additionally need preventDefault to suppress the
+      // synthesised mouse events and any page scrolling/zoom.
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    [
+      "mousedown",
+      "mouseup",
+      "mousemove",
+      "click",
+      "dblclick",
+      "contextmenu",
+      "pointerdown",
+      "pointerup",
+      "pointermove",
+      "touchend",
+      "touchcancel",
+      "wheel",
+    ].forEach(function (type) {
+      overlay.addEventListener(type, swallow, false);
+    });
+    ["touchstart", "touchmove"].forEach(function (type) {
+      overlay.addEventListener(type, swallowPassive, { passive: false });
+    });
+
     document.body.appendChild(overlay);
 
     // Safety: drop any held buttons when focus is lost or the page is hidden,

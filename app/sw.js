@@ -35,7 +35,7 @@ const STORE_NAME = "assets";
 // their old installation: e.g. a fix to the fetch handler or a new IDB
 // schema. Pure additive features (new message types the page can feature-
 // detect) do not need a bump.
-const SW_VERSION = 11;
+const SW_VERSION = 12;
 
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
@@ -69,6 +69,7 @@ const APP_SHELL = [
   "/img/achievements.png",
   "/img/help.png",
   "/img/en.png",
+  "/img/loading.png",
   "/img/tcoaal-steam-header.jpg",
   "/js/libs/pako_inflate.min.js",
   "/js/libs/browser-shim.js",
@@ -1296,6 +1297,27 @@ self.addEventListener("fetch", (event) => {
   // cache headers.
   if (logicalPath === "sw.js") return;
 
+  // "Now Loading" image: the engine always requests the canonical
+  // img/system/Loading.png (Graphics.setLoadingImage in rpg_managers.js),
+  // which would normally resolve to the hashed+encrypted base-game asset.
+  // Always swap in our bundled themed loading.png instead, served from the
+  // precached app shell so it works offline and never flashes the original.
+  if (logicalPath === "img/system/Loading.png") {
+    event.respondWith(
+      (async () => {
+        const bundled = new Request("/img/loading.png");
+        const cached = await caches.match(bundled);
+        if (cached) return cached;
+        try {
+          return await fetch(bundled, { cache: "force-cache" });
+        } catch {
+          return fetch(event.request);
+        }
+      })(),
+    );
+    return;
+  }
+
   if (
     logicalPath === "loader.html" ||
     logicalPath === "index.html" ||
@@ -1317,6 +1339,7 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "img/achievements.png" ||
     logicalPath === "img/help.png" ||
     logicalPath === "img/en.png" ||
+    logicalPath === "img/loading.png" ||
     logicalPath === "img/tcoaal-steam-header.jpg"
   ) {
     // Normalise "/" -> "/index.html" for cache lookups so a boot from the

@@ -1921,6 +1921,7 @@
       Input.keyMapper[46] = "delete"; // Delete key
       Input.keyMapper[79] = "saveExport"; // O key
       Input.keyMapper[73] = "saveImport"; // I key
+      Input.keyMapper[78] = "annotate"; // N key (edit save note)
       Input.keyMapper[80] = "saveExportGlobal"; // P key (Continue menu only)
     }
 
@@ -2037,6 +2038,7 @@
       var _orig_sceneFileUpdate = Scene_File.prototype.update;
       Scene_File.prototype.update = function () {
         _orig_sceneFileUpdate.call(this);
+        if (this._annotateOpen) return;
         if (!this._listWindow || !this._listWindow.active) return;
         if (this._saveConfirmWindow && this._saveConfirmWindow.visible) return;
         // DRM payload's Scene_File.prototype.savefileId() maps list index ->
@@ -2049,6 +2051,8 @@
           this._handleSaveExport(savefileId);
         } else if (Input.isTriggered("saveImport")) {
           this._handleSaveImport(savefileId);
+        } else if (Input.isTriggered("annotate")) {
+          this._handleAnnotate(savefileId);
         } else if (Input.isTriggered("delete")) {
           this._handleSaveDelete(savefileId);
         } else if (
@@ -2070,6 +2074,7 @@
           var labels = [
             { text: "[O] Export", key: "saveExport" },
             { text: "[I] Import", key: "saveImport" },
+            { text: "[N] Annotate", key: "annotate" },
             { text: "[Del] Delete", key: "delete" },
           ];
           // Continue menu only: prepend a screen-level shortcut to export
@@ -2114,10 +2119,70 @@
         }
       };
 
+      // Long-press a save row to edit its note (touch / mobile parity for
+      // the [N] Annotate shortcut). Held ~0.5s without drift over the list.
+      Scene_File.prototype._pointInListWindow = function (x, y) {
+        var w = this._listWindow;
+        if (!w) return false;
+        return (
+          x >= w.x && x <= w.x + w.width && y >= w.y && y <= w.y + w.height
+        );
+      };
+      Scene_File.prototype._updateAnnotateLongPress = function () {
+        // Long-press is the touch equivalent of the [N] key; desktop uses the
+        // key (and a held mouse button should not annotate).
+        if (!_isMobile) {
+          this._lpFrames = 0;
+          return;
+        }
+        if (
+          this._annotateOpen ||
+          !this._listWindow ||
+          !this._listWindow.active ||
+          (this._saveConfirmWindow && this._saveConfirmWindow.visible) ||
+          (this._saveInfoWindow && this._saveInfoWindow.visible)
+        ) {
+          this._lpFrames = 0;
+          return;
+        }
+        if (!TouchInput.isPressed()) {
+          this._lpFrames = 0;
+          return;
+        }
+        var x = TouchInput.x,
+          y = TouchInput.y;
+        if (!this._lpFrames) {
+          this._lpX = x;
+          this._lpY = y;
+          this._lpFrames = 1;
+          this._lpFired = false;
+          return;
+        }
+        // Drift cancels: the user is scrolling, not long-pressing.
+        if (Math.abs(x - this._lpX) > 16 || Math.abs(y - this._lpY) > 16) {
+          this._lpFrames = 0;
+          return;
+        }
+        this._lpFrames++;
+        if (
+          !this._lpFired &&
+          this._lpFrames >= 30 &&
+          this._pointInListWindow(x, y)
+        ) {
+          this._lpFired = true;
+          this._handleAnnotate(this.savefileId());
+        }
+      };
+
       // Click detection for hint labels in Scene_File
       var _orig_sceneFileUpdate2 = Scene_File.prototype.update;
       Scene_File.prototype.update = function () {
         _orig_sceneFileUpdate2.call(this);
+        if (this._annotateOpen) {
+          this._updateNoteEdit();
+          return;
+        }
+        this._updateAnnotateLongPress();
         if (
           isPluginActive("_mouseControl") &&
           this._fileHintRects &&
@@ -2135,6 +2200,7 @@
             if (tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
               if (rk === "saveExport") this._handleSaveExport(savefileId);
               else if (rk === "saveImport") this._handleSaveImport(savefileId);
+              else if (rk === "annotate") this._handleAnnotate(savefileId);
               else if (rk === "delete") this._handleSaveDelete(savefileId);
               else if (rk === "saveExportGlobal") exportGlobalSave();
               break;
@@ -2164,6 +2230,222 @@
         var parts = String(path).split(/[\/\\]/);
         return parts[parts.length - 1] || "";
       }
+
+      // Annotate: edit the free-form note shown next to the episode label,
+      // inline on the save row itself (no popup). Pressing [N] drops a caret
+      // onto the note line of the hovered row; the player types in place and
+      // presses Enter to keep the note (Esc to discard). The note is display-
+      // only metadata in its own localStorage key (via window.__saveDisplay),
+      // never written into the save. Committing must NOT load the game: the
+      // list window is deactivated and the Enter/Esc keydown is swallowed
+      // before it can reach the engine's Input handler.
+      Scene_File.prototype._handleAnnotate = function (savefileId) {
+        if (this._annotateOpen) return;
+        var path = savefilePath(savefileId);
+        if (!path || !Utils.exists(path)) {
+          SoundManager.playBuzzer();
+          return;
+        }
+        var sd = window.__saveDisplay || {};
+        var episode = sd.episodeFor ? sd.episodeFor(savefileId) : "Unknown";
+        var current = sd.getNote ? sd.getNote(savefileId) : "";
+        // The default note is a 17-char "YY/MM/DD HH:MM:SS" timestamp, which can
+        // be wider than the row's display budget (sd.noteMax). Editing must not
+        // be capped below what's already stored, so give the editor enough room
+        // to show and reshape the full timestamp regardless of row width.
+        var maxLen = Math.max(
+          sd.noteMax ? sd.noteMax(episode) : 24,
+          current.length,
+          24,
+        );
+
+        var lw = this._listWindow;
+        this._annotateOpen = true;
+        if (lw) lw.deactivate();
+        SoundManager.playOk();
+
+        this._noteEdit = {
+          id: savefileId,
+          index: lw ? lw.index() : 0,
+          text: current,
+          caret: current.length,
+          scroll: 0,
+          blink: 0,
+          maxLen: maxLen,
+          touchGuard: 18,
+        };
+        if (lw) {
+          lw._noteEdit = this._noteEdit;
+          lw.redrawItem(this._noteEdit.index);
+        }
+        this._createNoteInput(current, maxLen);
+      };
+
+      // Hidden, focused <input> drives native text entry (typing, paste, IME,
+      // mobile soft keyboard, selection); the row renders the text + caret
+      // itself. Positioned over the row's note area so the mobile keyboard /
+      // IME composition anchors there and taps on it move the caret.
+      Scene_File.prototype._createNoteInput = function (value, maxLen) {
+        var self = this;
+        var input = document.createElement("input");
+        input.type = "text";
+        input.value = value;
+        input.maxLength = maxLen;
+        input.setAttribute("autocomplete", "off");
+        input.setAttribute("autocorrect", "off");
+        input.setAttribute("autocapitalize", "off");
+        input.setAttribute("spellcheck", "false");
+        // Fully invisible (opacity:0) rather than transparent colours: the row
+        // renders the text + caret itself, and opacity:0 also hides the input's
+        // native selection highlight (which select() below would otherwise
+        // paint as a blue block over the row). Still focusable/typeable.
+        input.style.cssText =
+          "position:fixed;z-index:100000;margin:0;padding:0;border:0;outline:none;" +
+          "background:transparent;opacity:0;";
+        document.body.appendChild(input);
+        this._noteInputEl = input;
+        this._positionNoteInput();
+        this._noteResizeHandler = function () {
+          self._positionNoteInput();
+        };
+        window.addEventListener("resize", this._noteResizeHandler);
+        // Capture keydown at the document so the engine's Input handler (and
+        // the list window's "ok"/"cancel") never see it. stopPropagation (not
+        // preventDefault) lets native text editing proceed for normal keys.
+        this._noteKeyHandler = function (e) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            self._commitNote();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            self._cancelNote();
+          } else {
+            e.stopPropagation();
+          }
+        };
+        document.addEventListener("keydown", this._noteKeyHandler, true);
+        setTimeout(function () {
+          try {
+            input.focus();
+            input.select();
+          } catch (e) {}
+        }, 30);
+      };
+
+      Scene_File.prototype._positionNoteInput = function () {
+        var inp = this._noteInputEl;
+        var ne = this._noteEdit;
+        var lw = this._listWindow;
+        if (!inp || !ne || !lw) return;
+        var canvas =
+          (typeof Graphics !== "undefined" && Graphics._canvas) ||
+          document.querySelector("canvas");
+        if (!canvas) return;
+        var r = canvas.getBoundingClientRect();
+        var gw = Graphics.width || canvas.width;
+        var gh = Graphics.height || canvas.height;
+        var sx = r.width / gw;
+        var sy = r.height / gh;
+        var rect = lw.itemRectForText
+          ? lw.itemRectForText(ne.index)
+          : lw.itemRect(ne.index);
+        // Title/note line starts ~192px into the row in MV's drawContents.
+        var gx = lw.x + lw.standardPadding() + rect.x + 192;
+        var gy = lw.y + lw.standardPadding() + rect.y;
+        var fw = Math.max(40, rect.width - 192);
+        var fh = lw.lineHeight();
+        var s = inp.style;
+        s.left = r.left + gx * sx + "px";
+        s.top = r.top + gy * sy + "px";
+        s.width = fw * sx + "px";
+        s.height = fh * sy + "px";
+        s.fontSize = Math.max(8, Math.floor(fh * sy * 0.6)) + "px";
+      };
+
+      // Poll the hidden input each frame, mirror its value/caret into the edit
+      // state, and repaint the row (text on change, caret on blink). A tap
+      // outside the edited row commits (mobile has no Esc); the field itself
+      // receives taps via the HTML input, so those don't reach TouchInput.
+      Scene_File.prototype._updateNoteEdit = function () {
+        var ne = this._noteEdit;
+        var inp = this._noteInputEl;
+        if (!ne || !inp) return;
+        if (ne.touchGuard > 0) ne.touchGuard--;
+        if (
+          ne.touchGuard <= 0 &&
+          typeof TouchInput !== "undefined" &&
+          (TouchInput.isCancelled() || TouchInput.isTriggered())
+        ) {
+          if (TouchInput.isCancelled()) this._cancelNote();
+          else this._commitNote();
+          return;
+        }
+        var v = inp.value;
+        if (v.length > ne.maxLen) {
+          v = v.slice(0, ne.maxLen);
+          inp.value = v;
+        }
+        var caret = inp.selectionStart;
+        if (caret == null) caret = v.length;
+        var lw = this._listWindow;
+        if (v !== ne.text || caret !== ne.caret) {
+          ne.text = v;
+          ne.caret = caret;
+          ne.blink = 0;
+          if (lw) lw.redrawItem(ne.index);
+        } else {
+          ne.blink++;
+          if (ne.blink % 30 === 0 && lw) lw.redrawItem(ne.index);
+        }
+      };
+
+      Scene_File.prototype._commitNote = function () {
+        if (!this._annotateOpen || !this._noteEdit) return;
+        var ne = this._noteEdit;
+        var sd = window.__saveDisplay || {};
+        var val = (this._noteInputEl ? this._noteInputEl.value : ne.text)
+          .replace(/\s+$/, "")
+          .slice(0, ne.maxLen);
+        if (sd.setNote) sd.setNote(ne.id, val);
+        SoundManager.playSave();
+        this._endNoteEdit();
+      };
+
+      Scene_File.prototype._cancelNote = function () {
+        if (!this._annotateOpen || !this._noteEdit) return;
+        this._endNoteEdit();
+      };
+
+      // Tear down the inline editor and hand focus back to the save list.
+      // Reactivate next frame so the committing Enter/Esc/tap doesn't leak
+      // into the now-active list window.
+      Scene_File.prototype._endNoteEdit = function () {
+        if (this._noteKeyHandler) {
+          document.removeEventListener("keydown", this._noteKeyHandler, true);
+          this._noteKeyHandler = null;
+        }
+        if (this._noteResizeHandler) {
+          window.removeEventListener("resize", this._noteResizeHandler);
+          this._noteResizeHandler = null;
+        }
+        if (this._noteInputEl && this._noteInputEl.parentNode) {
+          this._noteInputEl.parentNode.removeChild(this._noteInputEl);
+        }
+        this._noteInputEl = null;
+        this._noteEdit = null;
+        var lw = this._listWindow;
+        if (lw) {
+          lw._noteEdit = null;
+          lw.refresh();
+        }
+        var self = this;
+        setTimeout(function () {
+          self._annotateOpen = false;
+          if (self._listWindow) self._listWindow.activate();
+        }, 0);
+      };
 
       // Export: download save data as .rpgsave file (native RPG Maker MV format:
       // LZString-compressed base64 of the JSON payload). Interchangeable with the
@@ -2227,13 +2509,33 @@
       // immediately, instead of "Unknown" until next reload.
       //
       // The portraits and playtime come from `$gameParty` and `$gameSystem`.
-      // Both are pulled from `contents` (rehydrated by JsonEx with their
-      // real prototypes), so we briefly swap them into the globals,
-      // call `DataManager.makeSavefileInfo`, and restore.
+      // They are pulled from `contents` (rehydrated by JsonEx with their real
+      // prototypes), so we briefly swap them into the globals, call
+      // `DataManager.makeSavefileInfo`, and restore.
+      //
+      // We swap in the *full* set of save globals (map/player/screen/... in
+      // addition to system/party/actors), not just the three makeSavefileInfo
+      // reads in stock MV: overhaul DRMs extend makeSavefileInfo to pull
+      // chapter/location data off other globals, and a single missing global
+      // throws, falling back to a portrait-less "Unknown" slot until the next
+      // reload. Restoring every swapped key in `finally` keeps the live game
+      // state untouched.
       //
       // The DRM derives playtime from `_secondsPlayed`. Legacy saves only
       // have `_framesOnSave`; mirror the DRM's loadGame conversion so the
       // playtime renders correctly for both shapes.
+      var SAVE_CONTENT_GLOBALS = {
+        system: "$gameSystem",
+        screen: "$gameScreen",
+        timer: "$gameTimer",
+        switches: "$gameSwitches",
+        variables: "$gameVariables",
+        selfSwitches: "$gameSelfSwitches",
+        actors: "$gameActors",
+        party: "$gameParty",
+        map: "$gameMap",
+        player: "$gamePlayer",
+      };
       function makeInfoFromContents(contents) {
         if (
           !contents ||
@@ -2247,21 +2549,20 @@
           contents.system._secondsPlayed =
             (contents.system._framesOnSave || 0) / 60;
         }
-        var prevSystem = window.$gameSystem;
-        var prevParty = window.$gameParty;
-        var prevActors = window.$gameActors;
+        var saved = {};
         try {
-          window.$gameSystem = contents.system;
-          window.$gameParty = contents.party;
-          window.$gameActors = contents.actors;
+          for (var key in SAVE_CONTENT_GLOBALS) {
+            if (typeof contents[key] === "undefined") continue;
+            var g = SAVE_CONTENT_GLOBALS[key];
+            saved[g] = window[g];
+            window[g] = contents[key];
+          }
           return DataManager.makeSavefileInfo();
         } catch (e) {
           console.warn("[lang-shim] makeInfoFromContents failed:", e);
           return null;
         } finally {
-          window.$gameSystem = prevSystem;
-          window.$gameParty = prevParty;
-          window.$gameActors = prevActors;
+          for (var rg in saved) window[rg] = saved[rg];
         }
       }
 
@@ -2713,6 +3014,256 @@
 
       Window_SaveInfo.prototype.numVisibleRows = function () {
         return 1;
+      };
+    }
+
+    // Continue menu: hovered-save map background
+    // While hovering a slot in the title-screen "Continue" menu, the menu
+    // background becomes the map that save sits on: the map's ground image with
+    // its parallax layered over it. The map id comes from the save payload
+    // (__saveDisplay.mapId); the two image hashes come from the map JSON's note
+    // field, e.g. "<ground:bab183cf848588f3><par:6bfa4133bda1b1bd>". Moving onto
+    // a slot with no resolvable map (or no save) reverts to the default
+    // background; leaving for the title screen restores it automatically since
+    // Scene_Title rebuilds its own background.
+    //
+    // Gated to Scene_Load reached *from the title* (isPreviousScene), so the
+    // in-game load screen is unaffected.
+    if (
+      typeof Scene_Load !== "undefined" &&
+      typeof Scene_Title !== "undefined" &&
+      typeof Sprite !== "undefined" &&
+      typeof Bitmap !== "undefined"
+    ) {
+      // map id -> { ground, par } | null, and image hash -> Bitmap | null.
+      var _mapBgNoteCache = {};
+      var _mapBgImgCache = {};
+      // Ground/parallax art is stored under a hashed filename within one of
+      // these image folders; the SW resolves the hashed path directly and
+      // decrypts it. parallaxes is the expected home; the rest are tried as a
+      // fallback so a non-standard layout still resolves.
+      var MAP_BG_DIRS = [
+        "img/parallaxes/",
+        "img/pictures/",
+        "img/backgrounds/",
+      ];
+
+      function pad3(n) {
+        n = "" + (n | 0);
+        while (n.length < 3) n = "0" + n;
+        return n;
+      }
+
+      function fetchMapBgNote(mapId, cb) {
+        if (!mapId) {
+          cb(null);
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(_mapBgNoteCache, mapId)) {
+          cb(_mapBgNoteCache[mapId]);
+          return;
+        }
+        fetch("data/Map" + pad3(mapId) + ".json")
+          .then(function (r) {
+            return r && r.ok ? r.json() : null;
+          })
+          .then(function (data) {
+            var res = null;
+            if (data && typeof data.note === "string") {
+              var g = data.note.match(/<ground:([0-9a-fA-F]+)>/);
+              var p = data.note.match(/<par(?:allax)?:([0-9a-fA-F]+)>/);
+              if (g || p) {
+                res = {
+                  ground: g ? g[1].toLowerCase() : null,
+                  par: p ? p[1].toLowerCase() : null,
+                };
+              }
+            }
+            _mapBgNoteCache[mapId] = res;
+            cb(res);
+          })
+          .catch(function () {
+            _mapBgNoteCache[mapId] = null;
+            cb(null);
+          });
+      }
+
+      function loadMapBgImage(hash, cb) {
+        if (!hash) {
+          cb(null);
+          return;
+        }
+        if (Object.prototype.hasOwnProperty.call(_mapBgImgCache, hash)) {
+          cb(_mapBgImgCache[hash]);
+          return;
+        }
+        // Engine-native load path: the SW decrypts the hashed file. Poll the
+        // bitmap state (load listeners fire on success only) so a missing or
+        // erroring image advances to the next candidate folder, and an
+        // exhausted list resolves to null instead of hanging the pending count.
+        var dir = 0;
+        function tryDir() {
+          if (dir >= MAP_BG_DIRS.length) {
+            _mapBgImgCache[hash] = null;
+            cb(null);
+            return;
+          }
+          var bmp = Bitmap.load(MAP_BG_DIRS[dir] + hash + ".png");
+          var tries = 0;
+          (function poll() {
+            if (bmp.isReady() && !(bmp.isError && bmp.isError())) {
+              if (bmp.width > 1) {
+                _mapBgImgCache[hash] = bmp;
+                cb(bmp);
+              } else {
+                dir++;
+                tryDir();
+              }
+            } else if ((bmp.isError && bmp.isError()) || tries++ > 300) {
+              dir++;
+              tryDir();
+            } else {
+              setTimeout(poll, 16);
+            }
+          })();
+        }
+        tryDir();
+      }
+
+      var _origLoadCreate = Scene_Load.prototype.create;
+      Scene_Load.prototype.create = function () {
+        _origLoadCreate.call(this);
+        this._mapBgEnabled = SceneManager.isPreviousScene(Scene_Title);
+        if (!this._mapBgEnabled) return;
+        this._mapBgContainer = new Sprite();
+        // Opaque black backdrop: ground/parallax art has large fully
+        // transparent regions, so without this the default menu background
+        // would show through. It's the first child, behind both layers, and
+        // fades together with them via the container's opacity.
+        if (typeof ScreenSprite !== "undefined") {
+          this._mapBgBlack = new ScreenSprite();
+          this._mapBgBlack.setBlack();
+          this._mapBgBlack.opacity = 255;
+        } else {
+          var blk = new Bitmap(
+            Graphics.boxWidth || Graphics.width,
+            Graphics.boxHeight || Graphics.height,
+          );
+          blk.fillAll("black");
+          this._mapBgBlack = new Sprite(blk);
+        }
+        this._mapBgGround = new Sprite();
+        this._mapBgPar = new Sprite();
+        this._mapBgContainer.addChild(this._mapBgBlack);
+        this._mapBgContainer.addChild(this._mapBgGround);
+        this._mapBgContainer.addChild(this._mapBgPar);
+        this._mapBgContainer.visible = false;
+        this._mapBgContainer.opacity = 0;
+        this._mapBgFadeIn = false;
+        this._mapBgIndex = null;
+        this._mapBgToken = 0;
+        // Sit just below the window layer: above the default background, below
+        // every menu window.
+        var insertAt = this._windowLayer
+          ? this.getChildIndex(this._windowLayer)
+          : this.children.length;
+        this.addChildAt(this._mapBgContainer, insertAt);
+      };
+
+      var _origLoadUpdate = Scene_Load.prototype.update;
+      Scene_Load.prototype.update = function () {
+        _origLoadUpdate.call(this);
+        if (!this._mapBgEnabled || !this._mapBgContainer) return;
+        if (!this._annotateOpen && this._listWindow) {
+          var idx = this._listWindow.index();
+          if (idx !== this._mapBgIndex) {
+            this._mapBgIndex = idx;
+            this._refreshMapBg();
+          }
+        }
+        var c = this._mapBgContainer;
+        if (this._mapBgFadeIn) {
+          if (c.opacity < 255) c.opacity = Math.min(255, c.opacity + 32);
+        } else if (c.opacity > 0) {
+          c.opacity = Math.max(0, c.opacity - 32);
+          if (c.opacity === 0) c.visible = false;
+        }
+      };
+
+      Scene_Load.prototype._refreshMapBg = function () {
+        var self = this;
+        var savefileId = 0;
+        try {
+          savefileId = this.savefileId();
+        } catch (e) {}
+        var sd = window.__saveDisplay;
+        var mapId = sd && sd.mapId ? sd.mapId(savefileId) : 0;
+        var token = ++this._mapBgToken;
+        if (!mapId) {
+          this._hideMapBg();
+          return;
+        }
+        fetchMapBgNote(mapId, function (info) {
+          if (token !== self._mapBgToken) return;
+          if (!info || (!info.ground && !info.par)) {
+            self._hideMapBg();
+            return;
+          }
+          var pending = (info.ground ? 1 : 0) + (info.par ? 1 : 0);
+          var any = false;
+          function done() {
+            if (token !== self._mapBgToken) return;
+            if (--pending <= 0) {
+              if (any) self._showMapBg();
+              else self._hideMapBg();
+            }
+          }
+          if (info.ground) {
+            loadMapBgImage(info.ground, function (b) {
+              if (token === self._mapBgToken) {
+                self._mapBgGround.bitmap = b || null;
+                if (b) {
+                  any = true;
+                  self._fitMapBgSprite(self._mapBgGround, b);
+                }
+              }
+              done();
+            });
+          }
+          if (info.par) {
+            loadMapBgImage(info.par, function (b) {
+              if (token === self._mapBgToken) {
+                self._mapBgPar.bitmap = b || null;
+                if (b) {
+                  any = true;
+                  self._fitMapBgSprite(self._mapBgPar, b);
+                }
+              }
+              done();
+            });
+          }
+        });
+      };
+
+      // Scale to cover the whole screen, centred (preserves aspect ratio).
+      Scene_Load.prototype._fitMapBgSprite = function (sprite, bmp) {
+        if (!bmp || !bmp.width || !bmp.height) return;
+        var sw = Graphics.boxWidth || Graphics.width;
+        var sh = Graphics.boxHeight || Graphics.height;
+        var scale = Math.max(sw / bmp.width, sh / bmp.height);
+        sprite.scale.x = sprite.scale.y = scale;
+        sprite.x = Math.round((sw - bmp.width * scale) / 2);
+        sprite.y = Math.round((sh - bmp.height * scale) / 2);
+      };
+
+      Scene_Load.prototype._showMapBg = function () {
+        if (!this._mapBgContainer) return;
+        this._mapBgContainer.visible = true;
+        this._mapBgFadeIn = true;
+      };
+
+      Scene_Load.prototype._hideMapBg = function () {
+        this._mapBgFadeIn = false;
       };
     }
 

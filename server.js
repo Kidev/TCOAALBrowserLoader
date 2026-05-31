@@ -126,6 +126,16 @@ function handler(req, res) {
     return;
   }
 
+  // "Now Loading" image: always swap the engine's canonical request for our
+  // bundled themed loading.png (mirrors the Service Worker override so Mode A
+  // shows the same image even before the SW takes control).
+  if (logicalRel === "img/system/Loading.png") {
+    if (
+      serveFile(req, res, path.join(APP_DIR, "img", "loading.png"), "image/png")
+    )
+      return;
+  }
+
   // Mod assets (from mods/ directory at repo root)
   if (logicalRel.startsWith("mods/")) {
     const modFilePath = path.join(__dirname, logicalRel);

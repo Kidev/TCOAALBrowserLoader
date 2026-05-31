@@ -217,6 +217,208 @@
     return np === dp || np.indexOf(dp + "/") === 0;
   }
 
+  // Save list display: episode label + per-save annotation
+  // The save rows used to show the game title, which the DRM suffixes with the
+  // build version ("... v3.0.13"). We move the version under "File N" and use
+  // the title line for "[Episode X] <note>" instead, where the episode is
+  // derived from the map the save sits on and the note is a free-form
+  // annotation the player edits (key handling lives in lang-shim). Display
+  // only: no save data is written here; notes live in their own localStorage
+  // keys, scoped per save slot (and thus per active mod).
+
+  // Map id -> episode label. Ranges mirror the game's chapter/map layout.
+  function detectEpisode(mapId) {
+    mapId = parseInt(mapId, 10) || 0;
+    if (mapId >= 3 && mapId <= 18) return "Episode 1";
+    if (mapId === 221) return "Episode 4";
+    if (mapId === 261) return "Episode 2";
+    if (mapId >= 19 && mapId <= 107) return "Episode 2";
+    if (mapId >= 1 && mapId <= 2) return "Episode 3A";
+    if (mapId >= 108) return "Episode 3A";
+    return "Unknown";
+  }
+
+  // Resolve the map id a save sits on by parsing the save payload once and
+  // caching by on-disk path. Synchronous in browser mode: Utils.readFile hits
+  // localStorage and LZString/JSON parse are sync. Works for both regular file
+  // slots and autosaves (negative ids), since localFilePath maps either.
+  var _mapIdCache = {};
+  function saveMapId(savefileId) {
+    try {
+      if (
+        typeof StorageManager === "undefined" ||
+        typeof StorageManager.localFilePath !== "function"
+      )
+        return 0;
+      var path = StorageManager.localFilePath(savefileId);
+      if (!path) return 0;
+      if (Object.prototype.hasOwnProperty.call(_mapIdCache, path))
+        return _mapIdCache[path];
+      var mapId = 0;
+      try {
+        var raw = Utils.readFile(path);
+        if (raw) {
+          // Save is LZString-compressed base64; the map node is plain JSON
+          // ("@" class markers aside), so JSON.parse suffices for _mapId.
+          var json = LZString.decompressFromBase64(String(raw).trim());
+          if (json) {
+            var data = JSON.parse(json);
+            if (data && data.map && typeof data.map._mapId === "number")
+              mapId = data.map._mapId;
+          }
+        }
+      } catch (e) {}
+      _mapIdCache[path] = mapId;
+      return mapId;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  // Per-save annotation storage. Keyed off the scoped web-storage key for
+  // regular slots (so notes follow the active mod's save scope) and the
+  // on-disk path for autosaves.
+  function noteKey(savefileId) {
+    try {
+      if (
+        savefileId > 0 &&
+        typeof StorageManager !== "undefined" &&
+        typeof StorageManager.webStorageKey === "function"
+      )
+        return "saveNote:" + StorageManager.webStorageKey(savefileId);
+    } catch (e) {}
+    try {
+      var p = StorageManager.localFilePath(savefileId);
+      if (p) return "saveNote:auto:" + p;
+    } catch (e) {}
+    return "saveNote:id:" + savefileId;
+  }
+  function getSaveNote(savefileId) {
+    try {
+      return localStorage.getItem(noteKey(savefileId)) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+  function setSaveNote(savefileId, text) {
+    try {
+      var k = noteKey(savefileId);
+      if (text) localStorage.setItem(k, String(text));
+      else localStorage.removeItem(k);
+    } catch (e) {}
+  }
+
+  // Default per-save annotation: the wall-clock time the save was created,
+  // formatted to the user's locale (browser/OS date+time preferences) via
+  // toLocaleString. It is written into the regular note store (so the player
+  // can freely edit or clear it via Annotate), never into the save payload.
+  function formatSaveTimestamp(ms) {
+    var d = new Date(typeof ms === "number" ? ms : Date.now());
+    try {
+      // Locale default short-ish date + time with seconds, honouring the
+      // user's region (12h/24h, D/M/Y order, separators).
+      return d.toLocaleString(undefined, {
+        year: "2-digit",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    } catch (e) {
+      // Very old engines / locked-down Intl: fall back to the raw locale form.
+      try {
+        return d.toLocaleString();
+      } catch (e2) {
+        return "" + d;
+      }
+    }
+  }
+  // We can't recognise "still an untouched auto-timestamp" by pattern once the
+  // format is locale-dependent, so record the exact string we last auto-wrote
+  // in a companion key. Saving over a slot refreshes the time only while the
+  // note still equals that recorded value; the moment the player edits it the
+  // marker is dropped and the custom note is left alone forever after.
+  function autoNoteMarkerKey(savefileId) {
+    return noteKey(savefileId) + ":auto";
+  }
+  function getAutoNoteMarker(savefileId) {
+    try {
+      return localStorage.getItem(autoNoteMarkerKey(savefileId)) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+  function setAutoNoteMarker(savefileId, text) {
+    try {
+      var k = autoNoteMarkerKey(savefileId);
+      if (text) localStorage.setItem(k, String(text));
+      else localStorage.removeItem(k);
+    } catch (e) {}
+  }
+  // Stamp the default creation-time note onto a freshly written file slot.
+  // Skips autosaves (negative ids, keyed by path and labelled "Auto N") and
+  // any slot whose note the player has already customised.
+  function applyDefaultSaveNote(savefileId) {
+    if (typeof savefileId !== "number" || savefileId <= 0) return;
+    var cur = getSaveNote(savefileId);
+    var marker = getAutoNoteMarker(savefileId);
+    if (!cur || cur === marker) {
+      var stamp = formatSaveTimestamp(Date.now());
+      setSaveNote(savefileId, stamp);
+      setAutoNoteMarker(savefileId, stamp);
+    } else if (marker) {
+      // Player customised the note: stop treating it as auto.
+      setAutoNoteMarker(savefileId, "");
+    }
+  }
+
+  // Pull the "v3.0.13" suffix the DRM appends to the game title; fall back to
+  // the GAME_VERSION global (defined in www/js/main.js).
+  function saveVersion(info) {
+    var m = info && info.title && String(info.title).match(/\sv(\d[\w.]*)$/i);
+    if (m) return "v" + m[1];
+    if (typeof window.GAME_VERSION === "string" && window.GAME_VERSION)
+      return "v" + window.GAME_VERSION;
+    return "";
+  }
+
+  // Shared API consumed by lang-shim's annotation editor.
+  window.__saveDisplay = {
+    detectEpisode: detectEpisode,
+    mapId: saveMapId,
+    episodeFor: function (savefileId) {
+      return detectEpisode(saveMapId(savefileId));
+    },
+    getNote: getSaveNote,
+    setNote: setSaveNote,
+    // Format a timestamp the same way new saves are auto-annotated, and a
+    // predicate for "this slot's note is still the untouched creation
+    // timestamp" (current note still equals the recorded auto value).
+    formatTimestamp: formatSaveTimestamp,
+    isAutoNote: function (savefileId) {
+      var m = getAutoNoteMarker(savefileId);
+      return !!m && getSaveNote(savefileId) === m;
+    },
+    // Invalidate the cached map id after a save's contents change.
+    invalidate: function (savefileId) {
+      try {
+        delete _mapIdCache[StorageManager.localFilePath(savefileId)];
+      } catch (e) {}
+    },
+    // Character capacity of the title line, refreshed whenever a row draws.
+    // Used to bound annotation length: note fits the remainder of the line
+    // after "[Episode X] ".
+    lineChars: 30,
+    noteMax: function (episodeLabel) {
+      // total - "[label]".length - 1 (the separating space)
+      return Math.max(
+        0,
+        (this.lineChars || 30) - (episodeLabel.length + 2) - 1,
+      );
+    },
+  };
+
   window.__applyBrowserOverrides = function () {
     if (window.__browserOverridesApplied) return;
     window.__browserOverridesApplied = true;
@@ -685,8 +887,123 @@
           } else {
             this.changePaintOpacity(true);
           }
+          // Build version under the file/auto label (it no longer rides in the
+          // title). Dim, half-size, tucked on the next line.
+          var ver = saveVersion(saveInfo);
+          if (ver) {
+            var prevSize = this.contents.fontSize;
+            this.contents.fontSize = Math.floor(this.standardFontSize() * 0.7);
+            this.changeTextColor("#9aa0a8");
+            this.drawText(
+              ver,
+              itemRect.x,
+              itemRect.y + this.lineHeight() - 4,
+              180,
+            );
+            this.resetTextColor();
+            this.contents.fontSize = prevSize;
+          }
+          // Hand the current row's id to drawGameTitle (which has no id of its
+          // own) so it can resolve the episode and note.
+          this._curSaveId = adjustedIndex;
           this.drawContents(saveInfo, itemRect, true);
         }
+      };
+
+      // Replace the game-title line with "[Episode X] <note>".
+      Window_SavefileList.prototype.drawGameTitle = function (
+        info,
+        x,
+        y,
+        width,
+      ) {
+        var saveId = this._curSaveId;
+        var label = detectEpisode(saveMapId(saveId));
+        // Refresh the shared line-char capacity for the annotation editor,
+        // estimated from an average glyph width at the current font.
+        try {
+          var sample = "abcdefghijklmnopqrstuvwxyz0123456789";
+          var avg = this.contents.measureTextWidth(sample) / sample.length || 8;
+          window.__saveDisplay.lineChars = Math.max(1, Math.floor(width / avg));
+        } catch (e) {}
+        var prefix = "[" + label + "]";
+        this.resetTextColor();
+        this.drawText(prefix, x, y, width);
+        var used = this.textWidth(prefix + " ");
+        var remain = width - used;
+        // Inline note editor: when this row is the one being annotated, render
+        // the live edit buffer + a blinking caret in place of the stored note.
+        // The edit state (_noteEdit) is driven by Scene_File in lang-shim.
+        var edit = this._noteEdit;
+        if (edit && edit.id === saveId) {
+          if (remain > 8) this._drawNoteEditor(edit, x + used, y, remain);
+          return;
+        }
+        var note = getSaveNote(saveId);
+        if (note && remain > 0) {
+          this.changeTextColor("#aab0b8");
+          this.drawText(note, x + used, y, remain);
+          this.resetTextColor();
+        }
+      };
+
+      // Draw the in-progress note text + caret for the inline editor onto an
+      // offscreen bitmap (clipped to the available width, scrolled to keep the
+      // caret visible), then blit it onto the row.
+      Window_SavefileList.prototype._drawNoteEditor = function (edit, x, y, w) {
+        var lh = this.lineHeight();
+        if (
+          !this._noteEditBmp ||
+          this._noteEditBmp.width !== w ||
+          this._noteEditBmp.height !== lh
+        ) {
+          this._noteEditBmp = new Bitmap(w, lh);
+        }
+        var fb = this._noteEditBmp;
+        fb.clear();
+        fb.fontFace = this.contents.fontFace;
+        fb.fontSize = this.contents.fontSize;
+        fb.textColor = "#ffffff";
+        var text = edit.text || "";
+        var innerPad = 2;
+        var avail = w - innerPad * 2;
+        var caretPx = fb.measureTextWidth(text.slice(0, edit.caret));
+        var sc = edit.scroll || 0;
+        if (caretPx - sc > avail) sc = caretPx - avail;
+        if (caretPx - sc < 0) sc = caretPx;
+        if (sc < 0) sc = 0;
+        if (fb.measureTextWidth(text) <= avail) sc = 0;
+        edit.scroll = sc;
+        if (text) {
+          fb.drawText(
+            text,
+            innerPad - sc,
+            0,
+            fb.measureTextWidth(text) + 8,
+            lh,
+            "left",
+          );
+        }
+        // Blink the caret ~twice a second.
+        if (Math.floor((edit.blink || 0) / 30) % 2 === 0) {
+          fb.fillRect(innerPad + caretPx - sc, 4, 2, lh - 8, "#ffffff");
+        }
+        this.contents.blt(fb, 0, 0, w, lh, x, y);
+      };
+    }
+
+    // Writing a slot reuses its path, so the cached map id (and thus episode)
+    // would go stale after a save-over. Clear the cache on every write.
+    if (typeof StorageManager !== "undefined" && StorageManager.save) {
+      var _origStorageSave = StorageManager.save;
+      StorageManager.save = function (savefileId, json) {
+        _mapIdCache = {};
+        var result = _origStorageSave.apply(this, arguments);
+        // Give the slot its creation time as a default, editable note.
+        try {
+          applyDefaultSaveNote(savefileId);
+        } catch (e) {}
+        return result;
       };
     }
   };
