@@ -494,6 +494,189 @@
     return list;
   }
 
+  // Credits scene additions
+  //
+  // The Credits screen is GALV_RollCredits' Scene_Credits, fed by data/
+  // Credits.txt: blocks delimited by <block:...> / </block>, each one a page,
+  // with \c[2] coloured section headers. The text differs per game version and
+  // per overhaul (each ships its own Credits.txt), so rather than edit any one
+  // file we wrap Galv.CRED.createCreds and rework the blocks at parse time.
+  // This applies uniformly to the base game, every overhaul, and any future
+  // version:
+  //   - the first page keeps the game's own credits (moved up), then gains a
+  //     "Browser launcher / kidev" credit and a "Mods" section;
+  //   - a new "Translations" page lists the translation authors;
+  //   - the "Version / links" preamble is moved off the first page and merged
+  //     into the final (RPG Maker EULA) page.
+
+  // Distinct author names, splitting multi-name fields ("A, B") and
+  // de-duplicating so a contributor appears once. `wantTranslations` selects
+  // the translation entries (their own Language menu) vs the mods (getModList's
+  // overhauls + plugins). Registry order.
+  function collectModAuthors(wantTranslations) {
+    var out = [];
+    if (!_modsData) return out;
+    var seen = {};
+    var keys = Object.keys(_modsData);
+    for (var i = 0; i < keys.length; i++) {
+      var entry = _modsData[keys[i]];
+      if (!entry || !entry.author) continue;
+      if (!!isTranslationType(entry.type) !== !!wantTranslations) continue;
+      var parts = String(entry.author).split(",");
+      for (var j = 0; j < parts.length; j++) {
+        var name = parts[j].trim();
+        if (!name || Object.prototype.hasOwnProperty.call(seen, name)) continue;
+        seen[name] = true;
+        out.push(name);
+      }
+    }
+    return out;
+  }
+
+  // Comma-separate names (no comma after the last), wrapping to multiple lines
+  // since drawTextEx does no word wrap, to keep the centred block on-screen.
+  function wrapNames(names, maxChars) {
+    var lines = [];
+    var cur = "";
+    for (var i = 0; i < names.length; i++) {
+      var piece = names[i] + (i < names.length - 1 ? "," : "");
+      if (cur === "") cur = piece;
+      else if ((cur + " " + piece).length > maxChars) {
+        lines.push(cur);
+        cur = piece;
+      } else cur += " " + piece;
+    }
+    if (cur) lines.push(cur);
+    return lines.join("\n");
+  }
+
+  // Build a \c[2]-headed section, omitted entirely when there are no names.
+  function authorSection(title, names) {
+    if (!names.length) return "";
+    return "\\c[2]" + title + "\n" + wrapNames(names, 46) + "\n";
+  }
+
+  // Rework the raw Credits.txt before Galv parses it. The first block's leading
+  // preamble (everything before its first \c[ header, i.e. the "Version /
+  // links" lines) is lifted onto a new last page; the kept credits shift up and
+  // gain the launcher + Mods sections; a Translations page is inserted after
+  // the first. New blocks reuse the first block's display params. Returns the
+  // string untouched if the block format is unexpected.
+  function buildCreditsString(string) {
+    if (typeof string !== "string") return string;
+    var openMatch = string.match(/<block:[^>\n]*>/i);
+    var endTag = "</block>";
+    if (!openMatch) return string;
+    var openTag = openMatch[0];
+    var openEnd = openMatch.index + openTag.length;
+    var firstEnd = string.indexOf(endTag, openEnd);
+    if (firstEnd < 0) return string;
+
+    var before = string.slice(0, openMatch.index);
+    var inner = string.slice(openEnd, firstEnd);
+    var afterFirst = string.slice(firstEnd + endTag.length);
+
+    // Split the first block at its first coloured header: the preamble before
+    // it (Version / links) moves to the last page, the rest stays and shifts up.
+    var preamble = "";
+    var rest = inner;
+    var hdr = inner.indexOf("\\c[");
+    if (hdr >= 0) {
+      preamble = inner.slice(0, hdr).replace(/^\s+|\s+$/g, "");
+      rest = inner.slice(hdr);
+    }
+    rest = rest.replace(/\s+$/, "");
+
+    // First page: kept credits (moved up) + launcher + Mods.
+    var firstInner = "\n" + rest + "\n\n\\c[2]Browser launcher\nkidev\n";
+    var modsSection = authorSection("Mods", collectModAuthors(false));
+    if (modsSection) firstInner += "\n" + modsSection;
+    firstInner += "\n";
+
+    var out = before + openTag + firstInner + endTag;
+
+    // Translations page (its own block).
+    var transSection = authorSection("Translations", collectModAuthors(true));
+    if (transSection) {
+      out += "\n\n" + openTag + "\n" + transSection + "\n" + endTag;
+    }
+
+    // Original remaining blocks (music, sound, font, EULA, ...).
+    out += afterFirst.replace(/\s+$/, "");
+
+    // Merge the Version / links preamble into the last block (the EULA page)
+    // rather than giving it its own page.
+    if (preamble) {
+      var lastEnd = out.lastIndexOf(endTag);
+      if (lastEnd >= 0) {
+        out =
+          out.slice(0, lastEnd).replace(/\s+$/, "") +
+          "\n\n" +
+          preamble +
+          "\n\n" +
+          out.slice(lastEnd);
+      }
+    }
+    return out + "\n";
+  }
+
+  function installCreditsHook() {
+    if (
+      typeof Galv === "undefined" ||
+      !Galv.CRED ||
+      typeof Galv.CRED.createCreds !== "function"
+    )
+      return false;
+    if (Galv.CRED._launcherCreditsHooked) return true;
+    var orig = Galv.CRED.createCreds;
+    Galv.CRED.createCreds = function (string) {
+      try {
+        string = buildCreditsString(string);
+      } catch (e) {}
+      return orig.call(this, string);
+    };
+
+    // Input behaviour: a left click or Enter should never close the credits,
+    // only skip the current page to the next. The stock handler uses
+    // TouchInput.isPressed() (true every frame the button is held), so one
+    // click skips many pages at once and can run off the end and exit. Use
+    // isTriggered() so each click / Enter advances exactly one page; only the
+    // cancel button (Escape) or a right click (TouchInput.isCancelled) leaves.
+    // (MouseControl's click-outside-to-cancel is also disabled for this scene
+    // so a left click here advances rather than synthesizing an Escape.)
+    if (
+      typeof Scene_Credits !== "undefined" &&
+      Scene_Credits.prototype &&
+      !Scene_Credits.prototype._launcherInputPatched
+    ) {
+      Scene_Credits.prototype.updateInput = function () {
+        if (Input.isTriggered("cancel") || TouchInput.isCancelled()) {
+          this.endScene();
+        } else if (Input.isTriggered("ok") || TouchInput.isTriggered()) {
+          if (this._blocks && this._blocks[this._blockId]) {
+            this._blocks[this._blockId]._timer = 0;
+          }
+        }
+      };
+      Scene_Credits.prototype._launcherInputPatched = true;
+    }
+
+    Galv.CRED._launcherCreditsHooked = true;
+    return true;
+  }
+
+  // GALV_RollCredits is registered by PluginManager.setup (main.js), which runs
+  // after this shim, so Galv.CRED.createCreds usually isn't defined yet. Poll
+  // briefly until the plugin has installed it, then wrap it.
+  if (!installCreditsHook()) {
+    var _creditsHookTries = 0;
+    var _creditsHookTimer = setInterval(function () {
+      if (installCreditsHook() || ++_creditsHookTries > 200) {
+        clearInterval(_creditsHookTimer);
+      }
+    }, 50);
+  }
+
   // Assets DB access (shared f'tcoaal' IDB for game + mod files)
 
   var ASSETS_DB_NAME = "tcoaal";
@@ -3355,12 +3538,40 @@
       function buildAndSnapScene(contents, dataMap, done) {
         var stage = null;
         var spriteset = null;
+        // Scene-level picture host. A camera plugin (SRD_CameraCore with
+        // "Zoom Pictures?") relocates picture creation from the spriteset to
+        // the scene so the camera zoom doesn't scale pictures: it stubs
+        // Spriteset_Base.createPictures to a no-op and stashes the original on
+        // Scene_Base.createPicturesForCameraCore, which Scene_Map calls after
+        // building its spriteset. Our preview builds only the spriteset, so
+        // without reproducing that the player's on-screen pictures (the
+        // full-screen overlays added by their actions) are missing and only
+        // appear once the real map loads.
+        var picHost = null;
         var buildErr = null;
         var restore = swapInSavedState(contents, dataMap);
         try {
           stage = new PIXI.Container();
           spriteset = new Spriteset_Map();
           stage.addChild(spriteset);
+          // If the spriteset built no pictures of its own (createPictures was
+          // stubbed) but the engine stashed the real builder on the scene,
+          // recreate them on a host layered above the spriteset, matching the
+          // live scene's order. Kick off one update inside this swapped span so
+          // the picture image loads register before waitReady polls.
+          if (
+            (!spriteset._pictureContainer ||
+              !spriteset._pictureContainer.children ||
+              !spriteset._pictureContainer.children.length) &&
+            typeof Scene_Base !== "undefined" &&
+            typeof Scene_Base.prototype.createPicturesForCameraCore ===
+              "function"
+          ) {
+            picHost = new Sprite();
+            Scene_Base.prototype.createPicturesForCameraCore.call(picHost);
+            stage.addChild(picHost);
+            picHost.update();
+          }
         } catch (e) {
           buildErr = e;
         } finally {
@@ -3401,6 +3612,13 @@
             // tone filter and picture sprites before the single render.
             spriteset.update();
             spriteset.update();
+            // The scene-level picture host isn't a spriteset child, so the
+            // scene would normally update it; do it here so its sprites pick
+            // up the loaded bitmaps and their saved transform before the snap.
+            if (picHost) {
+              picHost.update();
+              picHost.update();
+            }
             bmp = Bitmap.snap(stage);
           } catch (e) {
             console.warn("[lang-shim] scene preview snap failed:", e);

@@ -497,6 +497,11 @@
       return false;
     if (typeof Scene_Battle !== "undefined" && scene instanceof Scene_Battle)
       return false;
+    // Scene_Credits (GALV_RollCredits) owns its own click handling: a click
+    // skips to the next page, right-click/Escape exits. Synthesizing a
+    // click-outside cancel here would close it on the first left click.
+    if (typeof Scene_Credits !== "undefined" && scene instanceof Scene_Credits)
+      return false;
     if (isFullscreenScene(scene)) return false;
     return true;
   }
