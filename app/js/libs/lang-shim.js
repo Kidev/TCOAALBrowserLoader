@@ -1251,61 +1251,178 @@
     return bitmap;
   }
 
-  // Four-finger touch toggles the browser's native fullscreen. The touchstart
-  // itself is the user gesture required by the Fullscreen API, so we can call
-  // requestFullscreen() inline. Bound in the capture phase so it runs before
-  // TouchInput's document listener (added later via SceneManager.initInput),
-  // and preventDefault is called only when the gesture actually fires so 1-3
-  // finger touches still reach the engine untouched. iOS Safari on iPhone has
-  // no Fullscreen API for arbitrary elements: the call no-ops there, which
-  // is fine (the PWA "Add to Home Screen" path already covers that case).
-  (function () {
-    function fsElement() {
-      return (
-        document.fullscreenElement ||
-        document.webkitFullscreenElement ||
-        document.mozFullScreenElement ||
-        document.msFullscreenElement ||
-        null
-      );
-    }
-    function requestFs(el) {
-      var fn =
-        el.requestFullscreen ||
-        el.webkitRequestFullscreen ||
-        el.mozRequestFullScreen ||
-        el.msRequestFullscreen;
-      if (!fn) return;
-      try {
-        var ret = fn.call(el);
-        if (ret && typeof ret.catch === "function") ret.catch(function () {});
-      } catch (e) {}
-    }
-    function exitFs() {
-      var fn =
+  // Browser Fullscreen API helpers
+  // Shared by the four-finger gesture, the Options "Fullscreen" toggle, and
+  // the mobile launch button. iOS Safari on iPhone has no Fullscreen API for
+  // arbitrary elements: these no-op there, which is fine (the PWA "Add to
+  // Home Screen" path already covers that case). Function declarations so
+  // they hoist to the top of this module IIFE regardless of call site.
+  function _fsElement() {
+    return (
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement ||
+      null
+    );
+  }
+  function _fsSupported() {
+    var de = typeof document !== "undefined" && document.documentElement;
+    return !!(
+      de &&
+      (de.requestFullscreen ||
+        de.webkitRequestFullscreen ||
+        de.mozRequestFullScreen ||
+        de.msRequestFullscreen)
+    );
+  }
+  function _fsToggle() {
+    if (_fsElement()) {
+      var ex =
         document.exitFullscreen ||
         document.webkitExitFullscreen ||
         document.mozCancelFullScreen ||
         document.msExitFullscreen;
-      if (!fn) return;
+      if (!ex) return;
       try {
-        var ret = fn.call(document);
-        if (ret && typeof ret.catch === "function") ret.catch(function () {});
+        var r = ex.call(document);
+        if (r && typeof r.catch === "function") r.catch(function () {});
       } catch (e) {}
+    } else {
+      var de = document.documentElement;
+      var rq =
+        de.requestFullscreen ||
+        de.webkitRequestFullscreen ||
+        de.mozRequestFullScreen ||
+        de.msRequestFullscreen;
+      if (!rq) return;
+      // The gesture that reached us (tap/click/key) is the user activation
+      // the Fullscreen API requires; activation persists long enough for the
+      // engine's polled input to call this on the next frame.
+      try {
+        var r2 = rq.call(de);
+        if (r2 && typeof r2.catch === "function") r2.catch(function () {});
+      } catch (e2) {}
     }
-    document.addEventListener(
+  }
+
+  // Four-finger touch toggles fullscreen. The touchstart itself is the user
+  // gesture required by the Fullscreen API. Bound in the capture phase so it
+  // runs before TouchInput's document listener (added later via
+  // SceneManager.initInput), and preventDefault is called only when the
+  // gesture actually fires so 1-3 finger touches still reach the engine.
+  document.addEventListener(
+    "touchstart",
+    function (e) {
+      if (!e.touches || e.touches.length !== 4) return;
+      try {
+        e.preventDefault();
+      } catch (_) {}
+      _fsToggle();
+    },
+    { capture: true, passive: false },
+  );
+
+  // Mobile launch hint: a one-shot fullscreen button that fades in at the
+  // top-right when the game first becomes interactive (Scene_Title), then
+  // dismisses itself after 5s, on the first key/scene transition, or once
+  // tapped. Mobile only: desktop users have F4 / the four-finger gesture is
+  // irrelevant there, and auto-fullscreen on load is impossible (no gesture).
+  // _fsBtnDismiss lets the Scene_Title command wrappers tear it down the
+  // moment the player navigates ("enters a menu or does something else").
+  var _fsBtnShown = false;
+  var _fsBtnDismiss = null;
+
+  function _dismissFsLaunchButton() {
+    if (_fsBtnDismiss) _fsBtnDismiss();
+  }
+
+  function _showFsLaunchButton() {
+    if (_fsBtnShown) return; // once per page load
+    if (!_isMobile || !_fsSupported()) return;
+    if (_fsElement()) return; // already fullscreen (e.g. launched as PWA)
+    if (typeof document === "undefined" || !document.body) return;
+    _fsBtnShown = true;
+
+    var btn = document.createElement("button");
+    btn.id = "__fs_launch_btn__";
+    btn.type = "button";
+    btn.setAttribute("aria-label", "Enter fullscreen");
+    // Inline "expand to fullscreen" glyph (four corner arrows).
+    btn.innerHTML =
+      '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+      'stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M8 3H5a2 2 0 0 0-2 2v3"/>' +
+      '<path d="M16 3h3a2 2 0 0 1 2 2v3"/>' +
+      '<path d="M8 21H5a2 2 0 0 1-2-2v-3"/>' +
+      '<path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+    var s = btn.style;
+    s.position = "fixed";
+    s.top = "14px";
+    s.right = "14px";
+    s.zIndex = "9990"; // above the canvas, below boot-splash/error overlays
+    s.width = "44px";
+    s.height = "44px";
+    s.display = "flex";
+    s.alignItems = "center";
+    s.justifyContent = "center";
+    s.padding = "0";
+    s.margin = "0";
+    s.border = "1px solid rgba(255,255,255,0.25)";
+    s.borderRadius = "10px";
+    s.background = "rgba(0,0,0,0.55)";
+    s.color = "#e9e6da";
+    s.cursor = "pointer";
+    s.opacity = "0";
+    s.transition = "opacity 0.3s ease";
+    s.webkitTapHighlightColor = "transparent";
+    s.touchAction = "manipulation";
+
+    document.body.appendChild(btn);
+    // Fade in on the next frame so the transition runs.
+    requestAnimationFrame(function () {
+      btn.style.opacity = "1";
+    });
+
+    var timer = null;
+    function teardown() {
+      if (!_fsBtnDismiss) return; // already torn down
+      _fsBtnDismiss = null;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("keydown", onKey, true);
+      btn.style.opacity = "0";
+      setTimeout(function () {
+        if (btn.parentNode) btn.parentNode.removeChild(btn);
+      }, 350);
+    }
+    _fsBtnDismiss = teardown;
+
+    function onKey() {
+      teardown();
+    }
+
+    // Tapping the button is the gesture that enters fullscreen. Stop the
+    // touch/click from leaking to the canvas / TouchInput / MouseControl
+    // (overlay-gating: HTML overlays must swallow their own pointer events).
+    function activate(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      _fsToggle();
+      teardown();
+    }
+    btn.addEventListener("click", activate);
+    btn.addEventListener(
       "touchstart",
       function (e) {
-        if (!e.touches || e.touches.length !== 4) return;
-        try {
-          e.preventDefault();
-        } catch (_) {}
-        if (fsElement()) exitFs();
-        else requestFs(document.documentElement);
+        e.stopPropagation();
       },
-      { capture: true, passive: false },
+      { passive: false },
     );
-  })();
+
+    document.addEventListener("keydown", onKey, true);
+    timer = setTimeout(teardown, 5000);
+  }
 
   // Replace the stock _setupEventHandlers for two reasons:
   //   1. {passive: false} on the wheel listener: Chrome treats document-level
@@ -4142,18 +4259,44 @@
     }
 
     if (typeof Window_Options !== "undefined") {
+      // browser-shim removes the DRM's native (NW.js / config-backed)
+      // fullscreen row, so this is a fresh command driven straight off the
+      // standard Fullscreen API (module-scope _fsToggle/_fsElement) and the
+      // real document.fullscreenElement state: never persisted to
+      // ConfigManager, since the browser won't restore fullscreen on reload
+      // without a gesture.
+
+      // Real fullscreen state changes asynchronously (and can be driven from
+      // outside the menu, e.g. the four-finger gesture or the browser's own
+      // Esc), so redraw the open options window when the state actually flips.
+      var _onFsChange = function () {
+        var scene = typeof SceneManager !== "undefined" && SceneManager._scene;
+        if (scene && scene._optionsWindow) scene._optionsWindow.refresh();
+      };
+      document.addEventListener("fullscreenchange", _onFsChange);
+      document.addEventListener("webkitfullscreenchange", _onFsChange);
+      document.addEventListener("mozfullscreenchange", _onFsChange);
+      document.addEventListener("MSFullscreenChange", _onFsChange);
+
       var _orig_optMakeCmdList = Window_Options.prototype.makeCommandList;
       Window_Options.prototype.makeCommandList = function () {
         _orig_optMakeCmdList.call(this);
         this.addCommand("Stretch", "stretch");
+        if (_fsSupported()) {
+          this.addCommand("Fullscreen", "fullscreen");
+        }
       };
 
-      // Override statusText so 'stretch' shows 'On'/'Off' instead of raw bool.
+      // Override statusText so 'stretch' shows 'On'/'Off' instead of raw bool,
+      // and 'fullscreen' reflects the live document fullscreen state.
       var _orig_optStatusText = Window_Options.prototype.statusText;
       Window_Options.prototype.statusText = function (index) {
         var sym = this.commandSymbol(index);
         if (sym === "stretch") {
           return this.getConfigValue(sym) ? "On" : "Off";
+        }
+        if (sym === "fullscreen") {
+          return _fsElement() ? "On" : "Off";
         }
         return _orig_optStatusText.apply(this, arguments);
       };
@@ -4168,6 +4311,13 @@
           if (sym === "stretch") {
             var cur = this.getConfigValue(sym);
             this.changeValue(sym, !cur);
+            return;
+          }
+          if (sym === "fullscreen") {
+            // Not config-backed: toggle the browser directly. The redraw is
+            // driven by the fullscreenchange listener once the state flips.
+            SoundManager.playCursor();
+            _fsToggle();
             return;
           }
           return _orig_optInput.apply(this, arguments);
@@ -4216,6 +4366,32 @@
           Graphics._stretchEnabled = !!value;
           Graphics._updateAllElements();
         }
+      };
+    }
+
+    // Mobile fullscreen launch button: show it once the title screen is up
+    // (the game's first interactive moment), and dismiss it the instant the
+    // player navigates anywhere: every title command routes through
+    // SceneManager.goto/push, so wrapping those covers "enters a menu or does
+    // something else meaningful". The 5s timeout and first-keypress paths live
+    // inside _showFsLaunchButton's teardown.
+    if (typeof Scene_Title !== "undefined") {
+      var _fsb_titleStart = Scene_Title.prototype.start;
+      Scene_Title.prototype.start = function () {
+        _fsb_titleStart.apply(this, arguments);
+        _showFsLaunchButton();
+      };
+    }
+    if (typeof SceneManager !== "undefined") {
+      var _fsb_goto = SceneManager.goto;
+      SceneManager.goto = function () {
+        _dismissFsLaunchButton();
+        return _fsb_goto.apply(this, arguments);
+      };
+      var _fsb_push = SceneManager.push;
+      SceneManager.push = function () {
+        _dismissFsLaunchButton();
+        return _fsb_push.apply(this, arguments);
       };
     }
 
