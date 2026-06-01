@@ -2350,6 +2350,40 @@
           hw.contents.fontSize = hw.standardFontSize();
           hw.resetTextColor();
         }
+        // Continue / Load menu: hide the autosaves when at least one real
+        // (file) save exists: scroll so the first file slot sits at the top
+        // of the view. The autosaves stay reachable by scrolling up. With no
+        // file saves the autosaves are the only loadable rows, so they're left
+        // in view.
+        if (this instanceof Scene_Load && this._listWindow) {
+          var lwAuto = this._listWindow;
+          var autoTop =
+            typeof DataManager.autoSaveCount === "function"
+              ? DataManager.autoSaveCount()
+              : 0;
+          if (autoTop > 0 && this._hasNonAutoSave()) {
+            lwAuto.select(autoTop);
+            if (typeof lwAuto.setTopRow === "function")
+              lwAuto.setTopRow(autoTop);
+          }
+        }
+      };
+
+      // True when any positive (file) savefile slot holds data: i.e. there's
+      // something other than an autosave to load. Used to decide whether the
+      // Continue/Load list scrolls past the autosaves on open.
+      Scene_File.prototype._hasNonAutoSave = function () {
+        if (!this._listWindow || typeof DataManager.getSaveInfo !== "function")
+          return false;
+        var autoCount =
+          typeof DataManager.autoSaveCount === "function"
+            ? DataManager.autoSaveCount()
+            : 0;
+        var fileSlots = this._listWindow.maxItems() - autoCount;
+        for (var id = 1; id <= fileSlots; id++) {
+          if (DataManager.getSaveInfo(id)) return true;
+        }
+        return false;
       };
 
       // Long-press a save row (touch / mobile parity for the [N] Annotate

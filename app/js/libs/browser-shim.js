@@ -939,6 +939,18 @@
             : this.recoveryMeta();
         }
         this.globalSet("autoSaves", nextDict);
+        // Auto-annotate the new autosave with its creation time, exactly like
+        // a regular file slot (cf. applyDefaultSaveNote). Autosaves bypass
+        // StorageManager.save, so the note is stamped here. The file just
+        // written is the newest autosave, so it maps to list id 0 right now;
+        // noteKey(0) is precisely the key the save list reads for that row, and
+        // since the key resolves through localFilePath the note follows the
+        // file by path as later autosaves push it down the list.
+        try {
+          var autoStamp = formatSaveTimestamp(Date.now());
+          setSaveNote(0, autoStamp);
+          setAutoNoteMarker(0, autoStamp);
+        } catch (e) {}
       };
     }
 
