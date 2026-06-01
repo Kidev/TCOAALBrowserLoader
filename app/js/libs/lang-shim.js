@@ -3525,6 +3525,17 @@
         };
       }
 
+      // A genuine cutscene fade-to-black behind a CG/cut-in shows a visible
+      // picture on top of the black: any pictured slot still named and not
+      // fully transparent. Such a fade is intentional presentation, not a
+      // transient transition, so the brightness fade must be preserved.
+      function saveHasVisiblePicture(screen) {
+        if (!screen || !screen._pictures) return false;
+        return screen._pictures.some(function (p) {
+          return p && p._name && p._opacity > 0;
+        });
+      }
+
       function renderSaveSceneSnapshot(savefileId, cb) {
         if (Object.prototype.hasOwnProperty.call(_sceneSnapCache, savefileId)) {
           cb(_sceneSnapCache[savefileId]);
@@ -3614,12 +3625,19 @@
         // opaque black fade sprite) still previews the actual scene. The
         // lasting color tone and zoom are kept; only the fade/flash/shake
         // overlays are reset. Idempotent across the two swapIn calls.
-        if (contents.screen && contents.screen.clearFade) {
-          contents.screen.clearFade();
-          contents.screen.clearFlash();
-          contents.screen.clearShake();
-        } else if (contents.screen) {
-          contents.screen._brightness = 255;
+        //
+        // Exception: when a CG/cut-in is shown on top of the black (a visible
+        // picture), the fade-to-black is the intended backdrop, not a
+        // transition. Clearing it would reveal the map under the CG (a weird
+        // map+CG composite), so keep the brightness fade and let the snapshot
+        // show the CG over black, exactly as in game.
+        if (contents.screen) {
+          if (!saveHasVisiblePicture(contents.screen)) {
+            if (contents.screen.clearFade) contents.screen.clearFade();
+            else contents.screen._brightness = 255;
+          }
+          if (contents.screen.clearFlash) contents.screen.clearFlash();
+          if (contents.screen.clearShake) contents.screen.clearShake();
         }
         window.$dataMap = dataMap;
         // The raw fetched map JSON has no `.meta` (the engine adds it on load

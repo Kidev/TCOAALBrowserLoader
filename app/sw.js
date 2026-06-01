@@ -134,6 +134,58 @@ async function precacheBuiltinMods() {
   );
 }
 
+// Local overhaul-mod thumbnails. Unlike the built-in plugins above, the
+// same-origin overhaul mods (TCOAAR, TCOAAJ, TCOAALili, TLCOAAA, TDOAAL, ...)
+// are git submodules whose icons are NOT precached. An offline user who only
+// reaches the title screen online and opens the Mods menu later (offline) has
+// never fetched those icons, so serveModAsset's network step fails and the
+// menu shows the default sprite. Precache every same-origin mod icon listed
+// in mods.json into MOD_ASSET_CACHE so the thumbnails survive an offline
+// session, mirroring the built-in precache. Cross-origin icons (extras.
+// tcoaal.app / translations.tcoaal.app) are skipped: the SW only intercepts
+// same-origin requests, so those load via the browser's own HTTP cache.
+async function precacheModIcons() {
+  let data = null;
+  try {
+    const resp = await fetch(new Request("/mods.json", { cache: "reload" }));
+    if (!resp || !resp.ok) return;
+    data = await resp.json();
+  } catch {
+    return;
+  }
+  if (!data || typeof data !== "object") return;
+  let cache = null;
+  try {
+    cache = await caches.open(MOD_ASSET_CACHE);
+  } catch {
+    return;
+  }
+  const seen = new Set();
+  const tasks = [];
+  for (const key of Object.keys(data)) {
+    const entry = data[key];
+    const icon = entry && entry.icon;
+    // Same-origin local mod icons only: "mods/{id}/www/{rel}". The regex also
+    // rejects absolute (http(s)://) and leading-slash paths.
+    if (typeof icon !== "string" || !/^mods\/[^/]+\/www\//.test(icon)) continue;
+    const reqUrl = "/" + icon;
+    if (seen.has(reqUrl)) continue;
+    seen.add(reqUrl);
+    tasks.push(
+      cache
+        .add(new Request(reqUrl, { cache: "reload" }))
+        .catch((e) =>
+          console.warn(
+            "[sw] mod icon precache failed for",
+            reqUrl,
+            e && e.message,
+          ),
+        ),
+    );
+  }
+  await Promise.all(tasks);
+}
+
 async function cleanupOldShellCaches() {
   const names = await caches.keys();
   await Promise.all(
@@ -976,6 +1028,9 @@ self.addEventListener("install", (e) =>
                 err && err.message,
               ),
             ),
+            precacheModIcons().catch((err) =>
+              console.warn("[sw] precacheModIcons failed:", err && err.message),
+            ),
           ]),
           new Promise((resolve) => setTimeout(resolve, 2500)),
         ]);
@@ -1091,7 +1146,11 @@ self.addEventListener("message", (event) => {
         // Re-enabling: warm both shell + built-in mod caches so the next
         // offline boot works.
         try {
-          await Promise.all([precacheShell(), precacheBuiltinMods()]);
+          await Promise.all([
+            precacheShell(),
+            precacheBuiltinMods(),
+            precacheModIcons(),
+          ]);
         } catch {}
       }
     });
@@ -1133,6 +1192,7 @@ self.addEventListener("message", (event) => {
     const ack = Promise.all([
       precacheShell().catch(() => {}),
       precacheBuiltinMods().catch(() => {}),
+      precacheModIcons().catch(() => {}),
     ]);
     if (event.ports && event.ports[0]) {
       ack.then(() => event.ports[0].postMessage({ ok: true }));
