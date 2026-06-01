@@ -624,6 +624,40 @@
       SceneManager.terminate = function () {
         window.location.href = "/loader.html";
       };
+
+      // Quit-to-title transition speed-up.
+      //
+      // Returning to the title from in-game runs fadeOutAll(): a 48-frame
+      // (~0.8s) "slow" fade-to-black: immediately before
+      // SceneManager.goto(Scene_Title). For a plain menu return that long
+      // dissolve feels sluggish "for nothing". Cap just that outgoing fade so
+      // the screen goes black in ~0.3s, then the title fades back in at its
+      // stock 24-frame speed: still a smooth cross-fade, just snappier.
+      //
+      // Narrowly scoped on purpose: only when the destination is Scene_Title
+      // and the current scene is already fading OUT (_fadeSign < 0). The
+      // intentionally-slow game-over reveal runs as a fade-IN inside
+      // Scene_Gameover.start (never through this goto), so it is untouched, as
+      // are all in-cutscene Game_Screen fades. If a mod returns to title via
+      // some non-Scene_Base mechanism, _fadeSign/_fadeDuration are unset and
+      // this is a harmless no-op.
+      if (typeof Scene_Title !== "undefined") {
+        var QUIT_FADE_FRAMES = 18; // ~0.3s at 60fps (was 48 / ~0.8s)
+        var _origSceneGoto = SceneManager.goto;
+        SceneManager.goto = function (sceneClass) {
+          var s = this._scene;
+          if (
+            sceneClass === Scene_Title &&
+            s &&
+            s._fadeSign < 0 &&
+            typeof s._fadeDuration === "number" &&
+            s._fadeDuration > QUIT_FADE_FRAMES
+          ) {
+            s._fadeDuration = QUIT_FADE_FRAMES;
+          }
+          return _origSceneGoto.apply(this, arguments);
+        };
+      }
     }
 
     // "Now Loading" image: force our bundled themed loading.png.
@@ -649,6 +683,66 @@
       // Re-apply now in case the engine already called the original during
       // boot before these overrides were installed.
       Graphics.setLoadingImage();
+    }
+
+    // Allow opening the pause menu during events (CGs / dialogues).
+    //
+    // Stock RPG Maker MV locks the player out of the menu for the whole
+    // duration of an event, which is most of TCOAAL (every CG and line of
+    // dialogue is an event). Three independent gates conspire to do this:
+    //
+    //   1. Scene_Map.update only runs updateScene(): and thus
+    //      updateCallMenu(): while isSceneChangeOk() is true, but that is
+    //      false the entire time a message is on screen ($gameMessage.isBusy).
+    //   2. updateCallMenu()'s isMenuEnabled() is false while
+    //      $gameMap.isEventRunning(), so even a CG with no text box blocks it.
+    //   3. Window_Message swallows the cancel/Escape key to advance text, so
+    //      the key never survives to a menu check anyway.
+    //
+    // We lift the lock with two minimal, additive overrides and deliberately
+    // do NOT touch isMenuEnabled(): a scene that purposely disables menu
+    // access ($gameSystem.disableMenu(), e.g. a forced/no-save sequence) must
+    // stay locked. We only bypass the implicit "event is running" gate.
+    //
+    //   a. Window_Message.isTriggered drops cancel/Escape, so Escape no longer
+    //      advances/consumes (OK / Enter / Space / left-click still do). It is
+    //      read only by the pause handler in updateInput, so this is the whole
+    //      behaviour change: Escape becomes "open menu".
+    //   b. A tail check on Scene_Map.update runs after the stock pipeline and
+    //      fires only in the cases that pipeline skips (event running or a busy
+    //      message), so it never races the normal updateCallMenu on a quiet
+    //      map. A choice / number / item sub-window keeps its own cancel.
+    if (
+      typeof Window_Message !== "undefined" &&
+      typeof Window_Message.prototype.isTriggered === "function"
+    ) {
+      Window_Message.prototype.isTriggered = function () {
+        return Input.isRepeated("ok") || TouchInput.isRepeated();
+      };
+    }
+    if (
+      typeof Scene_Map !== "undefined" &&
+      typeof Scene_Map.prototype.update === "function" &&
+      typeof Scene_Map.prototype.callMenu === "function"
+    ) {
+      var _escMenuOrigUpdate = Scene_Map.prototype.update;
+      Scene_Map.prototype.update = function () {
+        _escMenuOrigUpdate.call(this);
+        this.updateEscapeToMenuDuringEvent();
+      };
+      Scene_Map.prototype.updateEscapeToMenuDuringEvent = function () {
+        if (!this.isActive() || SceneManager.isSceneChanging()) return;
+        // Only handle what the stock updateCallMenu can't reach this frame.
+        if (!$gameMap.isEventRunning() && !$gameMessage.isBusy()) return;
+        // Honour an explicit in-game menu lock (forced / no-save sequences).
+        if (!$gameSystem.isMenuEnabled()) return;
+        // A choice / number / item prompt owns the cancel key: leave it alone.
+        var mw = this._messageWindow;
+        if (mw && mw.isAnySubWindowActive && mw.isAnySubWindowActive()) return;
+        if (Input.isTriggered("escape") || TouchInput.isCancelled()) {
+          this.callMenu();
+        }
+      };
     }
 
     // Lang.search: single-language browser variant. The SW synthesises
