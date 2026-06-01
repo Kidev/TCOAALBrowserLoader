@@ -747,13 +747,28 @@ function buildCanopyImage(instr, sources, masks, patchBytes) {
     const mask = masks.get(maskName);
     const w = src.width;
     const h = src.height;
-    // Full source image, alpha multiplied by mask red (PIXI SpriteMaskFilter:
-    // original *= mask.r * mask.a; masks here are fully opaque).
+    // Full source image, alpha multiplied by mask red*alpha (PIXI
+    // SpriteMaskFilter: original *= mask.r * mask.a). The mask and source are
+    // top-left aligned and sampled by *pixel coordinate*, not flat index: the
+    // two textures can differ in size (e.g. a 1296px source under a 1280px
+    // mask), so indexing the mask with the source's offset would drift one row
+    // stride per scanline. Source pixels outside the mask frame are clipped to
+    // alpha 0 (the filter's maskClamp).
     const id = src.ctx.getImageData(0, 0, w, h);
     const d = id.data;
     const md = mask.data;
-    for (let i = 0; i < d.length; i += 4) {
-      d[i + 3] = Math.round((d[i + 3] * md[i]) / 255);
+    const mw = mask.width;
+    const mh = mask.height;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const di = (y * w + x) * 4;
+        let f = 0;
+        if (x < mw && y < mh) {
+          const mi = (y * mw + x) * 4;
+          f = (md[mi] * md[mi + 3]) / (255 * 255);
+        }
+        d[di + 3] = Math.round(d[di + 3] * f);
+      }
     }
     const c = createCanvas(w, h);
     c.getContext("2d").putImageData(id, 0, 0);
