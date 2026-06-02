@@ -449,12 +449,14 @@ const TILE = 16;
 /** Apply one or more .olid deltas (Buffers) onto a base PNG (Buffer),
  *  returning a PNG Buffer. Deltas store absolute pixels, so this is lossless
  *  against any base. */
-async function applyOlid(basePng, olidBufs) {
+async function applyOlid(basePng, olidBufs, debug) {
   const { createCanvas, loadImage, ImageData } = canvas();
   const baseImg = await loadImage(basePng);
 
   let cvs, ctx;
   let firstW, firstH;
+  // Accumulates the union of every changed tile (for the debug changed-map).
+  const touchedTiles = debug ? new Set() : null;
 
   for (const delta of olidBufs) {
     const dv = new DataView(delta.buffer, delta.byteOffset, delta.byteLength);
@@ -511,6 +513,7 @@ async function applyOlid(basePng, olidBufs) {
       }
       const out = new ImageData(new Uint8ClampedArray(u32.buffer), TILE, TILE);
       ctx.putImageData(out, tx * TILE, ty * TILE);
+      if (touchedTiles) touchedTiles.add(tx + "," + ty);
     }
   }
 
@@ -522,6 +525,26 @@ async function applyOlid(basePng, olidBufs) {
     fc.getContext("2d").drawImage(cvs, 0, 0);
     cvs = fc;
   }
+
+  if (debug) {
+    // The base PNG the delta is applied over, the final result, and a map of
+    // the tiles the delta rewrote (red overlay). A seam on an .olid output can
+    // only come from a wrong base, so compare base.png against the game.
+    const baseCvs = createCanvas(firstW, firstH);
+    baseCvs.getContext("2d").drawImage(baseImg, 0, 0);
+    debug.emit("base", baseCvs);
+    debug.emit("result", cvs);
+    const mapCvs = createCanvas(firstW, firstH);
+    const mctx = mapCvs.getContext("2d");
+    mctx.drawImage(cvs, 0, 0);
+    mctx.fillStyle = "rgba(255,0,0,0.4)";
+    for (const key of touchedTiles) {
+      const [tx, ty] = key.split(",").map(Number);
+      mctx.fillRect(tx * TILE, ty * TILE, TILE, TILE);
+    }
+    debug.emit("changed_tiles", mapCvs);
+  }
+
   return cvs.toBuffer("image/png");
 }
 
@@ -708,16 +731,71 @@ const BLEND_MAP = {
 };
 
 /**
+ * A debug sink writes intermediate PNGs of a composed image into a folder so a
+ * coloured seam can be traced to the exact stage that introduces it. Returns
+ * null (a no-op for callers) when no debug dir was requested. Accepts either a
+ * canvas (has .toBuffer) or a raw ImageData; padded sequence numbers keep the
+ * files in build order in a file browser.
+ */
+function makeDebugSink(debugRoot, ...segments) {
+  if (!debugRoot) return null;
+  const { createCanvas, ImageData } = canvas();
+  const dir = path.join(debugRoot, ...segments);
+  fs.mkdirSync(dir, { recursive: true });
+  let seq = 0;
+  function toPng(src) {
+    if (src && typeof src.toBuffer === "function")
+      return src.toBuffer("image/png");
+    const c = createCanvas(src.width, src.height);
+    c.getContext("2d").putImageData(
+      new ImageData(new Uint8ClampedArray(src.data), src.width, src.height),
+      0,
+      0,
+    );
+    return c.toBuffer("image/png");
+  }
+  return {
+    dir,
+    /** Write `src` as <NN>_<label>.png (NN auto-increments). */
+    step(label, src) {
+      const name = String(seq++).padStart(2, "0") + "_" + label + ".png";
+      fs.writeFileSync(path.join(dir, name), toPng(src));
+    },
+    /** Write `src` as <name>.png with no sequence prefix. */
+    emit(name, src) {
+      fs.writeFileSync(path.join(dir, name + ".png"), toPng(src));
+    },
+  };
+}
+
+/** Sanitise an instruction/section/image label for use in a filename. */
+function safeName(s) {
+  return String(s).replace(/[^\w.-]+/g, "_");
+}
+
+/**
  * Process one CanopyImageBuilder instruction file into a PNG Buffer.
  *   instr       parsed instruction JSON
  *   sources     Map<imgName, {canvas,ctx,data,width,height}> base source images
  *   masks       Map<maskName, ImageData> loaded mask images
  *   patchBytes  optional Uint8Array (raw RGBA additive patch), or null
+ *   debug       optional sink from makeDebugSink() (per-stage PNG dump), or null
  */
-function buildCanopyImage(instr, sources, masks, patchBytes) {
+function buildCanopyImage(instr, sources, masks, patchBytes, debug) {
   const { createCanvas, ImageData } = canvas();
   const out = createCanvas(instr.imgSize.width, instr.imgSize.height);
   const octx = out.getContext("2d");
+
+  // Dump the raw inputs first: the decoded base sources and the mask images,
+  // so a divergence in a source/mask is visible before any compositing.
+  if (debug) {
+    for (const [key, src] of sources) {
+      debug.emit("source_" + safeName(key), src.canvas || src);
+    }
+    for (const [key, mask] of masks) {
+      debug.emit("mask_" + safeName(key), mask);
+    }
+  }
 
   // A "selection" captures the intrinsic sprite pixels (crop, with optional
   // mask baked into alpha) plus the geometry/mask metadata needed at paste.
@@ -820,11 +898,7 @@ function buildCanopyImage(instr, sources, masks, patchBytes) {
       spriteCanvas = sc;
     }
 
-    octx.save();
-    octx.globalAlpha = alpha == null ? 1 : alpha;
-    octx.globalCompositeOperation = blend || "source-over";
-    octx.setTransform(m.a, m.b, m.c, m.d, m.tx, m.ty);
-    // Exact texel copy for axis-aligned integer placement; smooth otherwise.
+    // Exact texel copy for axis-aligned integer placement; resample otherwise.
     const integer =
       Math.abs(m.a) === 1 &&
       Math.abs(m.d) === 1 &&
@@ -832,10 +906,129 @@ function buildCanopyImage(instr, sources, masks, patchBytes) {
       m.c === 0 &&
       Number.isInteger(m.tx) &&
       Number.isInteger(m.ty);
-    octx.imageSmoothingEnabled = !integer;
-    if ("imageSmoothingQuality" in octx) octx.imageSmoothingQuality = "high";
-    octx.drawImage(spriteCanvas, 0, 0);
+    octx.save();
+    octx.globalAlpha = alpha == null ? 1 : alpha;
+    octx.globalCompositeOperation = blend || "source-over";
+    if (integer) {
+      octx.setTransform(m.a, m.b, m.c, m.d, m.tx, m.ty);
+      octx.imageSmoothingEnabled = false;
+      octx.drawImage(spriteCanvas, 0, 0);
+    } else {
+      // Non-integer transform (SCALE/shear): resample in *premultiplied* space.
+      // Canvas drawImage smoothing interpolates straight RGBA, which bleeds the
+      // colour of transparent edge texels (and mask-hidden pixels, whose RGB we
+      // keep) into the visible fringe. PIXI samples premultiplied textures, so
+      // hidden texels contribute zero. We reproduce that with our own bilinear
+      // affine warp, then hand the straight result to the normal compositor.
+      const tmp = resampleSpritePremultiplied(
+        spriteCanvas,
+        m,
+        out.width,
+        out.height,
+      );
+      if (tmp) octx.drawImage(tmp, 0, 0);
+    }
     octx.restore();
+  }
+
+  // Affine-warp `spriteCanvas` by matrix `m` into a full-size straight-RGBA
+  // canvas, bilinear-sampling in premultiplied space (transparent texels weigh
+  // in as 0, so no colour bleed at edges). Returns null if the projection is
+  // empty. The final extract round-trip below still applies on top.
+  function resampleSpritePremultiplied(spriteCanvas, m, W, H) {
+    const { createCanvas, ImageData } = canvas();
+    const sw = spriteCanvas.width;
+    const sh = spriteCanvas.height;
+    const src = spriteCanvas.getContext("2d").getImageData(0, 0, sw, sh).data;
+    // Premultiplied source planes (rgb already multiplied by alpha/255).
+    const pr = new Float64Array(sw * sh);
+    const pg = new Float64Array(sw * sh);
+    const pb = new Float64Array(sw * sh);
+    const pa = new Float64Array(sw * sh);
+    for (let i = 0, p = 0; i < src.length; i += 4, p++) {
+      const a = src[i + 3];
+      const f = a / 255;
+      pr[p] = src[i] * f;
+      pg[p] = src[i + 1] * f;
+      pb[p] = src[i + 2] * f;
+      pa[p] = a;
+    }
+    // Dest bounding box from the projected sprite corners.
+    const corners = [
+      mApply(m, 0, 0),
+      mApply(m, sw, 0),
+      mApply(m, 0, sh),
+      mApply(m, sw, sh),
+    ];
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const c of corners) {
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
+    const x0 = Math.max(0, Math.floor(minX));
+    const y0 = Math.max(0, Math.floor(minY));
+    const x1 = Math.min(W, Math.ceil(maxX));
+    const y1 = Math.min(H, Math.ceil(maxY));
+    if (x1 <= x0 || y1 <= y0) return null;
+    // Inverse affine (dest -> sprite-local).
+    const det = m.a * m.d - m.b * m.c;
+    if (!det) return null;
+    const ia = m.d / det,
+      ib = -m.b / det,
+      ic = -m.c / det,
+      id_ = m.a / det;
+    const dst = createCanvas(W, H);
+    const dstCtx = dst.getContext("2d");
+    const img = new ImageData(W, H);
+    const o = img.data;
+    for (let dy = y0; dy < y1; dy++) {
+      for (let dx = x0; dx < x1; dx++) {
+        // Map dest pixel centre back to sprite continuous coords, then shift to
+        // texel-centre space for bilinear sampling.
+        const rx = dx + 0.5 - m.tx;
+        const ry = dy + 0.5 - m.ty;
+        const sx = ia * rx + ic * ry - 0.5;
+        const sy = ib * rx + id_ * ry - 0.5;
+        const fx = Math.floor(sx);
+        const fy = Math.floor(sy);
+        const wx = sx - fx;
+        const wy = sy - fy;
+        let ar = 0,
+          ag = 0,
+          ab = 0,
+          aa = 0;
+        for (let j = 0; j < 2; j++) {
+          const yy = fy + j;
+          if (yy < 0 || yy >= sh) continue;
+          const wyj = j ? wy : 1 - wy;
+          for (let k = 0; k < 2; k++) {
+            const xx = fx + k;
+            if (xx < 0 || xx >= sw) continue;
+            const w = wyj * (k ? wx : 1 - wx);
+            if (!w) continue;
+            const p = yy * sw + xx;
+            ar += pr[p] * w;
+            ag += pg[p] * w;
+            ab += pb[p] * w;
+            aa += pa[p] * w;
+          }
+        }
+        if (aa <= 0) continue;
+        const di = (dy * W + dx) * 4;
+        const inv = 255 / aa; // un-premultiply
+        o[di] = Math.min(255, Math.round(ar * inv));
+        o[di + 1] = Math.min(255, Math.round(ag * inv));
+        o[di + 2] = Math.min(255, Math.round(ab * inv));
+        o[di + 3] = Math.round(aa);
+      }
+    }
+    dstCtx.putImageData(img, 0, 0);
+    return dst;
   }
 
   for (const sectionKey of Object.keys(instr.sections)) {
@@ -848,6 +1041,12 @@ function buildCanopyImage(instr, sources, masks, patchBytes) {
           colorAdj = null;
           alpha = null;
           blend = null;
+          if (debug) {
+            debug.step(
+              safeName(sectionKey) + "_selectRect_" + safeName(ins.imgName),
+              sel.canvas,
+            );
+          }
           break;
         case "SELECT_MASK":
           selectMask(ins.imgName, ins.maskName);
@@ -855,9 +1054,18 @@ function buildCanopyImage(instr, sources, masks, patchBytes) {
           colorAdj = null;
           alpha = null;
           blend = null;
+          if (debug) {
+            debug.step(
+              safeName(sectionKey) + "_selectMask_" + safeName(ins.imgName),
+              sel.canvas,
+            );
+          }
           break;
         case "PASTE":
           paste(ins.x, ins.y);
+          // Cumulative state after this paste: the seam first shows up on the
+          // step that introduces it.
+          if (debug) debug.step(safeName(sectionKey) + "_pasted", out);
           break;
         case "RESET_PROJECTIONS":
           transform = mIdentity();
@@ -896,17 +1104,146 @@ function buildCanopyImage(instr, sources, masks, patchBytes) {
     }
   }
 
-  // Additive RGBA patch (out[i] = (patch[i] + base[i]) & 0xff), exactly as the
-  // plugin combines a base render with a *.bin.gz patch.
-  if (patchBytes) {
+  // Emulate the in-game PIXI WebGL extract pipeline, then add the additive patch.
+  //
+  // CanopyImageBuilder renders the composed sprites to a PIXI RenderTexture and
+  // reads them back with renderer.extract.canvas(). The decisive detail, read
+  // straight out of the game's PIXI 4.5.4: WebGLExtract.canvas does NOT
+  // un-premultiply. It gl.readPixels() the framebuffer and putImageData()s those
+  // bytes verbatim:
+  //
+  //     gl.readPixels(..., gl.RGBA, gl.UNSIGNED_BYTE, webglPixels);
+  //     canvasData.data.set(webglPixels);
+  //     canvasBuffer.context.putImageData(canvasData, 0, 0);
+  //
+  // Textures are uploaded with UNPACK_PREMULTIPLY_ALPHA and composited in
+  // premultiplied space, so the framebuffer holds *premultiplied* RGBA; reading
+  // it back with no post-divide reinterprets premultiplied RGB as straight. So
+  // the base the shipped `*.bin.gz` patch was computed against (patch = target -
+  // base) is exactly:
+  //
+  //     base.rgb = round(rgb * a / 255)      (a single GPU premultiply)
+  //     base.a   = a                         (alpha is never premultiplied)
+  //
+  // At opaque pixels (a = 255) this is the identity, so flat interiors and
+  // SELECT_RECT-only images are untouched; only partial-alpha pixels (mask
+  // edges, soft sprite edges) are darkened toward black, precisely as the GPU
+  // framebuffer stores them. Our skia compositor keeps straight alpha, so we
+  // premultiply RGB once here to land on that same base bit-for-bit. (The old
+  // code premultiplied twice and divided once -- a triple-rounding approximation
+  // that drifted a unit or two at exactly the mask edges, which is what made the
+  // wrap-add patch detonate into coloured seam fringes.)
+  {
     const id = octx.getImageData(0, 0, out.width, out.height);
     const d = id.data;
-    const n = Math.min(d.length, patchBytes.length);
-    for (let i = 0; i < n; i++) d[i] = (patchBytes[i] + d[i]) & 0xff;
+    // The straight-alpha composite off the skia compositor, before PIXI
+    // emulation: what the game image looks like at full opacity, the cleanest
+    // layer to eyeball for compositing mistakes.
+    if (debug) debug.emit("base_raw", id);
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3];
+      d[i] = Math.round((d[i] * a) / 255);
+      d[i + 1] = Math.round((d[i + 1] * a) / 255);
+      d[i + 2] = Math.round((d[i + 2] * a) / 255);
+      // alpha (d[i + 3]) is left straight, matching the framebuffer.
+    }
+    // The premultiplied base the shipped patch was computed against (patch =
+    // target - base). Diff this against the game's actual `_base.png` to confirm
+    // they match; any residual is what the wrap-add then absorbs.
+    if (debug) debug.emit("base_pixi", id);
+    if (debug && patchBytes)
+      emitPatchDebug(debug, patchBytes, out.width, out.height);
+    // Additive RGBA patch, byte-for-byte the same operation CanopyImageBuilder.js
+    // performs to combine the extracted base with its `*.bin.gz` patch:
+    //
+    //     combinedData[i] = loadedPatchData[i] + baseImageData.data[i];  // Uint8Array, wraps mod 256
+    //
+    // i.e. the pure wrap-add out = (patch + base) & 0xff, the exact inverse of
+    // patch = (target - base) & 0xff it was generated with. Where our `base`
+    // equals the author's base (reproduced bit-for-bit above: premultiplied RGB,
+    // straight alpha), this reconstructs the author's target exactly -- opaque
+    // interiors, transparent gaps, intentional partial alpha and large colour
+    // repaints alike. We keep that wrap-add for every such pixel.
+    //
+    // The one place our base provably *cannot* equal the author's is a phantom
+    // edge feather. The author's source sprites carry a 1-4/255 antialiased
+    // *black* fringe one pixel outboard of a frame/sprite edge (rgb 0, since it
+    // is premultiplied near-zero-alpha black) that our base game's slightly
+    // different art -- or the GPU rasterizer -- does not, so our pixel there is
+    // fully transparent. The patch was computed to trim that fringe back to
+    // transparent: a small *negative* alpha delta (byte >= 128) with rgb 0,
+    // e.g. author_base [0,0,0,3] + patch.a -3 -> target [0,0,0,0]. Wrap-adding
+    // that onto our already-transparent pixel straddles the 256 boundary and
+    // detonates into an opaque BLACK line: (0 + 253) & 255 = 253.
+    //
+    // A transparent base pixel (a == 0) whose patch carries no colour
+    // (rgb == 0) and *reduces* alpha (signed-negative, byte >= 128) can only be
+    // such a fringe trim -- you cannot trim alpha below zero, and any real
+    // content painted over a transparent pixel necessarily changes colour
+    // (patch.rgb != 0, premultiplied). So it must stay transparent. This is the
+    // trim's exact end state (target = [0,0,0,0]); every other pixel, including
+    // new colour painted over transparency and all colour repaints, falls
+    // through to the unmodified wrap-add.
+    if (patchBytes) {
+      const n = Math.min(d.length, patchBytes.length);
+      for (let i = 0; i + 3 < n; i += 4) {
+        if (
+          d[i + 3] === 0 &&
+          patchBytes[i] === 0 &&
+          patchBytes[i + 1] === 0 &&
+          patchBytes[i + 2] === 0 &&
+          patchBytes[i + 3] >= 128
+        ) {
+          d[i] = d[i + 1] = d[i + 2] = d[i + 3] = 0;
+        } else {
+          d[i] = (patchBytes[i] + d[i]) & 0xff;
+          d[i + 1] = (patchBytes[i + 1] + d[i + 1]) & 0xff;
+          d[i + 2] = (patchBytes[i + 2] + d[i + 2]) & 0xff;
+          d[i + 3] = (patchBytes[i + 3] + d[i + 3]) & 0xff;
+        }
+      }
+    }
     octx.putImageData(id, 0, 0);
   }
 
+  if (debug) debug.emit("output", out);
   return out.toBuffer("image/png");
+}
+
+/**
+ * Visualise a raw RGBA `.bin.gz` patch into three readable layers:
+ *   patch_rgb   : signed RGB delta centred on mid-grey (128); flat grey means
+ *                  "no colour change", any colour means the patch is rewriting
+ *                  RGB there (the bright seams come from these bytes wrapping).
+ *   patch_alpha : signed alpha delta as grey (128 = unchanged, white = the
+ *                  patch adds opacity, black = it removes it).
+ *   patch_touched: opaque white wherever any channel is non-zero (the plugin's
+ *                  own `_isPatched` map): the exact footprint the patch edits.
+ */
+function emitPatchDebug(debug, patch, w, h) {
+  const n = w * h * 4;
+  const rgb = new Uint8ClampedArray(n);
+  const alpha = new Uint8ClampedArray(n);
+  const touched = new Uint8ClampedArray(n);
+  const signed = (b) => (b > 127 ? b - 256 : b);
+  for (let i = 0; i + 3 < n; i += 4) {
+    const dr = signed(patch[i]);
+    const dg = signed(patch[i + 1]);
+    const db = signed(patch[i + 2]);
+    const da = signed(patch[i + 3]);
+    rgb[i] = 128 + dr;
+    rgb[i + 1] = 128 + dg;
+    rgb[i + 2] = 128 + db;
+    rgb[i + 3] = 255;
+    alpha[i] = alpha[i + 1] = alpha[i + 2] = 128 + da;
+    alpha[i + 3] = 255;
+    const hit = (patch[i] | patch[i + 1] | patch[i + 2] | patch[i + 3]) !== 0;
+    touched[i] = touched[i + 1] = touched[i + 2] = hit ? 255 : 0;
+    touched[i + 3] = 255;
+  }
+  debug.emit("patch_rgb", { data: rgb, width: w, height: h });
+  debug.emit("patch_alpha", { data: alpha, width: w, height: h });
+  debug.emit("patch_touched", { data: touched, width: w, height: h });
 }
 
 /** Load a base-game source image (referenced by a CanopyImageBuilder
@@ -1306,7 +1643,16 @@ async function build(opts) {
           continue;
         }
         try {
-          const png = await applyOlid(basePng, [fs.readFileSync(olidAbs)]);
+          const olidDebug = makeDebugSink(
+            opts.debugParts,
+            "olid",
+            safeName(targetLogical.replace(/^img\//, "").replace(/\//g, "__")),
+          );
+          const png = await applyOlid(
+            basePng,
+            [fs.readFileSync(olidAbs)],
+            olidDebug,
+          );
           writeOut(outWww, targetLogical, png);
           stats.imageDeltas++;
         } catch (e) {
@@ -1322,7 +1668,14 @@ async function build(opts) {
     if (!haveCanvas) {
       warnNoCanvas("CanopyImageBuilder images");
     } else {
-      await runCanopy(canopyDirs, baseRoot, outWww, stats, failures);
+      await runCanopy(
+        canopyDirs,
+        baseRoot,
+        outWww,
+        stats,
+        failures,
+        opts.debugParts,
+      );
     }
   }
 
@@ -1404,7 +1757,14 @@ async function build(opts) {
   }
 }
 
-async function runCanopy(canopyDirs, baseRoot, outWww, stats, failures) {
+async function runCanopy(
+  canopyDirs,
+  baseRoot,
+  outWww,
+  stats,
+  failures,
+  debugRoot,
+) {
   // Collect instruction files across layers (later dirs win by filename).
   const instrByName = new Map(); // fileName -> {dir}
   for (const dir of canopyDirs) {
@@ -1460,7 +1820,8 @@ async function runCanopy(canopyDirs, baseRoot, outWww, stats, failures) {
         if (abs)
           patchBytes = new Uint8Array(zlib.gunzipSync(fs.readFileSync(abs)));
       }
-      const png = buildCanopyImage(instr, sources, masks, patchBytes);
+      const debug = makeDebugSink(debugRoot, "canopy", safeName(name));
+      const png = buildCanopyImage(instr, sources, masks, patchBytes, debug);
       const dest =
         (instr.outputDestination || "/img/pictures/").replace(/^\//, "") +
         name +
@@ -1517,6 +1878,9 @@ function parseArgs(argv) {
       case "--pretty":
         opts.pretty = true;
         break;
+      case "--debug-parts":
+        opts.debugParts = argv[++i];
+        break;
       case "-h":
       case "--help":
         opts.help = true;
@@ -1544,6 +1908,14 @@ Usage:
   --thin           Emit a thin overlay (mod files only), not a whole game
   --force          Write what succeeds even if some patches fail
   --pretty         Pretty-print merged JSON (default: compact)
+  --debug-parts <dir>
+                   Dump every intermediate stage of each composed image into
+                   <dir> (CanopyImageBuilder: loaded sources/masks, each
+                   selection + cumulative paste, the assembled base before and
+                   after the PIXI premultiply round-trip, the patch
+                   visualised, and the final output; .olid deltas: base,
+                   result and a changed-pixel map). Use it to pin down where a
+                   coloured seam first appears. Needs @napi-rs/canvas.
   -h, --help       Show this help
 
 Handles every mod.json files category: dataDeltas (.jsond JSON Patch), assets

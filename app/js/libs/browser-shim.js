@@ -1178,6 +1178,142 @@
         return result;
       };
     }
+
+    // Preserve the on-screen dialogue across save/load.
+    //
+    // Stock RPG Maker deliberately omits $gameMessage from the save payload
+    // (see DataManager.makeSaveContents: "A save data does not contain
+    // $gameTemp, $gameMessage, and $gameTroop."). That is fine for vanilla MV,
+    // where you can only save from the menu on a quiet map. But TCOAAL is one
+    // long chain of events and we let the player open the menu mid-CG/dialogue
+    // (see the escape-to-menu override above), so saving while a line of text
+    // is on screen is normal here.
+    //
+    // What goes wrong without this: command101 has already populated
+    // $gameMessage, advanced the interpreter past the 401 text lines and set
+    // wait mode 'message' BEFORE the save is taken. The interpreter lives in
+    // $gameMap (saved), so on load it resumes in wait mode 'message' at the
+    // command after the text - but $gameMessage is reborn empty, so
+    // updateWaitMode sees !isBusy(), drops the wait immediately and runs the
+    // next command. The line the player was reading is skipped, exactly as if
+    // they had clicked to advance.
+    //
+    // Fix: carry $gameMessage in the save when it holds a plain text line, and
+    // restore it on load. Window_Message.canStart then re-opens it on the next
+    // Scene_Map and the interpreter's 'message' wait holds (isBusy() === true)
+    // until the player actually advances - resuming on the same line.
+    //
+    // Scope guard - only a pure text message is carried. A pending choice /
+    // number / item prompt keeps a bound _choiceCallback on $gameMessage that
+    // JsonEx cannot serialize; restoring it without the callback would take the
+    // wrong branch. Those states are unreachable from the menu anyway (the
+    // sub-window owns the cancel key, so escape-to-menu is blocked), so on the
+    // off chance one is hit we fall back to stock behaviour rather than corrupt
+    // the choice. Old saves (no contents.message) keep the fresh empty message.
+    if (
+      typeof DataManager !== "undefined" &&
+      typeof DataManager.makeSaveContents === "function" &&
+      typeof DataManager.extractSaveContents === "function"
+    ) {
+      var _drmMakeSaveContents = DataManager.makeSaveContents;
+      DataManager.makeSaveContents = function () {
+        // Snapshot the live Visual-Novel busts (autosave path: scene is still
+        // Scene_Map). For menu saves the scene is Scene_Save with no busts, so
+        // captureVnBusts is a no-op and the value already stamped by callMenu
+        // survives. Either way $gameSystem carries it into the payload below.
+        captureVnBusts();
+        var contents = _drmMakeSaveContents.apply(this, arguments);
+        try {
+          var m = window.$gameMessage;
+          if (
+            contents &&
+            m &&
+            m.hasText &&
+            m.hasText() &&
+            !m.isChoice() &&
+            !m.isNumberInput() &&
+            !m.isItemChoice()
+          ) {
+            contents.message = m;
+          }
+        } catch (e) {}
+        return contents;
+      };
+      var _drmExtractSaveContents = DataManager.extractSaveContents;
+      DataManager.extractSaveContents = function (contents) {
+        _drmExtractSaveContents.apply(this, arguments);
+        try {
+          if (contents && contents.message) {
+            window.$gameMessage = contents.message;
+          }
+        } catch (e) {}
+      };
+    }
+
+    // Persist on-screen Visual-Novel busts (Irina_VisualNovelBusts) for the
+    // Continue-menu preview.
+    //
+    // Irina keeps bust state ONLY on transient sprite objects - no $gameSystem
+    // fields, no save hooks - and Game_Interpreter.terminate clears them at
+    // event end. So a *non-speaking* bust placed earlier in the conversation
+    // (it persists across lines while the event runs) is nowhere in the save:
+    // the snapshot reconstructs only the current line's speaking bust from
+    // $gameMessage, and by save time (Scene_Save) the map's bust sprites are
+    // already gone. We bridge that by stamping the live bust sprites onto
+    // $gameSystem (which IS saved) while still on the map: on callMenu (the
+    // menu-save path) and in makeSaveContents (the autosave path). lang-shim's
+    // snapshot reads $gameSystem._vnBusts back. Live gameplay ignores the field.
+    function captureVnBusts() {
+      try {
+        var scene = SceneManager._scene;
+        if (!scene || typeof window.$gameSystem === "undefined") return;
+        var ss = scene._spriteset;
+        var mw = scene._messageWindow;
+        var sceneBusts = ss && ss._messageBustSprites;
+        // Only a scene that can actually provide busts may rewrite the field;
+        // Scene_Save/Scene_Menu (no spriteset/message window) must leave the
+        // value previously stamped on the map intact.
+        if (!sceneBusts && !mw) return;
+        var out = [];
+        var grab = function (sp) {
+          if (!sp || !sp._bustName) return;
+          out.push({
+            setting: sp._setting,
+            type: sp._type || "face",
+            name: sp._bustName,
+            expr: sp._expressionIndex || 0,
+            x: sp.x,
+            y: sp.y,
+            sx: sp.scale ? sp.scale.x : 1,
+            sy: sp.scale ? sp.scale.y : 1,
+            ax: sp.anchor ? sp.anchor.x : 0.5,
+            ay: sp.anchor ? sp.anchor.y : 1,
+            op: typeof sp.opacity === "number" ? sp.opacity : 255,
+            tone:
+              sp._colorTone && sp._colorTone.slice
+                ? sp._colorTone.slice()
+                : null,
+          });
+        };
+        if (mw) grab(mw._messageBodyBustSprite);
+        if (sceneBusts) sceneBusts.forEach(grab);
+        window.$gameSystem._vnBusts = out.length ? out : null;
+      } catch (e) {}
+    }
+
+    // Capture at the moment the menu is opened (still on Scene_Map), covering
+    // the normal menu->save flow. The escape-to-menu override above also routes
+    // through callMenu, so both menu entry points are handled.
+    if (
+      typeof Scene_Map !== "undefined" &&
+      typeof Scene_Map.prototype.callMenu === "function"
+    ) {
+      var _vnOrigCallMenu = Scene_Map.prototype.callMenu;
+      Scene_Map.prototype.callMenu = function () {
+        captureVnBusts();
+        return _vnOrigCallMenu.apply(this, arguments);
+      };
+    }
   };
 
   // Parse a single .rpgsave from localStorage (via the fs shim) into a

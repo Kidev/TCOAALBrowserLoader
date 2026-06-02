@@ -3805,8 +3805,22 @@
           } catch (e) {}
         }
         window.$gameTemp = new Game_Temp();
-        if (typeof Game_Message !== "undefined")
+        // A save taken mid-dialogue carries the on-screen text in
+        // contents.message (browser-shim's makeSaveContents override, pure-text
+        // lines only). Stand in a deep copy so the preview can render the actual
+        // line over the map - a copy because driving Window_Message can call
+        // terminateMessage -> $gameMessage.clear(), which would otherwise empty
+        // the shared, cross-visit contents cache and blank later previews.
+        var savedMsg = contents.message;
+        if (savedMsg && savedMsg._texts) {
+          try {
+            window.$gameMessage = JsonEx.makeDeepCopy(savedMsg);
+          } catch (e) {
+            window.$gameMessage = savedMsg;
+          }
+        } else if (typeof Game_Message !== "undefined") {
           window.$gameMessage = new Game_Message();
+        }
         if (typeof Game_Troop !== "undefined")
           window.$gameTroop = new Game_Troop();
         return function restore() {
@@ -3816,9 +3830,252 @@
         };
       }
 
+      // Build a real Window_Message (plus its plugin satellites) for the
+      // snapshot when the saved state holds an on-screen line ($gameMessage
+      // carried in the save). Called inside the build swapped span so
+      // $gameMessage is the saved one: startMessage reserves the face/bust +
+      // windowskin bitmaps and fires the YEP name-box refresh now, so the shared
+      // waitReady loop covers their images before the snap.
+      //
+      // TCOAAL's dialogue isn't one self-contained window - two plugins put
+      // pieces on the *scene*:
+      //   - YEP_MessageCore.createSubWindows does SceneManager._scene.addChild
+      //     (this._nameWindow): the speaker name box. Built with the live scene
+      //     it lands on Scene_Load - on top of the menu and never removed
+      //     between rows. We point SceneManager._scene at the snapshot stage so
+      //     it lands in the snapshot instead (below the menu, torn down with it).
+      //   - GALV_MessageBackground draws the actual message box as a scene
+      //     sprite (msgimg_*); the window's own skin is forced transparent
+      //     (window.opacity 0). We build that sprite too, below the window.
+      //   - Irina_VisualNovelBusts draws the speaker art. The in-dialogue "body"
+      //     bust is mw._messageBodyBustSprite (loaded from the [BUST] faceName
+      //     during startMessage); standalone \BUST[n] busts resolve through
+      //     $bust(n) = SceneManager._scene._spriteset._messageBustSprites[n], so
+      //     the stage is shimmed with _spriteset/_messageWindow for that lookup.
+      //     Busts start at opacity 0 and fade in via their own update(), which
+      //     nothing drives here - fillSnapshotMessageWindow settles them. The
+      //     body bust is a window child (rendered bundled with / dimmed by the
+      //     window); it's lifted out onto its own stage layer below the box.
+      //
+      // Final stage z-order, bottom -> top (the requested layering):
+      //   spriteset (ground/parallax/characters/scene busts) -> pictures ->
+      //   body bust -> GALV text background -> speaker name -> message text.
+      //
+      // Returns a bundle (window/bg/nameWindow/spriteset), all already added to
+      // the stage in z-order, or null when there's no text / a class is missing /
+      // a plugin throws - then the snapshot is simply the map without dialogue.
+      function buildSnapshotMessageWindow(stage, spriteset) {
+        try {
+          if (
+            typeof Window_Message === "undefined" ||
+            !window.$gameMessage ||
+            !window.$gameMessage.hasText ||
+            !window.$gameMessage.hasText()
+          ) {
+            return null;
+          }
+          var mw;
+          var prevScene = SceneManager._scene;
+          try {
+            // Sub-windows (YEP name box) attach to SceneManager._scene during
+            // construction/startMessage - redirect that to the snapshot stage.
+            // Also shim _spriteset/_messageWindow so Irina's $bust(n) lookup
+            // resolves to the snapshot's own sprites instead of throwing.
+            SceneManager._scene = stage;
+            stage._spriteset = spriteset || null;
+            mw = new Window_Message();
+            stage._messageWindow = mw;
+            // startMessage runs convertEscapeCharacters, which fires the YEP
+            // name-box refresh (\n<Name>) and Irina's bust load right here,
+            // within the swap. Force openness past the slide-in so the single
+            // frame shows it open.
+            mw.startMessage();
+            mw.openness = 255;
+            // Rebuild persistent scene busts (non-speaking characters) from the
+            // saved state - here, while the scene is shimmed so $bust resolves.
+            restoreSavedBusts();
+          } finally {
+            SceneManager._scene = prevScene;
+          }
+          // GALV message-background sprite (the real box). Galv.MBG.window was
+          // set to mw by startMessage above, so its update() will track mw.
+          var bg = null;
+          if (typeof Sprite_GalvMsgBg !== "undefined") {
+            try {
+              bg = new Sprite_GalvMsgBg();
+            } catch (e) {
+              bg = null;
+            }
+          }
+          var nameWin = mw._nameWindow || null;
+          // Extract the in-dialogue body bust from the message window into its
+          // own layer. As a window child it renders bundled with the text and in
+          // front of the GALV background box, and the window's own render (the
+          // openness-clipped contents pass, the alpha-0 skin container) muddies
+          // it - which shows up as a translucent bust over hidden text. The
+          // requested z-order wants every bust *behind* the box + text, so move
+          // it onto the stage and convert its window-local position to stage
+          // coordinates (the window has scale 1 and no rotation).
+          var bodyBust = mw._messageBodyBustSprite || null;
+          if (bodyBust && bodyBust.parent === mw) {
+            mw.removeChild(bodyBust);
+            bodyBust.x += mw.x;
+            bodyBust.y += mw.y;
+          }
+          // Stage z-order, bottom -> top, layered over the already-added
+          // spriteset (ground / parallax / characters / scene busts) and
+          // picHost (pictures):
+          //   body bust -> GALV text background -> speaker name -> message text.
+          // addChild re-parents an existing child to the top, so re-adding the
+          // name window (already attached during construction) restacks it.
+          if (bodyBust) stage.addChild(bodyBust);
+          if (bg) stage.addChild(bg);
+          if (nameWin) {
+            stage.addChild(nameWin);
+            // Snap the name box fully open only when it holds a speaker name
+            // (refresh sets _lastNameText); otherwise keep it hidden so an empty
+            // box doesn't show.
+            if (nameWin._lastNameText) {
+              nameWin.openness = 255;
+              nameWin.visible = true;
+            } else {
+              nameWin.openness = 0;
+              nameWin.visible = false;
+            }
+          }
+          stage.addChild(mw);
+          return {
+            window: mw,
+            bg: bg,
+            nameWindow: nameWin,
+            spriteset: spriteset || null,
+            stage: stage,
+          };
+        } catch (e) {
+          console.warn("[lang-shim] snapshot message build failed:", e);
+          return null;
+        }
+      }
+
+      // Drive a Visual-Novel bust sprite to its final state. Busts spawn at
+      // opacity 0 and ease toward their target opacity/position/scale/tone over
+      // a handful of frames inside their own update(); the body bust lives on the
+      // message window and the scene busts only get the 2 spriteset updates, so
+      // none of them reach their target in the single snapshot frame. Pumping
+      // update() well past the longest tween duration settles every easing to
+      // its endpoint (durations clamp at 0) and sets the source frame. No-op
+      // for an empty bust (target opacity 0).
+      function settleBust(sp) {
+        if (!sp || typeof sp.update !== "function") return;
+        try {
+          for (var i = 0; i < 240; i++) sp.update();
+        } catch (e) {}
+      }
+
+      // Rebuild the persistent scene busts (e.g. the non-speaking character
+      // standing in a conversation) from the state browser-shim stamped onto
+      // $gameSystem._vnBusts at save time. Irina keeps no bust state in the save
+      // and only the current line's speaking bust is reconstructable from
+      // $gameMessage, so without this the non-speaker is missing. Slot 0 (the
+      // body bust) is skipped - the message rebuild already drives it from the
+      // [BUST] faceName. Must run inside the scene-shimmed span so $bust(n)
+      // resolves to the snapshot's spriteset busts; loadBitmap reserves the
+      // image (waitReady covers it) and the transform/opacity/tone/expression
+      // are forced to their saved values (no fade), then settleBust sets frames.
+      function restoreSavedBusts() {
+        try {
+          var saved = window.$gameSystem && window.$gameSystem._vnBusts;
+          if (!saved || !saved.length || typeof $bust !== "function") return;
+          for (var i = 0; i < saved.length; i++) {
+            var b = saved[i];
+            if (!b || !b.name || b.setting < 1) continue;
+            var sp = $bust(b.setting);
+            if (!sp || typeof sp.loadBitmap !== "function") continue;
+            sp.loadBitmap(b.type || "face", b.name);
+            sp._expressionIndex = b.expr || 0;
+            sp.x = b.x;
+            sp.y = b.y;
+            if (sp.scale) {
+              sp.scale.x = b.sx;
+              sp.scale.y = b.sy;
+            }
+            if (sp.anchor) {
+              sp.anchor.x = b.ax;
+              sp.anchor.y = b.ay;
+            }
+            if (b.tone && sp.setColorTone) sp.setColorTone(b.tone);
+            sp._opacityTarget = b.op;
+            sp._opacityDuration = 0;
+            sp.opacity = b.op;
+          }
+        } catch (e) {
+          console.warn("[lang-shim] snapshot bust restore failed:", e);
+        }
+      }
+
+      // Paint the current dialogue page into an already-built message bundle so
+      // the snap captures it. Runs in the finalize swapped span, after the
+      // images are loaded: draw the face, type the line instantly, then settle
+      // the GALV background sprite. The saved state doesn't record which
+      // page/character was visible, so we show the first page (stop at the first
+      // real page break) - the same line the in-game reload re-displays.
+      function fillSnapshotMessageWindow(bundle) {
+        if (!bundle || !bundle.window) return;
+        var mw = bundle.window;
+        // Typing the line runs processEscapeCharacter, and TCOAAL dialogue often
+        // carries *inline* bust codes (\bustExpression, \bustOpacityTo, ...) that
+        // call $bust(n) = SceneManager._scene._spriteset/_messageWindow. The
+        // build phase shimmed the scene to the stage, but it's been restored to
+        // Scene_Load by now, so without re-shimming here the first inline bust
+        // code throws -> the catch aborts the draw and the line never appears
+        // (while the speaker name, drawn back in the build phase, still shows).
+        var prevScene = SceneManager._scene;
+        try {
+          if (bundle.stage) SceneManager._scene = bundle.stage;
+          // Draw the reserved face/bust now that ImageManager has settled.
+          var fg = 0;
+          while (mw.updateLoading && mw.updateLoading() && fg++ < 4) {}
+          // _showFast makes updateMessage emit the whole run in one pass;
+          // zeroing _waitCount each pass defeats inline \. / \| pause codes so a
+          // mid-line wait can't truncate the snapshot. Stop at a genuine page
+          // break (this.pause) or the end of the text.
+          mw._showFast = true;
+          var g = 0;
+          do {
+            mw._waitCount = 0;
+            mw.updateMessage();
+            g++;
+          } while (mw._textState && !mw.pause && g < 64);
+          if (mw.updateOpen) mw.updateOpen();
+          // Settle the GALV box: picks up its loaded image, opacity (from the
+          // window openness) and position (from the message positionType).
+          if (bundle.bg && bundle.bg.update) {
+            bundle.bg.update();
+            bundle.bg.update();
+          }
+          // Settle the Visual-Novel busts to full opacity/position: the body
+          // bust (now lifted onto the stage) and the scene busts on the spriteset
+          // (the \BUST[n] ones, plus any just touched by inline codes). Their face
+          // images were reserved during the build / typing, so ImageManager has
+          // them by now and updateFrame can set the source rect.
+          if (mw._messageBodyBustSprite) settleBust(mw._messageBodyBustSprite);
+          var ss = bundle.spriteset;
+          if (ss && ss._messageBustSprites) {
+            ss._messageBustSprites.forEach(function (b) {
+              if (b) settleBust(b);
+            });
+          }
+        } catch (e) {
+          console.warn("[lang-shim] snapshot message render failed:", e);
+        } finally {
+          SceneManager._scene = prevScene;
+        }
+      }
+
       function buildAndSnapScene(contents, dataMap, done) {
         var stage = null;
         var spriteset = null;
+        var msgBundle = null;
         // Scene-level picture host. A camera plugin (SRD_CameraCore with
         // "Zoom Pictures?") relocates picture creation from the spriteset to
         // the scene so the camera zoom doesn't scale pictures: it stubs
@@ -3853,6 +4110,11 @@
             stage.addChild(picHost);
             picHost.update();
           }
+          // On-screen dialogue (message box + text + speaker name), above the
+          // pictures - the live scene draws these over the spriteset. Built here
+          // (adds itself to the stage in z-order) so its images register before
+          // waitReady; painted in finalizeSnap once they're loaded.
+          msgBundle = buildSnapshotMessageWindow(stage, spriteset);
         } catch (e) {
           buildErr = e;
         } finally {
@@ -3901,6 +4163,11 @@
               picHost.update();
               picHost.update();
             }
+            // Paint the dialogue line now that its face/windowskin are loaded.
+            // The window's contents (clipped by openness) are committed during
+            // the PIXI render in Bitmap.snap, so this only has to draw into them
+            // once before the snap. It stays painted for the blackout re-snap.
+            fillSnapshotMessageWindow(msgBundle);
             bmp = Bitmap.snap(stage);
             // Save captured during a cutscene fade-to-black: the frame is all
             // black and useless as a preview. Drop the fade/tint/overlay and
