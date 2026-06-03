@@ -25,9 +25,9 @@
  * hashed+encrypted file and decrypts it on the fly.
  *
  * Usage:
- *   node dedup-mods.js              # scan all mods, report + delete
- *   node dedup-mods.js --dry-run    # report only, don't delete anything
- *   node dedup-mods.js TCOAAR       # scan only the TCOAAR mod
+ *   node tools/dedup-mods.js              # scan all mods, report + delete
+ *   node tools/dedup-mods.js --dry-run    # report only, don't delete anything
+ *   node tools/dedup-mods.js TCOAAR       # scan only the TCOAAR mod
  */
 
 "use strict";
@@ -36,7 +36,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const ROOT = __dirname;
+// Tools live in tools/; project root is one level up.
+const ROOT = path.join(__dirname, "..");
 const MODS_DIR = path.join(ROOT, "mods");
 const BASE_GAME_DIR = path.join(MODS_DIR, "base-game");
 const MODS_JSON = path.join(ROOT, "mods.json");

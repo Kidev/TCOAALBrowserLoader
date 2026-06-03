@@ -30,8 +30,10 @@
 var fs = require("fs");
 var path = require("path");
 
-var TREE_FILE = path.join(__dirname, "tree.txt");
-var OUT_FILE = path.join(__dirname, "app", "expected-files.json");
+// Tools live in tools/; project root is one level up.
+var ROOT = path.join(__dirname, "..");
+var TREE_FILE = path.join(ROOT, "tree.txt");
+var OUT_FILE = path.join(ROOT, "app", "expected-files.json");
 
 // Top-level paths the browser player doesn't need. Listed once here so
 // the warning UI doesn't nag the user about Steam SDKs or PDFs.

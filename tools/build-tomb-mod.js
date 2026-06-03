@@ -27,7 +27,7 @@
  * version than the one a player has installed.
  *
  * Usage:
- *   node build-tomb-mod.js --diff <dir> --base <dir> --out <dir> [options]
+ *   node tools/build-tomb-mod.js --diff <dir> --base <dir> --out <dir> [options]
  *
  *   --diff   <dir>   The mod folder (contains mod.json, or a www/ subdir).
  *   --base   <dir>   The base game the mod targets. May be a decrypted dump
@@ -1895,7 +1895,7 @@ function parseArgs(argv) {
 const HELP = `build-tomb-mod.js: flatten a Tomb-format mod into a self-contained game
 
 Usage:
-  node build-tomb-mod.js --diff <dir> --base <dir> --out <dir> [options]
+  node tools/build-tomb-mod.js --diff <dir> --base <dir> --out <dir> [options]
 
   --diff    <dir>  The mod folder (contains mod.json, or a www/ subdir)
   --base    <dir>  Base game the mod targets (decrypted dump, current TCOAAL

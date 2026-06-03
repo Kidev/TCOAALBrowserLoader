@@ -10,7 +10,7 @@
  * - Non-_ mods with a "repo" field get author and lastUpdate fetched from
  *   the GitHub API.
  *
- * Usage: node generate-manifests.js
+ * Usage: node tools/generate-manifests.js
  */
 
 "use strict";
@@ -20,8 +20,10 @@ var path = require("path");
 var cp = require("child_process");
 var https = require("https");
 
-var MODS_JSON = path.join(__dirname, "mods.json");
-var MODS_DIR = path.join(__dirname, "mods");
+// Tools live in tools/; project root is one level up.
+var ROOT = path.join(__dirname, "..");
+var MODS_JSON = path.join(ROOT, "mods.json");
+var MODS_DIR = path.join(ROOT, "mods");
 
 var TRANSLATIONS_BASE = "https://translations.tcoaal.app/translations";
 var TRANSLATIONS_MODS_URL = TRANSLATIONS_BASE + "/mods.txt";
@@ -712,7 +714,7 @@ async function main() {
       continue;
     }
     var modPath = entry.path || "mods/" + modId;
-    var modDir = path.join(__dirname, modPath);
+    var modDir = path.join(ROOT, modPath);
     var wwwDir = path.join(modDir, "www");
     var isBuiltin = modId.charAt(0) === "_";
 

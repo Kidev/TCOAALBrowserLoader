@@ -30,7 +30,7 @@
  *   manifest.json                                { name, version, langFile, files }
  *
  * Usage:
- *   node build-tomb-translation.js --translation <dir> --out <dir> \
+ *   node tools/build-tomb-translation.js --translation <dir> --out <dir> \
  *        [--mod <overhaulModDir>] [--base <baseGameDir>] \
  *        [--lang <name>] [--icon <img>] [--name <str>] [--id <MODCODE>]
  *
@@ -338,7 +338,7 @@ function printDeploymentHints(opts, slug, manifest) {
       `       translations/${code}_translations/${lang}/\n` +
       `  2. Ensure  translations/mods.txt  contains a line: ${code}_translations\n` +
       `  3. Ensure  translations/${code}_translations/langs.txt  contains: ${lang}\n` +
-      `  4. Run  node generate-manifests.js  to add the\n` +
+      `  4. Run  node tools/generate-manifests.js  to add the\n` +
       `       "translation_${code}_${lang}" entry to mods.json (mod: "${code}").\n` +
       `     The overhaul it overlays must be keyed "${code}" in mods.json.`,
   );
@@ -392,7 +392,7 @@ function parseArgs(argv) {
 const HELP = `build-tomb-translation.js: package a Tomb translation for translations.tcoaal.app
 
 Usage:
-  node build-tomb-translation.js --translation <dir> --out <dir> [options]
+  node tools/build-tomb-translation.js --translation <dir> --out <dir> [options]
 
   --translation <dir>  Translation mod folder (mod.json + languages/<lang>.json
                        or a dialogue.csv/.txt)

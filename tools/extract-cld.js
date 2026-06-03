@@ -16,7 +16,7 @@
 // base-game/www/data/9c7050ae76645487, override with --english <path>),
 // its strings fill the "English" column of the emitted CSV.
 //
-// Usage: node extract-cld.js <input.cld> [outDir] [--english <path>]
+// Usage: node tools/extract-cld.js <input.cld> [outDir] [--english <path>]
 
 const fs = require("fs");
 const path = require("path");
@@ -240,7 +240,7 @@ function main() {
   const opts = parseArgs(process.argv);
   if (!opts.input) {
     console.error(
-      "Usage: node extract-cld.js <input.cld> [outDir] [--english <path>]",
+      "Usage: node tools/extract-cld.js <input.cld> [outDir] [--english <path>]",
     );
     process.exit(1);
   }
