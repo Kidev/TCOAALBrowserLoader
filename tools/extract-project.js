@@ -39,6 +39,9 @@
  *   -w, --www <dir>     Game www folder (or a game folder containing www/).
  *   -o, --out <dir>     Output project folder (default: project).
  *   -f, --force         Overwrite the output folder if it already exists.
+ *   --not-playable      Skip bundling the BrowserPlayer launcher. It is bundled
+ *                       by default (F9 / title 'Play in Browser') so the editor
+ *                       playtest can hand off to true browser-mode rendering.
  *   --names-from <dir>  Recover map names against this named-maps build instead
  *                       of the bundled reference (tools/map-name-keys.json).
  *   --no-map-names      Skip map-name recovery; blank maps become MapNNN.
@@ -55,9 +58,16 @@ const {
   parseLoc,
   walk,
   writeOut,
+  canvas,
 } = require("./build-tomb-mod.js");
-const { loadMapNameRefs, resolveMapNames } = require("./map-names.js");
-const { loadCLD, lutsFromCLD, deepBake } = require("./lang-roundtrip.js");
+const {
+  loadMapNameRefs,
+  resolveMapNames,
+  bakeAssetNames,
+  lookupRename,
+  dirExt,
+} = require("./map-names.js");
+const { loadCLD, lutsFromCLD, bakeDoc } = require("./lang-roundtrip.js");
 
 // canonical-name recovery
 
@@ -203,26 +213,100 @@ function fromK9A(rel) {
 // "LANGDATA"-headed JSON shipped under a hashed data/ filename. The bake/CLD
 // helpers live in lang-roundtrip.js (shared with play / pack / PlayInBrowser).
 
-/** TCOAAL parallax-maps every map: the floor/background art is referenced from
- *  the map note as `<ground:HASH>` (+ a `<par:HASH>` parallax layer), both images
- *  under img/parallaxes/, drawn at runtime by the OrangeOverlay plugin. The
- *  editor draws nothing for these (no tileset), so surface the ground image as
- *  the native `parallaxName`: then the editor's map view shows the actual
- *  background. The note is kept intact so the runtime overlay still works. */
-function setMapBackground(map) {
+// map backgrounds
+//
+// TCOAAL parallax-maps every map: the floor art is referenced from the map note
+// as `<ground:HASH>` and a parallax overlay as `<par:HASH>`, both images under
+// img/parallaxes/, composited at runtime by the OrangeOverlay plugin (ground at
+// z=1, par on top at z=20). The editor draws nothing for these (no tileset), and
+// its single native `parallaxName` slot can't stack two layers, so we composite
+// ground + par into one image and point parallaxName at it: then the editor map
+// view shows the full background, par over ground, exactly as it renders. The
+// note is left intact so the runtime overlay still draws it.
+
+/** Build the editor parallaxName for one map from its (already name-baked) note.
+ *  Composites <ground> + <par> into a new img/parallaxes image when both exist
+ *  and a canvas backend is available; otherwise falls back to the single layer.
+ *  Returns true if parallaxName was set. */
+async function setMapBackground(map, parallaxDir) {
   if (!map || typeof map.note !== "string" || !map.note) return false;
-  if (map.parallaxName) return false; // respect an existing parallax
+  if (map.parallaxName) return false; // respect an existing native parallax
   const ground = (map.note.match(/<ground:([^>]+)>/) || [])[1];
   const par = (map.note.match(/<par:([^>]+)>/) || [])[1];
-  const img = ground || par;
-  if (!img) return false;
-  map.parallaxName = img;
+  if (!ground && !par) return false;
+
+  let name = ground || par;
+  if (ground && par) {
+    const composite = await compositeLayers(parallaxDir, ground, par);
+    if (composite) name = composite;
+    // No canvas / missing source: fall back to the ground floor (or par).
+  }
+
+  map.parallaxName = name;
   map.parallaxShow = true;
   map.parallaxLoopX = false;
   map.parallaxLoopY = false;
   map.parallaxSx = 0;
   map.parallaxSy = 0;
   return true;
+}
+
+/** Composite `<ground>` (bottom) and `<par>` (top): both already-extracted PNGs
+ *  in `parallaxDir` named by the note value: into a single PNG written
+ *  alongside them, and return its name. Null when canvas is unavailable or a
+ *  source image is missing. Result is cached per (ground,par) pair. */
+const _compositeCache = new Map();
+async function compositeLayers(parallaxDir, ground, par) {
+  const cv = canvas();
+  if (!cv) return null;
+  const key = ground + " " + par;
+  if (_compositeCache.has(key)) return _compositeCache.get(key);
+
+  const groundPath = path.join(parallaxDir, ground + ".png");
+  const parPath = path.join(parallaxDir, par + ".png");
+  if (!fs.existsSync(groundPath) || !fs.existsSync(parPath)) {
+    _compositeCache.set(key, null);
+    return null;
+  }
+
+  const { createCanvas, loadImage } = cv;
+  const [g, p] = await Promise.all([loadImage(groundPath), loadImage(parPath)]);
+  const w = Math.max(g.width, p.width);
+  const h = Math.max(g.height, p.height);
+  const c = createCanvas(w, h);
+  const ctx = c.getContext("2d");
+  ctx.drawImage(g, 0, 0);
+  ctx.drawImage(p, 0, 0);
+
+  const name = `bg_${ground}_${par}`;
+  fs.writeFileSync(path.join(parallaxDir, name + ".png"), c.toBuffer("image/png"));
+  _compositeCache.set(key, name);
+  return name;
+}
+
+/** After the main walk has written every plain data + parallax file, fill each
+ *  map's editor parallaxName from its note. Done as a post-pass so the source
+ *  PNGs are already on disk for compositing, regardless of walk order. */
+async function applyMapBackgrounds(out) {
+  const dataDir = path.join(out, "data");
+  const parallaxDir = path.join(out, "img", "parallaxes");
+  if (!fs.existsSync(dataDir)) return 0;
+  let n = 0;
+  for (const f of fs.readdirSync(dataDir)) {
+    if (!/^Map\d+\.json$/.test(f)) continue;
+    const abs = path.join(dataDir, f);
+    let map;
+    try {
+      map = JSON.parse(fs.readFileSync(abs, "utf8"));
+    } catch (e) {
+      continue;
+    }
+    if (await setMapBackground(map, parallaxDir)) {
+      fs.writeFileSync(abs, JSON.stringify(map));
+      n++;
+    }
+  }
+  return n;
 }
 
 /** RPG Maker MV shows the map tree from MapInfos[].name; the remaster blanks
@@ -253,11 +337,11 @@ function extract(www, out, nameMap, lut, mapNameIndex) {
   const files = walk(www);
 
   let renamed = 0;
+  let renamedAssets = 0;
   let extended = 0;
   let langs = 0;
   let mapsNamed = 0;
   let mapsRecovered = 0;
-  let mapsBg = 0;
   const bakeAcc = { n: 0 };
 
   for (const rel of files) {
@@ -276,20 +360,27 @@ function extract(www, out, nameMap, lut, mapNameIndex) {
     } else {
       let dec = dekit(raw, rel);
 
-      // Restore a canonical name for the well-known engine files, otherwise
+      // Restore a canonical name for the well-known engine files; otherwise give
+      // a known img/audio asset its human name (file-names.js), or at least
       // recover the stripped extension from the content. Plain files (js, fonts,
-      // already-named assets) fall through both branches unchanged.
+      // unknown assets) fall through unchanged.
       const canonical = nameMap[rel];
       let outRel = rel;
 
       if (canonical) {
         outRel = canonical;
         renamed++;
-      } else if (!path.extname(rel)) {
-        const detected = detectExtension(dec);
-        if (detected) {
-          outRel = rel + detected;
-          extended++;
+      } else {
+        const ren = lookupRename(rel);
+        if (ren) {
+          outRel = ren.dir + "/" + ren.stem + (detectExtension(dec) || dirExt(ren.dir));
+          renamedAssets++;
+        } else if (!path.extname(rel)) {
+          const detected = detectExtension(dec);
+          if (detected) {
+            outRel = rel + detected;
+            extended++;
+          }
         }
       }
 
@@ -298,22 +389,23 @@ function extract(www, out, nameMap, lut, mapNameIndex) {
       if (/^data\/.+\.json$/.test(outRel)) {
         try {
           const obj = JSON.parse(dec.toString("utf8"));
-          let changed = false;
+          // Asset-name bake: rewrite the on-disk hashes in every asset
+          // reference (and the map-note overlay tags) to their human names, so
+          // the editor shows real filenames. pack-project / the live player
+          // restore them (see file-names.js). Always runs; a no-op when a file
+          // has no references.
+          bakeAssetNames(obj);
           if (lut) {
-            deepBake(obj, lut, bakeAcc);
-            changed = true;
+            bakeDoc(obj, lut, bakeAcc);
           }
           if (outRel === "data/MapInfos.json") {
             const r = fillMapNames(obj, mapNameIndex);
             mapsRecovered = r.recovered;
             mapsNamed = r.filled;
-            changed = true;
           }
-          if (/^data\/Map\d+\.json$/.test(outRel) && setMapBackground(obj)) {
-            mapsBg++;
-            changed = true;
-          }
-          if (changed) dec = Buffer.from(JSON.stringify(obj));
+          // Map backgrounds (parallaxName) are filled in a post-pass, once every
+          // parallax PNG is written, so ground+par can be composited.
+          dec = Buffer.from(JSON.stringify(obj));
         } catch (e) {
           /* not valid JSON (e.g. Credits.txt-like): leave verbatim */
         }
@@ -326,12 +418,12 @@ function extract(www, out, nameMap, lut, mapNameIndex) {
   return {
     total: files.length,
     renamed,
+    renamedAssets,
     extended,
     langs,
     baked: bakeAcc.n,
     mapsNamed,
     mapsRecovered,
-    mapsBg,
   };
 }
 
@@ -493,7 +585,7 @@ function parseArgs(argv) {
     out: "project",
     force: false,
     bake: true,
-    playable: false,
+    playable: true,
     mapNames: true,
     namesFrom: null,
   };
@@ -503,19 +595,21 @@ function parseArgs(argv) {
     else if (a === "--out" || a === "-o") opts.out = argv[++i];
     else if (a === "--force" || a === "-f") opts.force = true;
     else if (a === "--no-bake") opts.bake = false;
-    else if (a === "--playable") opts.playable = true;
+    else if (a === "--not-playable") opts.playable = false;
+    else if (a === "--playable") opts.playable = true; // default; kept as a no-op for back-compat
     else if (a === "--no-map-names") opts.mapNames = false;
     else if (a === "--names-from") opts.namesFrom = argv[++i];
     else if (a === "--help" || a === "-h") {
       console.log(
-        "Usage: node tools/extract-project.js --www <gameWww> --out <projectDir> [--force] [--no-bake] [--playable]\n" +
+        "Usage: node tools/extract-project.js --www <gameWww> --out <projectDir> [--force] [--no-bake] [--not-playable]\n" +
           "  --no-bake          keep dialogue placeholders ((label)[..]/(lines)[..]) instead\n" +
           "                     of baking the base-language text into the data.\n" +
-          "  --playable         bundle the BrowserPlayer launcher (F9 / title 'Play in\n" +
-          "                     Browser') so the editor playtest can hand off to correct\n" +
-          "                     browser-mode rendering. Bakes readable text for the editor\n" +
-          "                     and un-bakes it back to (label)/(lines) placeholders at\n" +
-          "                     run/pack time so the live VN engine renders correctly.\n" +
+          "  --not-playable     skip bundling the BrowserPlayer launcher. By default it is\n" +
+          "                     bundled (F9 / title 'Play in Browser') so the editor playtest\n" +
+          "                     can hand off to correct browser-mode rendering, baking\n" +
+          "                     readable text for the editor and un-baking it back to\n" +
+          "                     (label)/(lines) placeholders at run/pack time so the live VN\n" +
+          "                     engine renders correctly.\n" +
           "  --names-from <dir> recover map names by matching against this named-maps game\n" +
           "                     build instead of the bundled reference (tools/map-name-keys.json).\n" +
           "  --no-map-names     skip map-name recovery; blank maps become MapNNN.",
@@ -538,7 +632,7 @@ function resolveWww(input) {
   return input;
 }
 
-function main() {
+async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const www = resolveWww(opts.www);
   const out = opts.out;
@@ -593,6 +687,7 @@ function main() {
 
   console.time("extract");
   const stats = extract(www, out, buildNameMap(), lut, mapNameIndex);
+  const mapsBg = await applyMapBackgrounds(out);
   generateRpgProject(out);
   updatePackageJson(out);
   patchIndexHtml(out);
@@ -603,6 +698,7 @@ function main() {
   console.log(
     `Processed ${stats.total} files: ` +
       `${stats.renamed} canonical name${stats.renamed === 1 ? "" : "s"} recovered, ` +
+      `${stats.renamedAssets} asset name${stats.renamedAssets === 1 ? "" : "s"} recovered, ` +
       `${stats.extended} asset extension${stats.extended === 1 ? "" : "s"} restored` +
       (stats.langs
         ? `, ${stats.langs} language file${stats.langs === 1 ? "" : "s"} unpacked`
@@ -620,8 +716,8 @@ function main() {
   if (stats.mapsNamed) {
     console.log(`Filled ${stats.mapsNamed} remaining blank map name${stats.mapsNamed === 1 ? "" : "s"} (MapNNN).`);
   }
-  if (stats.mapsBg) {
-    console.log(`Set ${stats.mapsBg} map parallax background${stats.mapsBg === 1 ? "" : "s"} from <ground>/<par> notes.`);
+  if (mapsBg) {
+    console.log(`Set ${mapsBg} map parallax background${mapsBg === 1 ? "" : "s"} from <ground>/<par> notes.`);
   }
   if (opts.playable) {
     console.log(
@@ -631,4 +727,7 @@ function main() {
   console.log(`\nProject ready: ${path.resolve(out, "Game.rpgproject")}`);
 }
 
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

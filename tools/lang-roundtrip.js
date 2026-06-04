@@ -10,8 +10,10 @@
  * (a "LANGDATA"-headed JSON under a hashed data/ name).
  *
  *   BAKE   (extract-project): placeholders -> readable text inlined into the
- *          data, so the RPG Maker MV editor shows real words. (lines) segments
- *          are joined with "\n".
+ *          data, so the RPG Maker MV editor shows real words. A Show-Text line's
+ *          (lines) segments become one 401 command each (the editor's native
+ *          multi-line shape: a single 401 with an embedded "\n" shows only its
+ *          first line); elsewhere segments join with "\n".
  *   UNBAKE (play / pack / PlayInBrowser): the inverse. Readable text -> back to
  *          (label)/(lines) placeholders + CLD entries, so the live command101
  *          lays the dialogue out (speaker header, per-segment paging, VN wrap)
@@ -124,6 +126,83 @@ function deepBake(node, lut, acc) {
   }
   if (node && typeof node === "object") {
     for (const k in node) node[k] = deepBake(node[k], lut, acc);
+    return node;
+  }
+  return node;
+}
+
+// An array is a command list if it holds command objects {code, parameters}.
+function isCommandList(arr) {
+  return arr.some(
+    (e) =>
+      e &&
+      typeof e === "object" &&
+      typeof e.code === "number" &&
+      Array.isArray(e.parameters),
+  );
+}
+
+// Show-Text / Scrolling-Text line commands (the text body of a 101 / 105).
+const LINE_CODES = new Set([401, 405]);
+
+/** Bake one Show-Text line string into the editor's native shape: an ARRAY of
+ *  line strings (one per `linesLUT` segment). The remaster ships a multi-segment
+ *  line as a SINGLE 401 carrying `(lines)[K]` (the runtime re-expands it), but
+ *  RPG Maker MV represents each visual line as its OWN 401: so a single 401 with
+ *  an embedded "\n" shows only its first line in the editor. Splitting the
+ *  segments into separate 401s is the faithful MV shape (and `createUnbaker`
+ *  regroups consecutive 401s, so it round-trips). The trailing `(lines)[K]` is
+ *  the only multi-segment source; speaker/`(label)` codes in the prefix bake
+ *  normally and ride on the first line. */
+function bakeShowTextLine(s, lut, acc) {
+  const tokens = s.match(/\(lines\)\[[^\]]+\]/g) || [];
+  if (tokens.length !== 1) return [bakeText(s, lut, acc)]; // 0 or unusual: one line
+  const m = s.match(/\(lines\)\[([^\]]+)\]/);
+  const v = lut.linesLUT[m[1]];
+  if (v === undefined) return [bakeText(s, lut, acc)]; // unknown key: leave as-is
+  const bakedPrefix = bakeText(s.slice(0, m.index), lut, acc);
+  const bakedSuffix = bakeText(s.slice(m.index + m[0].length), lut, acc);
+  acc.n++;
+  const segs = (Array.isArray(v) ? v : [v]).map(String);
+  if (segs.length === 0) segs.push("");
+  segs[0] = bakedPrefix + segs[0];
+  segs[segs.length - 1] = segs[segs.length - 1] + bakedSuffix;
+  return segs;
+}
+
+/** Bake a command list in place: each Show-Text line (401/405) expands to one
+ *  command per segment; every other command is baked generically. */
+function bakeList(list, lut, acc) {
+  const out = [];
+  for (const cmd of list) {
+    if (cmd && LINE_CODES.has(cmd.code) && cmd.parameters) {
+      const lines = bakeShowTextLine(String(cmd.parameters[0] || ""), lut, acc);
+      for (const lineStr of lines) {
+        out.push({ code: cmd.code, indent: cmd.indent, parameters: [lineStr] });
+      }
+    } else {
+      bakeDoc(cmd, lut, acc); // e.g. 102 choice arrays, nested move-route lists
+      out.push(cmd);
+    }
+  }
+  list.length = 0;
+  for (const c of out) list.push(c);
+}
+
+/** Command-aware bake: like deepBake, but Show-Text lines split per segment so
+ *  the editor shows every line. Used by extract-project (--bake). */
+function bakeDoc(node, lut, acc) {
+  if (typeof node === "string") return bakeText(node, lut, acc);
+  if (Array.isArray(node)) {
+    if (isCommandList(node)) {
+      bakeList(node, lut, acc);
+      return node;
+    }
+    for (let i = 0; i < node.length; i++) node[i] = bakeDoc(node[i], lut, acc);
+    return node;
+  }
+  if (node && typeof node === "object") {
+    for (const k in node) node[k] = bakeDoc(node[k], lut, acc);
     return node;
   }
   return node;
@@ -320,17 +399,6 @@ function createUnbaker(cld) {
     for (const c of out) list.push(c);
   }
 
-  // An array is a command list if it holds command objects {code, parameters}.
-  function isCommandList(arr) {
-    return arr.some(
-      (e) =>
-        e &&
-        typeof e === "object" &&
-        typeof e.code === "number" &&
-        Array.isArray(e.parameters),
-    );
-  }
-
   function unbakeDoc(node) {
     if (Array.isArray(node)) {
       if (isCommandList(node)) processList(node);
@@ -354,6 +422,7 @@ module.exports = {
   linesValue,
   bakeText,
   deepBake,
+  bakeDoc,
   // unbake
   createUnbaker,
 };

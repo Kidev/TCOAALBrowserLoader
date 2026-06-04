@@ -25,6 +25,7 @@ const fs = require("fs");
 const path = require("path");
 const { hashPath, fileMask, walk } = require("./build-tomb-mod.js");
 const { loadCLD, createUnbaker, serializeCLD } = require("./lang-roundtrip.js");
+const { unbakeAssetNames } = require("./map-names.js");
 
 const ASSET_SIG = Buffer.from("TCOAAL");
 
@@ -159,30 +160,33 @@ function main() {
   let hashed = 0;
   let encd = 0;
 
-  // Un-bake: if the project was extracted with baked dialogue (--playable),
-  // restore the (label)/(lines) placeholders + CLD entries the shipped game's
-  // live command101 needs, so server.js renders the VN layout exactly. Unchanged
-  // dialogue is restored to its original CLD key (byte-faithful); edited / new
-  // dialogue mints a fresh key. Done in memory: the editable project is never
-  // touched. A no-bake project passes through unchanged.
+  // Un-bake the editor-readable transforms back to the shipped on-disk form so
+  // server.js / the SW serve the project exactly like the original game:
+  //   - asset references + map-note overlay tags: human names -> the original
+  //     hashes (map-names.js). Always applies: extract bakes these regardless
+  //     of --bake.
+  //   - dialogue: baked text -> (label)/(lines) placeholders + CLD keys the live
+  //     command101 needs (only when a baked CLD is present, i.e. --playable).
+  //     Unchanged text restores to its original key (byte-faithful); edited /
+  //     new text mints a fresh key.
+  // Done in memory: the editable project is never touched. A project with no
+  // baked names/dialogue passes through unchanged.
   const cldInfo = loadCLD(path.join(project, "data"));
   const cldRel = cldInfo ? "data/" + cldInfo.rel : null;
+  const ub = cldInfo ? createUnbaker(cldInfo.cld) : null;
+  const unbakeStats = ub ? ub.stats : null;
   const unbaked = new Map(); // rel -> plaintext Buffer (placeholders restored)
-  let unbakeStats = null;
-  if (cldInfo) {
-    const ub = createUnbaker(cldInfo.cld);
-    unbakeStats = ub.stats;
-    for (const rel of files) {
-      if (rel === cldRel || !/^data\/.+\.json$/i.test(rel)) continue;
-      let obj;
-      try {
-        obj = JSON.parse(fs.readFileSync(path.join(project, rel), "utf8"));
-      } catch (e) {
-        continue; // not JSON (e.g. Credits.txt-like): leave to verbatim read
-      }
-      ub.unbakeDoc(obj);
-      unbaked.set(rel, Buffer.from(JSON.stringify(obj)));
+  for (const rel of files) {
+    if (rel === cldRel || !/^data\/.+\.json$/i.test(rel)) continue;
+    let obj;
+    try {
+      obj = JSON.parse(fs.readFileSync(path.join(project, rel), "utf8"));
+    } catch (e) {
+      continue; // not JSON (e.g. Credits.txt-like): leave to verbatim read
     }
+    unbakeAssetNames(obj);
+    if (ub) ub.unbakeDoc(obj);
+    unbaked.set(rel, Buffer.from(JSON.stringify(obj)));
   }
 
   for (const rel of files) {
