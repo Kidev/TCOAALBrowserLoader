@@ -1216,4 +1216,83 @@
       }
     };
   }
+
+  // 10. Full-map pathfinding for click-to-move
+  //
+  // The stock Game_Character.findDirectionTo runs an A* search capped at
+  // searchLimit() == 12 nodes. When the route to the clicked tile bends around
+  // an obstacle (a U-shaped corridor, an L, a room behind a wall) the goal sits
+  // further than 12 steps of search away, so A* never reaches it: it returns
+  // the heuristically-closest node it found, which is the dead-end against the
+  // wall. The player walks straight into the wall and stops: and on the next
+  // tick that same corner is still the nearest reachable node, so it never gets
+  // around.
+  //
+  // We override the PLAYER's findDirectionTo with a breadth-first search over
+  // the whole reachable map (events keep the stock limited search, which is
+  // fine for their short "approach" moves). BFS from the player's tile honours
+  // one-way passability through canPass() and finds the genuine shortest route;
+  // we return the first step along it. moveByInput already calls
+  // findDirectionTo once per tile, so recomputing each step (exactly as the
+  // stock engine does) keeps the route correct when events shift mid-walk. A
+  // node cap guards against a pathologically large open map by falling back to
+  // the stock search.
+
+  if (typeof Game_Player !== "undefined") {
+    var PATH_NODE_LIMIT = 8000;
+
+    Game_Player.prototype.findDirectionTo = function (goalX, goalY) {
+      if (this.x === goalX && this.y === goalY) return 0;
+
+      var mapWidth = $gameMap.width();
+      var mapHeight = $gameMap.height();
+      var startPos = this.y * mapWidth + this.x;
+      var goalPos = goalY * mapWidth + goalX;
+
+      // First-step direction (2/4/6/8) recorded for every visited tile;
+      // 0 = start tile, -1 = unvisited. Doubles as the visited set.
+      var firstDir = new Int8Array(mapWidth * mapHeight).fill(-1);
+      firstDir[startPos] = 0;
+
+      var queue = [startPos];
+      var head = 0;
+      var visited = 1;
+
+      while (head < queue.length) {
+        var pos = queue[head++];
+        var x1 = pos % mapWidth;
+        var y1 = (pos - x1) / mapWidth;
+        var stepDir = firstDir[pos];
+
+        for (var j = 0; j < 4; j++) {
+          var direction = 2 + j * 2; // 2,4,6,8 = down,left,right,up
+          var x2 = $gameMap.roundXWithDirection(x1, direction);
+          var y2 = $gameMap.roundYWithDirection(y1, direction);
+          var pos2 = y2 * mapWidth + x2;
+          if (firstDir[pos2] !== -1) continue;
+          if (!this.canPass(x1, y1, direction)) continue;
+          // The first move out of the start tile fixes this branch's heading;
+          // every tile downstream inherits it.
+          var branchDir = pos === startPos ? direction : stepDir;
+          firstDir[pos2] = branchDir;
+          if (pos2 === goalPos) return branchDir;
+          queue.push(pos2);
+          if (++visited > PATH_NODE_LIMIT) {
+            // Unusually large reachable area: defer to the stock limited search
+            // rather than risk a long stall on this frame.
+            return Game_Character.prototype.findDirectionTo.call(
+              this,
+              goalX,
+              goalY,
+            );
+          }
+        }
+      }
+
+      // Goal unreachable (e.g. an impassable/blocked tile was clicked): fall
+      // back to the stock search so the player still steps toward the nearest
+      // approach instead of freezing.
+      return Game_Character.prototype.findDirectionTo.call(this, goalX, goalY);
+    };
+  }
 })();
