@@ -18,6 +18,10 @@
  *                            (one-way), but data references those same hashes,
  *                            so `<hash>.png` is fully functional.
  *   - languages (.loc)    -> NEMLEI CLD header stripped to plain JSON.
+ *   - map names           -> the remaster blanks MapInfos[].name; real names are
+ *                            recovered by matching each map's localization-code
+ *                            fingerprint against an older named build (see
+ *                            map-names.js), the rest fall back to MapNNN.
  *   - everything else      -> copied verbatim.
  *
  * A `Game.rpgproject` is emitted and `index.html` is patched to neutralize the
@@ -32,9 +36,12 @@
  *   node tools/extract-project.js --www .hide/current_game/www --out ./project
  *
  * Options:
- *   -w, --www <dir>    Game www folder (or a game folder containing www/).
- *   -o, --out <dir>    Output project folder (default: project).
- *   -f, --force        Overwrite the output folder if it already exists.
+ *   -w, --www <dir>     Game www folder (or a game folder containing www/).
+ *   -o, --out <dir>     Output project folder (default: project).
+ *   -f, --force         Overwrite the output folder if it already exists.
+ *   --names-from <dir>  Recover map names against this named-maps build instead
+ *                       of the bundled reference (tools/map-name-keys.json).
+ *   --no-map-names      Skip map-name recovery; blank maps become MapNNN.
  */
 
 "use strict";
@@ -49,6 +56,8 @@ const {
   walk,
   writeOut,
 } = require("./build-tomb-mod.js");
+const { loadMapNameRefs, resolveMapNames } = require("./map-names.js");
+const { loadCLD, lutsFromCLD, deepBake } = require("./lang-roundtrip.js");
 
 // canonical-name recovery
 
@@ -182,14 +191,74 @@ function fromK9A(rel) {
   return rel;
 }
 
+// localization baking
+//
+// The remaster stores dialogue as placeholders the runtime Lang layer resolves:
+//   (label)[KEY]  -> labelLUT[KEY]   (speaker / item names)
+//   (lines)[KEY]  -> linesLUT[KEY]   (the actual text lines)
+// Baking those into the data makes the project readable in the editor. With
+// --playable the bundled player un-bakes it back to placeholders at run time
+// (see lang-roundtrip.js), so a single extraction is both editor-readable and
+// faithful to the live VN engine. The maps live in the base CLD: a
+// "LANGDATA"-headed JSON shipped under a hashed data/ filename. The bake/CLD
+// helpers live in lang-roundtrip.js (shared with play / pack / PlayInBrowser).
+
+/** TCOAAL parallax-maps every map: the floor/background art is referenced from
+ *  the map note as `<ground:HASH>` (+ a `<par:HASH>` parallax layer), both images
+ *  under img/parallaxes/, drawn at runtime by the OrangeOverlay plugin. The
+ *  editor draws nothing for these (no tileset), so surface the ground image as
+ *  the native `parallaxName`: then the editor's map view shows the actual
+ *  background. The note is kept intact so the runtime overlay still works. */
+function setMapBackground(map) {
+  if (!map || typeof map.note !== "string" || !map.note) return false;
+  if (map.parallaxName) return false; // respect an existing parallax
+  const ground = (map.note.match(/<ground:([^>]+)>/) || [])[1];
+  const par = (map.note.match(/<par:([^>]+)>/) || [])[1];
+  const img = ground || par;
+  if (!img) return false;
+  map.parallaxName = img;
+  map.parallaxShow = true;
+  map.parallaxLoopX = false;
+  map.parallaxLoopY = false;
+  map.parallaxSx = 0;
+  map.parallaxSy = 0;
+  return true;
+}
+
+/** RPG Maker MV shows the map tree from MapInfos[].name; the remaster blanks
+ *  them. Recover the real name where a confident content match exists (see
+ *  map-names.js: placeholder-code overlap against an older named build), and
+ *  fall back to the canonical "MapNNN" for the rest so the editor isn't a list
+ *  of blank rows. `nameIndex` is Map<id, name> of the confident matches. */
+function fillMapNames(mapInfos, nameIndex) {
+  let recovered = 0;
+  let filled = 0;
+  for (const e of mapInfos) {
+    if (!e || (e.name && e.name !== "")) continue;
+    const real = nameIndex && nameIndex.get(e.id);
+    if (real) {
+      e.name = real;
+      recovered++;
+    } else {
+      e.name = "Map" + String(e.id).padStart(3, "0");
+      filled++;
+    }
+  }
+  return { recovered, filled };
+}
+
 // extraction
 
-function extract(www, out, nameMap) {
+function extract(www, out, nameMap, lut, mapNameIndex) {
   const files = walk(www);
 
   let renamed = 0;
   let extended = 0;
   let langs = 0;
+  let mapsNamed = 0;
+  let mapsRecovered = 0;
+  let mapsBg = 0;
+  const bakeAcc = { n: 0 };
 
   for (const rel of files) {
     const ext = path.extname(rel).toLowerCase();
@@ -205,7 +274,7 @@ function extract(www, out, nameMap) {
       writeOut(out, rel, JSON.stringify(parseLoc(raw), null, "\t"));
       langs++;
     } else {
-      const dec = dekit(raw, rel);
+      let dec = dekit(raw, rel);
 
       // Restore a canonical name for the well-known engine files, otherwise
       // recover the stripped extension from the content. Plain files (js, fonts,
@@ -224,11 +293,46 @@ function extract(www, out, nameMap) {
         }
       }
 
+      // Bake localization text into the data and give maps editor-visible
+      // names. Only canonical data JSON is touched; everything else is verbatim.
+      if (/^data\/.+\.json$/.test(outRel)) {
+        try {
+          const obj = JSON.parse(dec.toString("utf8"));
+          let changed = false;
+          if (lut) {
+            deepBake(obj, lut, bakeAcc);
+            changed = true;
+          }
+          if (outRel === "data/MapInfos.json") {
+            const r = fillMapNames(obj, mapNameIndex);
+            mapsRecovered = r.recovered;
+            mapsNamed = r.filled;
+            changed = true;
+          }
+          if (/^data\/Map\d+\.json$/.test(outRel) && setMapBackground(obj)) {
+            mapsBg++;
+            changed = true;
+          }
+          if (changed) dec = Buffer.from(JSON.stringify(obj));
+        } catch (e) {
+          /* not valid JSON (e.g. Credits.txt-like): leave verbatim */
+        }
+      }
+
       writeOut(out, outRel, dec);
     }
   }
 
-  return { total: files.length, renamed, extended, langs };
+  return {
+    total: files.length,
+    renamed,
+    extended,
+    langs,
+    baked: bakeAcc.n,
+    mapsNamed,
+    mapsRecovered,
+    mapsBg,
+  };
 }
 
 function generateRpgProject(out) {
@@ -258,13 +362,18 @@ function patchIndexHtml(out) {
 			const orig = window.onload;
 			window.onload = () => {
 				const readFile = Utils.readFile;
-				Utils.readFile = (arg) => {
-					if (Utils.ext(arg) === '.loc') {
+				Utils.readFile = function (filePath, encoding) {
+					if (Utils.ext(filePath) === '.loc') {
 						// Pad the response with empty data, which the game cuts off.
 						return ' '.repeat(Buffer.byteLength(SIGNATURE, 'utf8') + 4)
-							+ readFile(arg);
+							+ readFile(filePath, encoding);
 					}
-					return readFile(arg);
+					// Forward ALL arguments: the DRM's Lang.loadCLD calls
+					// Utils.readFile(path, null) and relies on the null encoding to
+					// get a Buffer (it checks Buffer.isBuffer). Dropping the second
+					// argument makes readFileSync fall back to its 'utf8' default and
+					// return a string, so the CLD load throws "not a valid format".
+					return readFile.apply(this, arguments);
 				};
 
 				if (typeof Crypto !== 'undefined') {
@@ -274,6 +383,32 @@ function patchIndexHtml(out) {
 					if (Crypto.hashMatchDRM) Crypto.hashMatchDRM = () => true;
 				}
 
+				// The data/asset loaders resolve paths through App.redirect(),
+				// which only returns the canonical path when the build reports it
+				// is NOT obfuscated; otherwise it consults an on-disk hash map that
+				// is empty here (files are decrypted under canonical/extension
+				// names), yielding an empty URL that fetches index.html and breaks
+				// JSON.parse. Declaring the build de-obfuscated makes redirect()
+				// pass paths through untouched.
+				if (typeof App !== 'undefined' && App.usesObfuscation) {
+					App.usesObfuscation = () => false;
+				}
+
+				// Lang.init (and other filesystem reads) resolve files against
+				// App.rootPath() = dirname(process.mainModule.filename), which does
+				// not point at the project when launched from the RPG Maker MV
+				// editor / a playtest host: so the base-language CLD isn't found
+				// and all dialogue labels go missing. nw.__dirname is the project
+				// folder (where index.html lives), so anchor rootPath there.
+				if (
+					typeof App !== 'undefined' &&
+					App.rootPath &&
+					typeof nw !== 'undefined' &&
+					nw.__dirname
+				) {
+					App.rootPath = () => nw.__dirname;
+				}
+
 				orig();
 			}
 		</script>
@@ -281,6 +416,60 @@ function patchIndexHtml(out) {
 
   const index = fs.readFileSync(indexPath, "utf8");
   fs.writeFileSync(indexPath, index.replace("</body>", `${script}\n</body>`));
+}
+
+function normalizePluginsJs(out) {
+  const pluginsPath = path.join(out, "js", "plugins.js");
+  if (!fs.existsSync(pluginsPath)) return;
+
+  // The remaster leaves a trailing comma before the closing bracket of the
+  // $plugins array. The game runtime parses it with eval() (which tolerates
+  // it), but the RPG Maker MV editor uses a strict JSON-style parser that
+  // rejects it and refuses to open the project ("Unable to read file
+  // plugins.js"). Strip just that trailing comma; the stock format has none.
+  const src = fs.readFileSync(pluginsPath, "utf8");
+  const fixed = src.replace(/,(\s*)\];(\s*)$/, "$1];$2");
+  if (fixed !== src) fs.writeFileSync(pluginsPath, fixed);
+}
+
+/**
+ * Bundle the BrowserPlayer launcher into the project (--playable): the browser
+ * shim (pako + browser-shim.js) under _play/, the PlayInBrowser plugin, and a
+ * registration in plugins.js. Lets the editor playtest hand off to true
+ * browser-mode rendering. See tools/playerbundle/PlayInBrowser.js.
+ */
+function installPlayer(out) {
+  const srcLib = path.join(__dirname, "..", "app", "js", "libs");
+  const dstPlay = path.join(out, "_play");
+  fs.mkdirSync(dstPlay, { recursive: true });
+  for (const f of ["browser-shim.js", "pako_inflate.min.js"]) {
+    fs.copyFileSync(path.join(srcLib, f), path.join(dstPlay, f));
+  }
+  // The un-baker, so the in-editor PlayInBrowser plugin can require it (NW.js)
+  // to restore dialogue placeholders + CLD entries before serving the game.
+  fs.copyFileSync(
+    path.join(__dirname, "lang-roundtrip.js"),
+    path.join(dstPlay, "lang-roundtrip.js"),
+  );
+
+  const pluginsDir = path.join(out, "js", "plugins");
+  fs.mkdirSync(pluginsDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(__dirname, "playerbundle", "PlayInBrowser.js"),
+    path.join(pluginsDir, "PlayInBrowser.js"),
+  );
+
+  // Register it in plugins.js (enabled), unless already present.
+  const pj = path.join(out, "js", "plugins.js");
+  if (fs.existsSync(pj)) {
+    let src = fs.readFileSync(pj, "utf8");
+    if (!/["']PlayInBrowser["']/.test(src)) {
+      const entry =
+        '{"name":"PlayInBrowser","status":true,"description":"","parameters":{}}';
+      src = src.replace(/\n\];(\s*)$/, ",\n" + entry + "\n];$1");
+      fs.writeFileSync(pj, src);
+    }
+  }
 }
 
 // fs helper
@@ -299,15 +488,37 @@ function rmrf(target) {
 // CLI
 
 function parseArgs(argv) {
-  const opts = { www: "www", out: "project", force: false };
+  const opts = {
+    www: "www",
+    out: "project",
+    force: false,
+    bake: true,
+    playable: false,
+    mapNames: true,
+    namesFrom: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--www" || a === "-w") opts.www = argv[++i];
     else if (a === "--out" || a === "-o") opts.out = argv[++i];
     else if (a === "--force" || a === "-f") opts.force = true;
+    else if (a === "--no-bake") opts.bake = false;
+    else if (a === "--playable") opts.playable = true;
+    else if (a === "--no-map-names") opts.mapNames = false;
+    else if (a === "--names-from") opts.namesFrom = argv[++i];
     else if (a === "--help" || a === "-h") {
       console.log(
-        "Usage: node tools/extract-project.js --www <gameWww> --out <projectDir> [--force]",
+        "Usage: node tools/extract-project.js --www <gameWww> --out <projectDir> [--force] [--no-bake] [--playable]\n" +
+          "  --no-bake          keep dialogue placeholders ((label)[..]/(lines)[..]) instead\n" +
+          "                     of baking the base-language text into the data.\n" +
+          "  --playable         bundle the BrowserPlayer launcher (F9 / title 'Play in\n" +
+          "                     Browser') so the editor playtest can hand off to correct\n" +
+          "                     browser-mode rendering. Bakes readable text for the editor\n" +
+          "                     and un-bakes it back to (label)/(lines) placeholders at\n" +
+          "                     run/pack time so the live VN engine renders correctly.\n" +
+          "  --names-from <dir> recover map names by matching against this named-maps game\n" +
+          "                     build instead of the bundled reference (tools/map-name-keys.json).\n" +
+          "  --no-map-names     skip map-name recovery; blank maps become MapNNN.",
       );
       process.exit(0);
     } else {
@@ -347,11 +558,46 @@ function main() {
   }
   fs.mkdirSync(out, { recursive: true });
 
+  // --playable bakes readable text into the editor AND runs the game's own
+  // localization layer (Lang) + VN text engine (command101) live in the browser.
+  // command101 resolves (label)/(lines) placeholders ITSELF and lays the dialogue
+  // out (speaker header + per-line word-wrap + paging) by feeding Lang.lines()'s
+  // segments as separate $gameMessage lines. A baked literal has no placeholder,
+  // so the live engine would collapse it onto one speaker-less line. The bundled
+  // player therefore *un-bakes* the data back to placeholders at run/pack time
+  // (lang-roundtrip.js): unchanged dialogue is restored to its original CLD key,
+  // edited / new dialogue gets a freshly minted key. So bake + --playable now
+  // coexist: editor shows real text, the game renders the true VN layout.
+  const cldInfo = opts.bake ? loadCLD(path.join(www, "data")) : null;
+  const lut = cldInfo ? lutsFromCLD(cldInfo.cld) : null;
+  if (opts.bake && !lut) {
+    console.warn("No base CLD found: dialogue placeholders left unbaked.");
+  }
+
+  // Map-name recovery: the remaster blanks MapInfos names, so match each map's
+  // localization-code fingerprint against an older named build (bundled
+  // reference, or a live one via --names-from) before the walk names MapInfos.
+  let mapNameIndex = null;
+  if (opts.mapNames) {
+    const refs = loadMapNameRefs(opts.namesFrom);
+    if (!refs) {
+      console.warn(
+        opts.namesFrom
+          ? `No named maps found in --names-from ${opts.namesFrom}: maps become MapNNN.`
+          : "No bundled map-name reference (tools/map-name-keys.json): maps become MapNNN.",
+      );
+    } else {
+      mapNameIndex = resolveMapNames(www, refs);
+    }
+  }
+
   console.time("extract");
-  const stats = extract(www, out, buildNameMap());
+  const stats = extract(www, out, buildNameMap(), lut, mapNameIndex);
   generateRpgProject(out);
   updatePackageJson(out);
   patchIndexHtml(out);
+  normalizePluginsJs(out);
+  if (opts.playable) installPlayer(out);
   console.timeEnd("extract");
 
   console.log(
@@ -363,6 +609,25 @@ function main() {
         : "") +
       ".",
   );
+  if (stats.baked) {
+    console.log(`Baked ${stats.baked} localized text placeholders into the data.`);
+  }
+  if (stats.mapsRecovered) {
+    console.log(
+      `Recovered ${stats.mapsRecovered} real map name${stats.mapsRecovered === 1 ? "" : "s"} by content match.`,
+    );
+  }
+  if (stats.mapsNamed) {
+    console.log(`Filled ${stats.mapsNamed} remaining blank map name${stats.mapsNamed === 1 ? "" : "s"} (MapNNN).`);
+  }
+  if (stats.mapsBg) {
+    console.log(`Set ${stats.mapsBg} map parallax background${stats.mapsBg === 1 ? "" : "s"} from <ground>/<par> notes.`);
+  }
+  if (opts.playable) {
+    console.log(
+      "Bundled the BrowserPlayer launcher (press F9 in playtest, or title 'Play in Browser').",
+    );
+  }
   console.log(`\nProject ready: ${path.resolve(out, "Game.rpgproject")}`);
 }
 
