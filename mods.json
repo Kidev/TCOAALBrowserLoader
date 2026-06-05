@@ -25,6 +25,20 @@
       "js/plugins/VirtualController.js"
     ]
   },
+  "_seamlessMaps": {
+    "name": "Seamless Maps",
+    "icon": "mods/_seamlessMaps/www/img/icon.png",
+    "path": "mods/_seamlessMaps",
+    "type": "built-in plugin",
+    "description": "Keeps the player centered and turns door transfers into a smooth pan into the next map",
+    "author": "kidev",
+    "version": "c86d750",
+    "requiresBaseGame": true,
+    "files": [
+      "img/icon.png",
+      "js/plugins/SeamlessMaps.js"
+    ]
+  },
   "_unlockAll": {
     "name": "Unlocker",
     "path": "mods/_unlockAll",
