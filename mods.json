@@ -33,7 +33,7 @@
     "description": "Keeps the player centered and turns door transfers into a smooth pan into the next map",
     "author": "kidev",
     "version": "c86d750",
-    "requiresBaseGame": true,
+    "requiresBaseGame": false,
     "files": [
       "img/icon.png",
       "js/plugins/SeamlessMaps.js"
