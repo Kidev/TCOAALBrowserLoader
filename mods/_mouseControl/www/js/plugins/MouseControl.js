@@ -720,6 +720,9 @@
   function isOnPlayerTile(canvasX, canvasY) {
     if (typeof $gamePlayer === "undefined" || typeof $gameMap === "undefined")
       return false;
+    // During a map transfer $dataMap is briefly null; canvasToMapX ->
+    // isLoopHorizontal reads $dataMap.scrollType and would throw.
+    if (typeof $dataMap === "undefined" || !$dataMap) return false;
     var mapX = $gameMap.canvasToMapX(canvasX);
     var mapY = $gameMap.canvasToMapY(canvasY);
     return mapX === $gamePlayer.x && mapY === $gamePlayer.y;
