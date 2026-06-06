@@ -433,7 +433,7 @@
 
       .panel-footer {
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
         align-items: stretch;
         gap: clamp(8px, 1vmin, 14px);
         margin-top: clamp(4px, 0.6vmin, 10px);
@@ -441,7 +441,8 @@
         border-top: 1px solid rgba(255, 255, 255, 0.08);
       }
       .panel-footer .action-btn {
-        width: 100%;
+        flex: 1 1 50%;
+        min-width: 0;
       }
 
       /* Hidden file input */
@@ -486,6 +487,36 @@
 
       .action-btn.secondary:hover:not(:disabled) {
         background: var(--bg-color-section-lighter);
+      }
+
+      /* PWA install step inside the info panel: a distinct, recommended
+         first block, separated from the import instructions by a divider so
+         the user reads it as "do this first, then import below". */
+      .install-step {
+        display: flex;
+        flex-direction: column;
+        gap: clamp(8px, 1.2vmin, 14px);
+        padding-bottom: clamp(10px, 1.4vmin, 18px);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .install-step[hidden] {
+        display: none;
+      }
+      .install-step .action-btn {
+        width: 100%;
+      }
+
+      /* Small accent label that marks each step of the path. */
+      .step-label {
+        font-family: "Georgia", serif;
+        font-size: clamp(11px, 1.1vmin, 13px);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--purple);
+        margin: 0;
+      }
+      .step-label[hidden] {
+        display: none;
       }
 
       .progress-wrap {
@@ -1049,6 +1080,34 @@
 
         <div class="panel info-panel" id="info-fresh">
           <h2 class="panel-title">Play TCOAAL in browser (desktop/mobile)</h2>
+
+          <!--
+            PWA install step. Shown only when the browser offers an install
+            prompt (beforeinstallprompt fired and the app isn't installed).
+            Presented as the recommended FIRST action: installing grants
+            durable storage so the game files imported below aren't cleared
+            under storage pressure. Hidden gracefully elsewhere (iOS, desktop,
+            already installed) so the import flow reads normally.
+          -->
+          <div class="install-step" id="install-step" hidden>
+            <!--<p class="step-label">Step 1: Install app (optional)</p>-->
+            <p class="info">Install TCOAAL as browser app (no download required, optional)</p>
+            <p class="info-aside">
+              You get a home-screen icon, offline play, and your browser won't
+              clear the game you import below when storage runs low.
+            </p>
+            <button
+              class="action-btn secondary"
+              id="btn-install"
+              onclick="promptInstall()"
+            >
+              Install
+            </button>
+          </div>
+
+          <p class="step-label" id="import-step-label" hidden>
+            Import your game
+          </p>
           <p class="info">
             You need to own the game
             <b
@@ -1079,7 +1138,7 @@
               Import Folder
             </button>
             <button
-              class="action-btn secondary"
+              class="action-btn"
               id="btn-load-zip"
               onclick="loadGameZip()"
             >
@@ -1431,6 +1490,55 @@
         });
       }
 
+      // Ask the browser to mark this origin's storage as persistent. By
+      // default IndexedDB is "best-effort": under storage pressure (common on
+      // budget Android phones) Chrome evicts it, which wipes the imported game
+      // and bounces the user back to this loader. persist() exempts us from
+      // automatic eviction (granted for installed PWAs / high-engagement
+      // sites). Best-effort and non-fatal: log the outcome, never throw.
+      async function requestPersistentStorage() {
+        try {
+          if (!navigator.storage || !navigator.storage.persist) return false;
+          if (await navigator.storage.persisted()) return true;
+          const granted = await navigator.storage.persist();
+          /*console.log(
+            "[loader] persistent storage " +
+              (granted ? "granted" : "denied (best-effort, may be evicted)"),
+          );*/
+          return granted;
+        } catch (e) {
+          console.warn("[loader] persist() failed:", e);
+          return false;
+        }
+      }
+
+      // QuotaExceededError can surface as a DOMException (name) or, on some
+      // engines, a plain error whose message mentions the quota. Match both.
+      function isQuotaExceeded(err) {
+        if (!err) return false;
+        if (err.name === "QuotaExceededError") return true;
+        if (
+          typeof DOMException !== "undefined" &&
+          err.code === DOMException.QUOTA_EXCEEDED_ERR
+        )
+          return true;
+        return /quota/i.test(err.message || "");
+      }
+
+      // Human-readable "X MB used of Y MB" from the Storage estimate, for
+      // surfacing in the out-of-space error. Returns "" if unavailable.
+      async function storageEstimateText() {
+        try {
+          if (!navigator.storage || !navigator.storage.estimate) return "";
+          const { usage, quota } = await navigator.storage.estimate();
+          if (typeof quota !== "number") return "";
+          const mb = (n) => (n / (1024 * 1024)).toFixed(0);
+          return mb(usage || 0) + " MB used of " + mb(quota) + " MB available";
+        } catch (e) {
+          return "";
+        }
+      }
+
       /** Returns true if the store contains at least one entry. */
       function hasAnyAsset(db) {
         return new Promise((resolve) => {
@@ -1492,6 +1600,11 @@
           setImportButtonsDisabled(false);
           return false;
         }
+
+        // Mark storage as persistent before writing hundreds of MB, so the
+        // browser doesn't evict the import later under storage pressure.
+        await requestPersistentStorage();
+
         setStatus(`Loading 0 / ${total} files...`);
         setProgress(0, total);
 
@@ -1521,6 +1634,25 @@
             const buffer = await readWithRetry(getBuffer, 3);
             await putAsset(db, filePath, buffer);
           } catch (err) {
+            // Out of storage: every remaining write would fail too, leaving a
+            // half-imported game that boots broken. Abort now with a clear
+            // message rather than skipping hundreds of files silently.
+            if (isQuotaExceeded(err)) {
+              const est = await storageEstimateText();
+              showError(
+                "Not enough storage space",
+                "Your browser ran out of room while importing the game " +
+                  "(" +
+                  done +
+                  " / " +
+                  total +
+                  " files stored). Free up space on your device: clear " +
+                  "other site data or apps: and import again.",
+                "QuotaExceededError" + (est ? "\n" + est : ""),
+              );
+              setImportButtonsDisabled(false);
+              return false;
+            }
             skipped.push(filePath);
             console.warn("[loader] Skipping", filePath, err);
           }
@@ -2718,6 +2850,48 @@
       // landed here on purpose (manage their install) or got redirected
       // from index.html (no IDB, fresh visit). index.html handles the
       // fresh-visit redirect to here.
+
+      // PWA install prompt. Installing as a PWA is what grants durable,
+      // non-evictable storage (especially on Android), so the imported game
+      // survives storage pressure instead of being cleared and bouncing the
+      // user back here. We capture the browser's deferred prompt and surface
+      // an in-app "Install app" button. The event only fires when the browser
+      // deems the site installable and it isn't already installed; iOS Safari
+      // never fires it (there users install via Share -> Add to Home Screen),
+      // so the banner simply stays hidden.
+      var _deferredInstallPrompt = null;
+      // Show/hide the install step and the "Step 1 / Step 2" numbering as a
+      // unit: the numbered path only makes sense when the install step is
+      // actually present (otherwise import is the lone, unnumbered action).
+      function setInstallStepVisible(visible) {
+        var step = document.getElementById("install-step");
+        var importLabel = document.getElementById("import-step-label");
+        if (step) step.hidden = !visible;
+        if (importLabel) importLabel.hidden = !visible;
+      }
+      window.addEventListener("beforeinstallprompt", function (e) {
+        e.preventDefault();
+        _deferredInstallPrompt = e;
+        setInstallStepVisible(true);
+      });
+      window.addEventListener("appinstalled", function () {
+        _deferredInstallPrompt = null;
+        setInstallStepVisible(false);
+      });
+      async function promptInstall() {
+        if (!_deferredInstallPrompt) {
+          setInstallStepVisible(false);
+          return;
+        }
+        _deferredInstallPrompt.prompt();
+        try {
+          await _deferredInstallPrompt.userChoice;
+        } catch (e) {}
+        // The prompt can only be used once; drop it and hide the step
+        // (appinstalled will also hide it on success).
+        _deferredInstallPrompt = null;
+        setInstallStepVisible(false);
+      }
 
       // Best-effort OS guess for the install-path hint in the info panel.
       // We pick the dominant desktop Steam layout per platform and hide

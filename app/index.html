@@ -1390,6 +1390,23 @@
         // Boot sequence
         setPhase("init", "Initializing...");
 
+        // Defensively re-assert persistent storage on every boot. The loader
+        // requests it at import time, but installs imported before that change
+        // (or where the first request was denied and engagement has since
+        // risen) get upgraded here so the game files aren't evicted under
+        // storage pressure. Fire-and-forget: never gates boot.
+        try {
+          if (navigator.storage && navigator.storage.persist) {
+            navigator.storage
+              .persisted()
+              .then(function (already) {
+                if (!already) return navigator.storage.persist();
+                return true;
+              })
+              .catch(function () {});
+          }
+        } catch (e) {}
+
         ensureSW()
           .then(function () {
             setPhase("check-files", "Checking game files...");

@@ -64,6 +64,9 @@ const APP_SHELL = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/favicon16.ico",
+  "/img/icon-192.png",
+  "/img/icon-512.png",
+  "/img/icon-maskable-512.png",
   "/img/bg.webp",
   "/img/mods.png",
   "/img/achievements.png",
@@ -1396,6 +1399,9 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "expected-files.json" ||
     logicalPath === "favicon.ico" ||
     logicalPath === "favicon16.ico" ||
+    logicalPath === "img/icon-192.png" ||
+    logicalPath === "img/icon-512.png" ||
+    logicalPath === "img/icon-maskable-512.png" ||
     logicalPath === "img/mods.png" ||
     logicalPath === "img/bg.webp" ||
     logicalPath === "img/achievements.png" ||

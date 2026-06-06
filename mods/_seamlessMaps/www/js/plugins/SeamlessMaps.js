@@ -95,10 +95,13 @@
 
   // Set true to log cross-boundary detection/resume to the console (temporary
   // diagnostics while tuning the click-to-move-across-maps behaviour).
-  var DEBUG = true;
+  var DEBUG = false;
   function dbg() {
     if (DEBUG && typeof console !== "undefined") {
-      console.log.apply(console, ["[SeamlessMaps]"].concat([].slice.call(arguments)));
+      console.log.apply(
+        console,
+        ["[SeamlessMaps]"].concat([].slice.call(arguments)),
+      );
     }
   }
 
@@ -172,8 +175,10 @@
   // a Fadeout Screen and the Transfer it wraps, the fade is cinematic and is
   // left alone; otherwise the door is "plain" and gets the seamless treatment.
   var HEAVY_CMDS = {};
-  [203, 204, 205, 212, 213, 223, 224, 225, 231, 232, 233, 234, 235, 236, 282,
-    283, 284, 285, 505].forEach(function (c) {
+  [
+    203, 204, 205, 212, 213, 223, 224, 225, 231, 232, 233, 234, 235, 236, 282,
+    283, 284, 285, 505,
+  ].forEach(function (c) {
     HEAVY_CMDS[c] = true;
   });
 
@@ -216,7 +221,10 @@
     // dead wait so the player isn't frozen for a beat after arriving.
     var _command222 = Game_Interpreter.prototype.command222;
     Game_Interpreter.prototype.command222 = function () {
-      if (typeof $gameScreen !== "undefined" && $gameScreen.brightness() >= 255) {
+      if (
+        typeof $gameScreen !== "undefined" &&
+        $gameScreen.brightness() >= 255
+      ) {
         return true;
       }
       return _command222.call(this);
@@ -266,17 +274,21 @@
 
     // Looping maps and active scripted scrolls keep the stock behaviour: a
     // Scroll Map cutscene owns the camera while it runs.
-    if (
-      map.isLoopHorizontal() ||
-      map.isLoopVertical() ||
-      map.isScrolling()
-    ) {
+    if (map.isLoopHorizontal() || map.isLoopVertical() || map.isScrolling()) {
       this._smRecover = RECOVER_FRAMES;
       return _Game_Player_updateScroll.call(this, lastScrolledX, lastScrolledY);
     }
 
-    var tx = softTarget(this._realX - this.centerX(), map.width(), map.screenTileX());
-    var ty = softTarget(this._realY - this.centerY(), map.height(), map.screenTileY());
+    var tx = softTarget(
+      this._realX - this.centerX(),
+      map.width(),
+      map.screenTileX(),
+    );
+    var ty = softTarget(
+      this._realY - this.centerY(),
+      map.height(),
+      map.screenTileY(),
+    );
 
     // After a scripted scroll releases, glide back to the player instead of
     // teleporting the camera.
@@ -365,9 +377,10 @@
         "transfer: pendingCross",
         SM.pendingCross,
         "newMap",
-        $gamePlayer._newMapId
+        $gamePlayer._newMapId,
       );
-      if (SM.pendingCross.mapId !== $gamePlayer._newMapId) SM.pendingCross = null;
+      if (SM.pendingCross.mapId !== $gamePlayer._newMapId)
+        SM.pendingCross = null;
     }
 
     // Self-walked seam transfer: the player stepped through a door under their
@@ -488,12 +501,12 @@
       var targetX = softTarget(
         $gamePlayer._realX - $gamePlayer.centerX(),
         map.width(),
-        map.screenTileX()
+        map.screenTileX(),
       );
       var targetY = softTarget(
         $gamePlayer._realY - $gamePlayer.centerY(),
         map.height(),
-        map.screenTileY()
+        map.screenTileY(),
       );
       var displayX0 = $gamePlayer._realX - SM.seamScreenX;
       var displayY0 = $gamePlayer._realY - SM.seamScreenY;
@@ -519,7 +532,10 @@
         // player. The snapshot scrolls to stay world-pinned. The spriteset's
         // opaque black backdrop is dropped so the old room shows through the
         // seam void instead of a black band.
-        this.addChildAt(this._smSnapSprite, this.children.indexOf(this._spriteset));
+        this.addChildAt(
+          this._smSnapSprite,
+          this.children.indexOf(this._spriteset),
+        );
         if (this._spriteset) {
           this._spriteset.opacity = 0;
           if (this._spriteset._blackScreen) {
@@ -533,7 +549,7 @@
         // next-room region never blinks).
         this.addChildAt(
           this._smSnapSprite,
-          this.children.indexOf(this._spriteset) + 1
+          this.children.indexOf(this._spriteset) + 1,
         );
       }
 
@@ -626,7 +642,12 @@
       var gp = this._smPlayerSprite;
       gp.bitmap = rp.bitmap; // no-op when unchanged (Sprite setter guards)
       if (rp._frame) {
-        gp.setFrame(rp._frame.x, rp._frame.y, rp._frame.width, rp._frame.height);
+        gp.setFrame(
+          rp._frame.x,
+          rp._frame.y,
+          rp._frame.width,
+          rp._frame.height,
+        );
       }
       var liveX = $gamePlayer.screenX();
       var liveY = $gamePlayer.screenY();
@@ -702,13 +723,17 @@
       "inBounds",
       inBounds,
       "previews",
-      this._neighborSprites ? Object.keys(this._neighborSprites).join("|") : "-",
+      this._neighborSprites
+        ? Object.keys(this._neighborSprites).join("|")
+        : "-",
       "cross",
       t ? t.mapId + "@" + t.tx + "," + t.ty : null,
       "room",
-      rb ? rb.w + "x" + rb.h : "null(arr " + $gameMap.width() + "x" + $gameMap.height() + ")",
+      rb
+        ? rb.w + "x" + rb.h
+        : "null(arr " + $gameMap.width() + "x" + $gameMap.height() + ")",
       "roomDiag",
-      this._roomBoundsDiag
+      this._roomBoundsDiag,
     );
     if (!this.isActive()) return;
     if (typeof $gameMessage !== "undefined" && $gameMessage.isBusy()) return;
@@ -740,7 +765,7 @@
         door.mapId,
         door.bx + "," + door.by,
         "-> resume",
-        t.tx + "," + t.ty
+        t.tx + "," + t.ty,
       );
     } else {
       // Scenario 3: not on the changing block. The engine just set the walk
@@ -755,7 +780,7 @@
         "walk-to-door cross: dest",
         door.ev.x + "," + door.ev.y,
         "-> resume",
-        t.tx + "," + t.ty
+        t.tx + "," + t.ty,
       );
     }
   };
@@ -772,7 +797,7 @@
       door.bx,
       door.by,
       door.dir || 0,
-      door.fadeType || 0
+      door.fadeType || 0,
     );
   };
 
@@ -868,9 +893,7 @@
 
   function ooParam() {
     return (
-      (window.Hudell &&
-        Hudell.OrangeOverlay &&
-        Hudell.OrangeOverlay.Param) ||
+      (window.Hudell && Hudell.OrangeOverlay && Hudell.OrangeOverlay.Param) ||
       null
     );
   }
@@ -901,7 +924,9 @@
     var mg = /<ground(?::([^>]*))?>/i.exec(note);
     if (mg) {
       res.ground =
-        mg[1] && mg[1].trim() ? mg[1].trim() : defaultOverlayName("ground", mapId);
+        mg[1] && mg[1].trim()
+          ? mg[1].trim()
+          : defaultOverlayName("ground", mapId);
     }
     var mp = /<par(?::([^>]*))?>/i.exec(note);
     if (mp) {
@@ -922,15 +947,23 @@
   function eventMeetsConditions(page, mapId, eventId) {
     var c = page && page.conditions;
     if (!c) return true;
-    if (c.switch1Valid &&
-        (typeof $gameSwitches === "undefined" || !$gameSwitches.value(c.switch1Id)))
+    if (
+      c.switch1Valid &&
+      (typeof $gameSwitches === "undefined" ||
+        !$gameSwitches.value(c.switch1Id))
+    )
       return false;
-    if (c.switch2Valid &&
-        (typeof $gameSwitches === "undefined" || !$gameSwitches.value(c.switch2Id)))
+    if (
+      c.switch2Valid &&
+      (typeof $gameSwitches === "undefined" ||
+        !$gameSwitches.value(c.switch2Id))
+    )
       return false;
-    if (c.variableValid &&
-        (typeof $gameVariables === "undefined" ||
-          $gameVariables.value(c.variableId) < c.variableValue))
+    if (
+      c.variableValid &&
+      (typeof $gameVariables === "undefined" ||
+        $gameVariables.value(c.variableId) < c.variableValue)
+    )
       return false;
     if (c.selfSwitchValid) {
       if (typeof $gameSelfSwitches === "undefined") return false;
@@ -938,12 +971,18 @@
         return false;
     }
     if (c.itemValid) {
-      if (typeof $gameParty === "undefined" || typeof $dataItems === "undefined")
+      if (
+        typeof $gameParty === "undefined" ||
+        typeof $dataItems === "undefined"
+      )
         return false;
       if (!$gameParty.hasItem($dataItems[c.itemId])) return false;
     }
     if (c.actorValid) {
-      if (typeof $gameParty === "undefined" || typeof $gameActors === "undefined")
+      if (
+        typeof $gameParty === "undefined" ||
+        typeof $gameActors === "undefined"
+      )
         return false;
       if ($gameParty.members().indexOf($gameActors.actor(c.actorId)) < 0)
         return false;
@@ -1006,7 +1045,14 @@
     xhr.open("GET", mapDataPath(mapId)); // SW / server.js decrypts transparently
     xhr.overrideMimeType("application/json");
     xhr.onload = function () {
-      var entry = { ground: null, par: null, w: 0, h: 0, tilesetId: 0, events: [] };
+      var entry = {
+        ground: null,
+        par: null,
+        w: 0,
+        h: 0,
+        tilesetId: 0,
+        events: [],
+      };
       try {
         var data = JSON.parse(xhr.responseText);
         // Map array dimensions: used to decide whether a void click lands on a
@@ -1015,7 +1061,8 @@
         entry.h = data.height || 0;
         entry.tilesetId = data.tilesetId || 0;
         var names = parseOverlayNames(data.note, mapId);
-        if (names.ground) entry.ground = loadOverlayBitmap("grounds", names.ground);
+        if (names.ground)
+          entry.ground = loadOverlayBitmap("grounds", names.ground);
         if (names.par) entry.par = loadOverlayBitmap("pars", names.par);
         // The room's events (NPCs, item sprites, props) so the preview shows the
         // real contents of the next room, not just its empty floor.
@@ -1118,12 +1165,14 @@
     this._neighborSprites[mapId] = slot;
     loadNeighbor(mapId, function (entry) {
       // The scene may have been torn down or the slot recycled meanwhile.
-      if (!scene._neighborSprites || scene._neighborSprites[mapId] !== slot) return;
+      if (!scene._neighborSprites || scene._neighborSprites[mapId] !== slot)
+        return;
       var container = scene._spriteset && scene._spriteset._tilemap;
       if (!container) return;
       // Ground + events + par merged into one bitmap, faded as a single sprite.
       buildCompositePreview(entry, function (bmp) {
-        if (!scene._neighborSprites || scene._neighborSprites[mapId] !== slot) return;
+        if (!scene._neighborSprites || scene._neighborSprites[mapId] !== slot)
+          return;
         if (!bmp) return;
         var sp = new Sprite(bmp);
         sp.z = -20; // behind the current map's ground (z = 1) and tiles
@@ -1417,11 +1466,13 @@
   // Memoized per map id; null until at least one parallax bitmap has loaded.
   Scene_Map.prototype.roomLayers = function () {
     var mapId = $gameMap.mapId();
-    if (this._roomLayersId === mapId && this._roomLayers) return this._roomLayers;
+    if (this._roomLayersId === mapId && this._roomLayers)
+      return this._roomLayers;
     var layers = null;
     var diag = { names: null, g: null, p: null };
     try {
-      var note = typeof $dataMap !== "undefined" && $dataMap ? $dataMap.note : "";
+      var note =
+        typeof $dataMap !== "undefined" && $dataMap ? $dataMap.note : "";
       var names = parseOverlayNames(note, mapId);
       diag.names = names;
       var g = names.ground ? loadOverlayBitmap("grounds", names.ground) : null;
@@ -1469,9 +1520,7 @@
   Scene_Map.prototype.isRoomOpaqueAt = function (x, y) {
     var L = this.roomLayers();
     if (!L) {
-      return (
-        x >= 0 && x < $gameMap.width() && y >= 0 && y < $gameMap.height()
-      );
+      return x >= 0 && x < $gameMap.width() && y >= 0 && y < $gameMap.height();
     }
     var tw = $gameMap.tileWidth();
     var th = $gameMap.tileHeight();
@@ -1507,7 +1556,8 @@
       neighborSamplers[mapId] = null; // no ground art -> permanent "unknown"
       return null;
     }
-    if (!bmp.width || !bmp.height || (bmp.isReady && !bmp.isReady())) return null; // decoding
+    if (!bmp.width || !bmp.height || (bmp.isReady && !bmp.isReady()))
+      return null; // decoding
     var s = alphaSamplerFor(bmp);
     neighborSamplers[mapId] = s || null;
     return neighborSamplers[mapId];
@@ -1569,7 +1619,8 @@
       if (!cur) {
         doorByMap[pt.mapId] = pt;
       } else if (!(this._neighborSprites && this._neighborSprites[pt.mapId])) {
-        var dCur = (cur.ev.x - x) * (cur.ev.x - x) + (cur.ev.y - y) * (cur.ev.y - y);
+        var dCur =
+          (cur.ev.x - x) * (cur.ev.x - x) + (cur.ev.y - y) * (cur.ev.y - y);
         var dPt = (pt.ev.x - x) * (pt.ev.x - x) + (pt.ev.y - y) * (pt.ev.y - y);
         if (dPt < dCur) doorByMap[pt.mapId] = pt;
       }
@@ -1622,5 +1673,4 @@
     }
     return bestOpaque || bestFallback;
   };
-
 })();
