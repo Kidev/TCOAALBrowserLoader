@@ -14,48 +14,39 @@ Recover an editable RPG Maker MV project from a shipped game, edit it, then pack
 
 ```bash
 # Extract an editable project (baked dialogue + recovered names + map backgrounds)
-node tools/extract-project.js --www .hide/current_game/www --out ./project
+node tools/extract-project.js --www <wwwGameDir> --out <projectDir>
 
 # Run the extracted project in true browser mode straight from the shell
-node tools/play.js ./project
+node tools/play.js <projectDir>
 
 # Pack the edited project back into a shipped TCOAAL www/
-node tools/pack-project.js --project ./project --out ./www
+node tools/pack-project.js --project <projectDir> --out <wwwModedGameDir>
 
-# Then play it offline
-node server.js ./www
+# Then play it offline after importing <wwwModedGameDir> in browser
+node server.js 
 ```
-
-Add `--playable` to `extract-project.js` for an in-editor "Play in Browser" (F9) build,
-or `--no-bake` to keep raw localization placeholders for an editor-only project.
 
 ### Building mods
 
 ```bash
 # Flatten a Tomb-format overhaul into a self-contained, importable www/
-node tools/build-tomb-mod.js --diff <modDir> --base old_game --out <outDir>
+node tools/build-tomb-mod.js --diff <modDir> --base <v2_0_14_gameDir> --out <outDir>
 
-# Package a Tomb translation for translations.tcoaal.app
-node tools/build-tomb-translation.js --translation <transDir> --out <outDir>
-
-# Refresh mods.json (versions, file lists, remote translations/extras)
-node tools/generate-manifests.js
-
-# Prune mod files that are byte-identical to the base game (--dry-run to preview)
-node tools/dedup-mods.js
+# Prune a mod's files that are byte-identical to the base game (--dry-run to preview)
+node tools/dedup-mods.js <modFolder>
 ```
 
 ### Inspection
 
 ```bash
 # Decrypt a single logical file from any game version
-node tools/decode.js <gameDir> data/System.json
+node tools/decode.js <gameDir> <filePath>
 
 # Dump the MapInfos id->name table
 node tools/decode.js <gameDir> --names
 
 # Extract a CLD into the translator layout (img/, font/, dialogue.csv)
-node tools/extract-cld.js <input.cld> [outDir]
+node tools/extract-cld.js <input.cld> <outDir>
 ```
 
 ## Credits

@@ -2,9 +2,9 @@
 /**
  * dedup-mods.js
  *
- * Scans each non-built-in mod folder (i.e. folders not starting with '_' and
- * not named 'base-game') in mods/ and removes files that are byte-identical
- * to the base game.
+ * Scans a single mod folder (passed as a required argument: either the
+ * mod's top-level folder containing www/, or the www/ folder itself) and
+ * removes files that are byte-identical to the base game.
  *
  * Handles the filename mismatch between old mods and the current base game:
  * mods use unhashed filenames (e.g. img/parallaxes/ground4.png) while the
@@ -25,9 +25,12 @@
  * hashed+encrypted file and decrypts it on the fly.
  *
  * Usage:
- *   node tools/dedup-mods.js              # scan all mods, report + delete
- *   node tools/dedup-mods.js --dry-run    # report only, don't delete anything
- *   node tools/dedup-mods.js TCOAAR       # scan only the TCOAAR mod
+ *   node tools/dedup-mods.js <modFolder>             # scan + delete
+ *   node tools/dedup-mods.js <modFolder>/www         # www/ folder also works
+ *   node tools/dedup-mods.js <modFolder> --dry-run   # report only, don't delete
+ *
+ * <modFolder> is required. If the folder has a matching entry in mods.json
+ * (by path), its files array is updated to drop the removed files.
  */
 
 "use strict";
@@ -43,7 +46,7 @@ const BASE_GAME_DIR = path.join(MODS_DIR, "base-game");
 const MODS_JSON = path.join(ROOT, "mods.json");
 
 const DRY_RUN = process.argv.includes("--dry-run");
-const FILTER_MODS = process.argv.slice(2).filter((a) => a !== "--dry-run");
+const POSITIONAL = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 
 // TCOAAL magic header
 const ASSET_SIG = Buffer.from("TCOAAL", "ascii");
@@ -193,164 +196,180 @@ function readBaseFile(relPath) {
 
 // Main
 
-function main() {
-  // Read mods.json
-  let modsData;
+/**
+ * Resolve the argument folder to the mod's www/ directory. The argument may
+ * be the mod's top-level folder (containing a www/ subdirectory) or the www/
+ * folder itself. Returns an absolute path, or null if no usable folder.
+ */
+function resolveWwwDir(arg) {
+  const abs = path.resolve(arg);
+  let stat;
   try {
-    modsData = JSON.parse(fs.readFileSync(MODS_JSON, "utf8"));
-  } catch (e) {
-    console.error("Cannot read mods.json:", e.message);
+    stat = fs.statSync(abs);
+  } catch {
+    return null;
+  }
+  if (!stat.isDirectory()) return null;
+
+  // If it contains a www/ subdirectory, treat the argument as the top folder.
+  const nested = path.join(abs, "www");
+  try {
+    if (fs.statSync(nested).isDirectory()) return nested;
+  } catch {
+    /* no nested www/: fall through */
+  }
+  // Otherwise the argument is itself the www/ folder.
+  return abs;
+}
+
+/**
+ * Find the mods.json entry (id + entry) whose `path` resolves to the same
+ * top-level folder as `wwwDir` (i.e. <path>/www === wwwDir). Returns null
+ * when no entry matches, so an arbitrary folder still dedups without touching
+ * mods.json.
+ */
+function findModEntry(modsData, wwwDir) {
+  for (const id of Object.keys(modsData)) {
+    const entry = modsData[id];
+    const modPath = entry.path || "mods/" + id;
+    const entryWww = path.resolve(ROOT, modPath, "www");
+    if (entryWww === wwwDir) return { id, entry };
+  }
+  return null;
+}
+
+function main() {
+  if (POSITIONAL.length === 0) {
+    console.error(
+      "Error: a mod folder is required (the top folder or its www/).\n" +
+        "Usage: node tools/dedup-mods.js <modFolder> [--dry-run]",
+    );
+    process.exit(1);
+  }
+  if (POSITIONAL.length > 1) {
+    console.error("Error: expected a single mod folder, got: " + POSITIONAL.join(", "));
     process.exit(1);
   }
 
-  // Determine which mods to scan
-  const modIds = Object.keys(modsData).filter((id) => {
-    if (id.startsWith("_")) return false;
-    if (id === "base-game") return false;
-    if (FILTER_MODS.length > 0 && !FILTER_MODS.includes(id)) return false;
-    return true;
-  });
-
-  if (modIds.length === 0) {
-    console.log("No mods to scan.");
-    return;
+  const wwwDir = resolveWwwDir(POSITIONAL[0]);
+  if (wwwDir === null) {
+    console.error("Error: not a directory: " + POSITIONAL[0]);
+    process.exit(1);
   }
 
+  // Optional mods.json entry to keep in sync (only if the folder is a known mod).
+  let modsData = null;
+  let modEntry = null;
+  try {
+    modsData = JSON.parse(fs.readFileSync(MODS_JSON, "utf8"));
+    modEntry = findModEntry(modsData, wwwDir);
+  } catch {
+    /* mods.json absent/unreadable: dedup the folder anyway */
+  }
+
+  const label = modEntry ? modEntry.id : path.relative(ROOT, wwwDir) || wwwDir;
   console.log(
-    (DRY_RUN ? "[DRY RUN] " : "") +
-      "Scanning " +
-      modIds.length +
-      " mod(s): " +
-      modIds.join(", "),
+    (DRY_RUN ? "[DRY RUN] " : "") + "Scanning " + label + " (" + wwwDir + ")",
   );
   console.log();
 
-  let totalRemoved = 0;
-  let totalKept = 0;
-  let totalSkipped = 0;
+  const files = walkDir(wwwDir, "");
+  let removed = 0;
+  let kept = 0;
+  let skipped = 0;
+  const removedFiles = [];
 
-  for (const modId of modIds) {
-    const entry = modsData[modId];
-    const modPath = entry.path || "mods/" + modId;
-    const wwwDir = path.join(ROOT, modPath, "www");
-
-    if (!fs.existsSync(wwwDir)) {
-      console.log("[skip] " + modId + ": no www/ directory");
+  for (const relPath of files) {
+    const modFilePath = path.join(wwwDir, relPath);
+    let modBuf;
+    try {
+      modBuf = fs.readFileSync(modFilePath);
+    } catch {
+      skipped++;
       continue;
     }
 
-    const files = walkDir(wwwDir, "");
-    let removed = 0;
-    let kept = 0;
-    let skipped = 0;
-    const removedFiles = [];
+    // Strategy 1: Direct path match in base-game
+    let baseBuf = readBaseFile(relPath);
 
-    for (const relPath of files) {
-      const modFilePath = path.join(wwwDir, relPath);
-      let modBuf;
-      try {
-        modBuf = fs.readFileSync(modFilePath);
-      } catch {
-        skipped++;
-        continue;
-      }
+    // Strategy 2: Hash the mod file's logical path and look up in base-game
+    if (baseBuf === null) {
+      // The mod file may have an extension (e.g. ground4.png) while the
+      // base-game stores files without extension under the hashed name.
+      // Try hashing with the extension first, then without.
+      const hashedWithExt = hashPath(relPath);
+      baseBuf = readBaseFile(hashedWithExt);
 
-      // Strategy 1: Direct path match in base-game
-      let baseBuf = readBaseFile(relPath);
-
-      // Strategy 2: Hash the mod file's logical path and look up in base-game
       if (baseBuf === null) {
-        // The mod file may have an extension (e.g. ground4.png) while the
-        // base-game stores files without extension under the hashed name.
-        // Try hashing with the extension first, then without.
-        const hashedWithExt = hashPath(relPath);
-        baseBuf = readBaseFile(hashedWithExt);
+        // Try hashing the path without extension
+        const noExtPath = relPath.replace(/\.[^./]+$/, "");
+        if (noExtPath !== relPath) {
+          const hashedNoExt = hashPath(noExtPath);
+          // The base-game hashed file has no extension on disk
+          baseBuf = readBaseFile(hashedNoExt);
 
-        if (baseBuf === null) {
-          // Try hashing the path without extension
-          const noExtPath = relPath.replace(/\.[^./]+$/, "");
-          if (noExtPath !== relPath) {
-            const hashedNoExt = hashPath(noExtPath);
-            // The base-game hashed file has no extension on disk
-            baseBuf = readBaseFile(hashedNoExt);
-
-            if (baseBuf === null) {
-              // Also try: hash the full path (with ext) but look up without ext on disk
-              const hashedWithExtNoExt = hashedWithExt.replace(/\.[^./]+$/, "");
-              if (hashedWithExtNoExt !== hashedWithExt) {
-                baseBuf = readBaseFile(hashedWithExtNoExt);
-              }
+          if (baseBuf === null) {
+            // Also try: hash the full path (with ext) but look up without ext on disk
+            const hashedWithExtNoExt = hashedWithExt.replace(/\.[^./]+$/, "");
+            if (hashedWithExtNoExt !== hashedWithExt) {
+              baseBuf = readBaseFile(hashedWithExtNoExt);
             }
           }
         }
       }
-
-      if (baseBuf === null) {
-        // No base-game equivalent found: this is a mod-original file
-        kept++;
-        continue;
-      }
-
-      // Compare decrypted base-game content with the mod file
-      if (modBuf.length === baseBuf.length && modBuf.equals(baseBuf)) {
-        // Duplicate: remove from mod
-        if (!DRY_RUN) {
-          fs.unlinkSync(modFilePath);
-        }
-        removedFiles.push(relPath);
-        removed++;
-      } else {
-        kept++;
-      }
     }
 
-    // Update mods.json: remove deleted files from the files array
-    if (removedFiles.length > 0 && entry.files) {
-      const removedSet = new Set(removedFiles);
-      entry.files = entry.files.filter((f) => !removedSet.has(f));
+    if (baseBuf === null) {
+      // No base-game equivalent found: this is a mod-original file
+      kept++;
+      continue;
     }
 
-    // Clean up empty directories
-    if (!DRY_RUN && removed > 0) {
-      removeEmptyDirs(wwwDir, wwwDir);
-    }
-
-    totalRemoved += removed;
-    totalKept += kept;
-    totalSkipped += skipped;
-
-    console.log(
-      (DRY_RUN ? "[DRY RUN] " : "") +
-        modId +
-        ": " +
-        removed +
-        " duplicate(s) removed, " +
-        kept +
-        " unique file(s) kept" +
-        (skipped > 0 ? ", " + skipped + " skipped" : ""),
-    );
-
-    if (removed > 0) {
-      for (const f of removedFiles) {
-        console.log("  - " + f);
+    // Compare decrypted base-game content with the mod file
+    if (modBuf.length === baseBuf.length && modBuf.equals(baseBuf)) {
+      // Duplicate: remove from mod
+      if (!DRY_RUN) {
+        fs.unlinkSync(modFilePath);
       }
+      removedFiles.push(relPath);
+      removed++;
+    } else {
+      kept++;
+    }
+  }
+
+  // Update mods.json: remove deleted files from the files array
+  if (modEntry && removedFiles.length > 0 && modEntry.entry.files) {
+    const removedSet = new Set(removedFiles);
+    modEntry.entry.files = modEntry.entry.files.filter((f) => !removedSet.has(f));
+  }
+
+  // Clean up empty directories
+  if (!DRY_RUN && removed > 0) {
+    removeEmptyDirs(wwwDir, wwwDir);
+  }
+
+  if (removed > 0) {
+    for (const f of removedFiles) {
+      console.log("  - " + f);
     }
     console.log();
   }
 
   // Write updated mods.json
-  if (!DRY_RUN && totalRemoved > 0) {
+  if (!DRY_RUN && modEntry && removedFiles.length > 0) {
     fs.writeFileSync(MODS_JSON, JSON.stringify(modsData, null, 2) + "\n");
     console.log("Updated mods.json");
   }
 
   console.log(
-    "Total: " +
-      totalRemoved +
+    (DRY_RUN ? "[DRY RUN] " : "") +
+      "Total: " +
+      removed +
       " duplicate(s) removed, " +
-      totalKept +
+      kept +
       " unique file(s) kept" +
-      (totalSkipped > 0 ? ", " + totalSkipped + " skipped" : ""),
+      (skipped > 0 ? ", " + skipped + " skipped" : ""),
   );
 }
 
