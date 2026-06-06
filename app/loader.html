@@ -498,9 +498,17 @@
         gap: clamp(8px, 1.2vmin, 14px);
         padding-bottom: clamp(10px, 1.4vmin, 18px);
         border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        width: 100%;
       }
       .install-step[hidden] {
         display: none;
+      }
+      /* Standalone variant (manage panel): it's the sole content of its own
+         info-panel card, so the bottom divider used to separate it from the
+         import flow would just be a stray underline. */
+      .install-step-standalone {
+        padding-bottom: 0;
+        border-bottom: none;
       }
       .install-step .action-btn {
         width: 100%;
@@ -1160,6 +1168,32 @@
             >
               Export save files
             </button>
+          </div>
+
+          <!--
+            Same PWA install step as the fresh-import panel, surfaced for
+            users who already imported the game. Wrapped in its own info panel
+            (like #info-fresh) so it reads as a distinct card. Installing as a
+            PWA grants durable storage so the imported game (and saves) aren't
+            evicted under storage pressure. Toggled together with the
+            fresh-panel step by setInstallStepVisible(); hidden when the
+            browser doesn't offer a prompt (iOS, desktop, already installed).
+          -->
+          <div class="panel info-panel" id="install-step-manage" hidden>
+            <div class="install-step install-step-standalone">
+              <p class="info">Install TCOAAL as browser app (no download required, optional)</p>
+              <p class="info-aside">
+                You get a home-screen icon, offline play, and your browser
+                won't clear your imported game or saves when storage runs low.
+              </p>
+              <button
+                class="action-btn secondary"
+                id="btn-install-manage"
+                onclick="promptInstall()"
+              >
+                Install
+              </button>
+            </div>
           </div>
           <div class="panel health-panel" id="health-panel">
             <div class="health-header">
@@ -2864,9 +2898,16 @@
       // unit: the numbered path only makes sense when the install step is
       // actually present (otherwise import is the lone, unnumbered action).
       function setInstallStepVisible(visible) {
-        var step = document.getElementById("install-step");
+        // Toggle both install steps (fresh-import panel + manage panel) as a
+        // unit; whichever panel is currently visible shows its own copy. The
+        // fresh step is the .install-step itself; the manage step is wrapped
+        // in its own info panel, so we toggle the wrapper there.
+        var ids = ["install-step", "install-step-manage"];
+        for (var i = 0; i < ids.length; i++) {
+          var el = document.getElementById(ids[i]);
+          if (el) el.hidden = !visible;
+        }
         var importLabel = document.getElementById("import-step-label");
-        if (step) step.hidden = !visible;
         if (importLabel) importLabel.hidden = !visible;
       }
       window.addEventListener("beforeinstallprompt", function (e) {
