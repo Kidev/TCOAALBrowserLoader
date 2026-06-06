@@ -117,6 +117,15 @@
   // starts moving or this grace window expires.
   var CROSS_RESUME_FRAMES = 60;
 
+  // A self-walked door transfer (keyboard, or a direct mouse path onto a door)
+  // is recognised by the player having been moving under their OWN control
+  // (not a forced move route) within this many frames of the transfer. The walk
+  // stamp is refreshed every frame the player is self-moving (see the player
+  // update hook), so it stays current right up to the step that lands on the
+  // door regardless of walk speed -- this window therefore only has to absorb
+  // the player-touch trigger + scene-stop settle, which is a few frames.
+  var WALK_THROUGH_GRACE = 20;
+
   // Shared transition state
 
   // Carries the snapshot + direction across the scene teardown/rebuild that a
@@ -138,6 +147,17 @@
     // Cross-boundary click-to-move: a click landed in a neighbour preview, so
     // carry the intended destination across the transfer and resume walking.
     pendingCross: null, // { mapId, tx, ty }
+    // A self-walked seam transfer (keyboard / direct door path) is in flight ->
+    // step the player one tile further on arrival so they clear the overlap.
+    walkThrough: false,
+    walkThroughDir: 0, // the travel direction to step (captured pre-transfer)
+    // Player glide: keep the player visible and TRANSLATE it across the seam
+    // (instead of fade-out/fade-in). Armed in stop() only when the player was
+    // successfully dropped from the room snapshot (so it leaves no ghost), and
+    // carries the outgoing on-screen pixel position the glide starts from.
+    playerGlide: false,
+    playerScreenX0: 0,
+    playerScreenY0: 0,
     // Re-asserted virtual click on the freshly entered map (see
     // updateCrossResume / CROSS_RESUME_FRAMES).
     resume: null, // { tx, ty, frames }
@@ -272,6 +292,37 @@
     applyDisplay(map, tx + SM.camOffX, ty + SM.camOffY);
   };
 
+  // Track the most recent frame the player was moving under their OWN control
+  // (input walk or a mouse-destination walk) -- NOT a forced move route. We
+  // re-stamp every frame the player is moving and not move-route-forced, so the
+  // stamp stays fresh right up to the step that lands on the door, independent
+  // of walk speed (a slow step no longer ages it past the grace window) and of
+  // whether the key was held or tapped. Cutscene transfers either leave the
+  // player standing (an event runs the 201 -> isMoving() false) or move the
+  // player via a forced route (isMoveRouteForcing() true), so neither stamps --
+  // cleanly separating a self-walked door from a scripted one.
+  var _Game_Player_update = Game_Player.prototype.update;
+  Game_Player.prototype.update = function (sceneActive) {
+    _Game_Player_update.call(this, sceneActive);
+    if (this.isMoving() && !this.isMoveRouteForcing()) {
+      this._smWalkFrame = Graphics.frameCount;
+    }
+  };
+
+  // The live Sprite_Character for the player in a spriteset (the on-screen
+  // player), or null. Used to (a) drop the player from the room snapshot so it
+  // leaves no frozen ghost, and (b) drive a separate full-opacity glide sprite
+  // that translates the player from its outgoing on-screen spot to its settled
+  // one instead of fading it out/in across the transfer.
+  function findPlayerSprite(spriteset) {
+    if (!spriteset || !spriteset._characterSprites) return null;
+    var arr = spriteset._characterSprites;
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i] && arr[i]._character === $gamePlayer) return arr[i];
+    }
+    return null;
+  }
+
   // Seamless directional transition
 
   // Suppress the stock black/white transfer fades while we own the transition.
@@ -319,13 +370,49 @@
       if (SM.pendingCross.mapId !== $gamePlayer._newMapId) SM.pendingCross = null;
     }
 
+    // Self-walked seam transfer: the player stepped through a door under their
+    // own control (a recent input-driven step) and it's a seamless overlap door
+    // -- not a scripted cutscene and not a mouse cross-click (which carries its
+    // own resume). Arm a one-tile step-through so they don't stop dead on the
+    // shared overlap tile (A) but continue into the new room (B).
+    SM.walkThrough = false;
+    SM.walkThroughDir = 0;
+    if (doSeamless && !SM.pendingCross) {
+      var wf = $gamePlayer._smWalkFrame;
+      if (wf != null && Graphics.frameCount - wf <= WALK_THROUGH_GRACE) {
+        SM.walkThrough = true;
+        // performTransfer (which re-faces the player to the door's arrival
+        // direction) runs later, in the NEW scene -- so direction() here is
+        // still the way the player WALKED into the door, i.e. the way further
+        // into the new room. Capturing it now avoids stepping toward the arrival
+        // facing, which a door may set to anything (wrong way, often blocked --
+        // the reason the step "did nothing").
+        SM.walkThroughDir = $gamePlayer.direction();
+      }
+    }
+
     // Warm the cache for the room we're leaving so the new scene can show its
     // return-preview immediately (no flash gap as the snapshot fades). Its
     // parallax bitmaps are already loaded; this just primes the JSON fetch.
     if (transferring) loadNeighbor($gameMap.mapId(), function () {});
+    SM.playerGlide = false;
     if (doSeamless) {
       try {
+        // Drop the player from the room snapshot so the dissolving / static-base
+        // room carries no frozen player ghost -- the glide sprite built in the
+        // new scene is then the ONLY player drawn during the transition. Capture
+        // the on-screen pixel position it glides FROM (still the old map's
+        // framing here -- performTransfer hasn't run).
+        SM.playerScreenX0 = $gamePlayer.screenX();
+        SM.playerScreenY0 = $gamePlayer.screenY();
+        var pSprite = findPlayerSprite(this._spriteset);
+        var pVis = pSprite ? pSprite.visible : true;
+        if (pSprite) {
+          pSprite.visible = false;
+          SM.playerGlide = true;
+        }
         SM.snap = SceneManager.snap();
+        if (pSprite) pSprite.visible = pVis;
         // Anchor the seam to the door the player is using: the incoming map is
         // framed so its arrival tile lands on the door's on-screen spot, then
         // eases to its natural framing. Anchoring to the door (not the raw
@@ -374,6 +461,19 @@
         $gameTemp.clearDestination();
       }
     }
+
+    // Self-walked (keyboard / direct) seam transfer: performTransfer placed the
+    // player on the shared overlap tile (A). Step one tile further in their
+    // travel direction so they end in the new room proper (B), the keyboard
+    // analog of the mouse cross-move's "one block in" landing. Mouse cross moves
+    // (cross) own their own resume, so they're excluded.
+    var stepThroughDir = 0;
+    if (SM.walkThrough && this._transfer && !cross) {
+      walkStyle = true; // walk-into-next-room visual, like the mouse cross move
+      stepThroughDir = SM.walkThroughDir; // travel dir captured pre-transfer
+    }
+    SM.walkThrough = false;
+    SM.walkThroughDir = 0;
 
     if (SM.pending && SM.snap) {
       this._smTime = 0;
@@ -438,8 +538,49 @@
       }
 
       this._smActive = true;
+
+      // Player glide: a full-opacity sprite that mirrors the live player and is
+      // drawn on TOP of the room transition (above both the snapshot and the
+      // fading-in spriteset). It translates from the outgoing on-screen spot
+      // (SM.playerScreenX0/Y0) to the player's settled position; the real player
+      // sprite is hidden for the transition so only this one shows. Covers both
+      // the 0-block case (stays put, visible) and the 1-block case (glides over).
+      this._smRealPlayerSprite = null;
+      this._smPlayerSprite = null;
+      this._smGlideOffX = null;
+      if (SM.playerGlide) {
+        var pps = findPlayerSprite(this._spriteset);
+        if (pps) {
+          this._smRealPlayerSprite = pps;
+          var gs = new Sprite();
+          gs.anchor.x = 0.5;
+          gs.anchor.y = 1; // bottom-centre, like Sprite_Character
+          this.addChild(gs); // top-most child
+          this._smPlayerSprite = gs;
+        }
+      }
+      SM.playerGlide = false;
+
       SM.pending = false; // re-enable fades for any subsequent normal transfer
     }
+
+    if (stepThroughDir) this.performSeamWalkThrough(stepThroughDir);
+  };
+
+  // Take one extra step in the travel direction right after a self-walked seam
+  // transfer, so the player clears the shared overlap tile instead of stopping
+  // on it. Uses the same path as a normal input step (executeMove -> moveStraight
+  // -> increaseSteps), so followers, encounters and step-events behave exactly
+  // as a walked tile. Passability-guarded: if the next tile is blocked, the
+  // player simply stays on the seam tile (no spurious turn). If the player keeps
+  // the key held they continue past this automatically.
+  Scene_Map.prototype.performSeamWalkThrough = function (dir) {
+    var p = $gamePlayer;
+    if (!p || !p.canMove() || p.isMoving()) return;
+    if (typeof $gameMessage !== "undefined" && $gameMessage.isBusy()) return;
+    if (!p.canPass(p.x, p.y, dir)) return; // blocked -> stay on the seam tile
+    p.executeMove(dir);
+    dbg("walk-through: +1 step dir", dir, "->", p.x + "," + p.y);
   };
 
   function easeInOutSine(t) {
@@ -475,6 +616,31 @@
       }
     }
 
+    // Player glide: mirror the live player's current frame and keep it crisp on
+    // top, translating from the outgoing on-screen spot to its settled one. The
+    // real player sprite is held hidden (re-asserted each frame in case the
+    // engine reshows it), so only this glide sprite is seen.
+    if (this._smPlayerSprite && this._smRealPlayerSprite) {
+      var rp = this._smRealPlayerSprite;
+      rp.visible = false;
+      var gp = this._smPlayerSprite;
+      gp.bitmap = rp.bitmap; // no-op when unchanged (Sprite setter guards)
+      if (rp._frame) {
+        gp.setFrame(rp._frame.x, rp._frame.y, rp._frame.width, rp._frame.height);
+      }
+      var liveX = $gamePlayer.screenX();
+      var liveY = $gamePlayer.screenY();
+      if (this._smGlideOffX === null) {
+        // First transition frame: the offset that, decaying to 0, makes the
+        // glide begin exactly at the outgoing on-screen position.
+        this._smGlideOffX = SM.playerScreenX0 - liveX;
+        this._smGlideOffY = SM.playerScreenY0 - liveY;
+      }
+      gp.x = liveX + this._smGlideOffX * (1 - e);
+      gp.y = liveY + this._smGlideOffY * (1 - e);
+      gp.opacity = 255;
+    }
+
     if (k >= 1) {
       this.endSeamlessTransition();
     }
@@ -487,6 +653,18 @@
       }
       this._smSnapSprite = null;
     }
+    if (this._smPlayerSprite) {
+      if (this._smPlayerSprite.parent) {
+        this._smPlayerSprite.parent.removeChild(this._smPlayerSprite);
+      }
+      this._smPlayerSprite.bitmap = null; // shared with the real sprite -> just drop ref
+      this._smPlayerSprite = null;
+    }
+    if (this._smRealPlayerSprite) {
+      this._smRealPlayerSprite.visible = true; // hand the player back to the engine
+      this._smRealPlayerSprite = null;
+    }
+    this._smGlideOffX = null;
     if (this._spriteset) {
       this._spriteset.opacity = 255; // restore in case walk-style faded it in
       if (this._spriteset._blackScreen && this._smBlackWasOn != null) {
@@ -1314,6 +1492,47 @@
     }
   };
 
+  // Per-neighbour ground alpha sampler (built once from the cached ground art),
+  // so a cross-boundary click can be tested against the NEIGHBOUR's real room
+  // shape -- the same alpha test isRoomOpaqueAt does for the current map. Keyed
+  // by map id; null is cached only when the neighbour has no ground art at all
+  // (a bare map), so a not-yet-loaded ground is retried on a later frame.
+  var neighborSamplers = {}; // mapId -> {ctx,w,h} | null
+  function neighborGroundSampler(mapId) {
+    if (neighborSamplers[mapId] !== undefined) return neighborSamplers[mapId];
+    var entry = neighborCache[mapId];
+    if (!entry) return null; // map data not loaded yet -> don't cache
+    var bmp = entry.ground;
+    if (!bmp) {
+      neighborSamplers[mapId] = null; // no ground art -> permanent "unknown"
+      return null;
+    }
+    if (!bmp.width || !bmp.height || (bmp.isReady && !bmp.isReady())) return null; // decoding
+    var s = alphaSamplerFor(bmp);
+    neighborSamplers[mapId] = s || null;
+    return neighborSamplers[mapId];
+  }
+
+  // Does neighbour `mapId`'s room cover its tile (tx, ty)?
+  //   true  -> the clicked tile is real room of that neighbour (this change
+  //            block genuinely leads to the area clicked),
+  //   false -> transparent void there (this door does NOT lead to the click),
+  //   null  -> can't tell yet (no/again-unloaded ground sampler).
+  function neighborOpaqueAt(mapId, tx, ty) {
+    var s = neighborGroundSampler(mapId);
+    if (!s) return null;
+    var tw = $gameMap.tileWidth();
+    var th = $gameMap.tileHeight();
+    var px = Math.floor(tx * tw + tw / 2); // sample the tile centre
+    var py = Math.floor(ty * th + th / 2);
+    if (px < 0 || py < 0 || px >= s.w || py >= s.h) return false;
+    try {
+      return s.ctx.getImageData(px, py, 1, 1).data[3] > ROOM_ALPHA_MIN;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // If (x, y) (current-map tile coords, outside the current room) maps onto a
   // valid tile of one of this map's transfer destinations, return
   // { mapId, tx, ty, pt } in that neighbour's coordinates. Unlike the preview
@@ -1322,8 +1541,8 @@
   // the click handler then walks the player to that door first, transfers, and
   // resumes to (tx, ty). Each door anchors its neighbour so the arrival tile
   // (bx, by) sits on the door event (ev), i.e. neighbour tile = click - (ev-b).
-  // When several doors' neighbours contain the click, the door nearest the
-  // clicked point wins (== the door whose arrival is nearest the destination).
+  // Selection is by which neighbour's room actually COVERS the clicked tile
+  // (opacity), then by the change block nearest the PLAYER -- see below.
   Scene_Map.prototype.resolveVoidTarget = function (x, y) {
     // Only a click NOT on the current room's art can be a neighbour tile (the
     // room is non-rectangular -- see isRoomOpaqueAt).
@@ -1356,8 +1575,22 @@
       }
     }
 
-    var best = null;
-    var bestDist = Infinity;
+    // Pick the change block that genuinely "leads to the area clicked": the
+    // clicked void tile, mapped through a door, must land on an OPAQUE tile of
+    // that neighbour's ground art (its real room shape -- not just inside the
+    // bounding rectangle, which overlapping change blocks share). Of the doors
+    // that qualify, the one nearest the PLAYER wins, so the character walks to
+    // the closest qualifying change block (often an overlapping one) rather than
+    // simply the closest block, which may lead to a different room. Doors whose
+    // neighbour art hasn't loaded yet ("unknown") are a weak fallback used only
+    // when no door can be confirmed; a door confirmed transparent there is
+    // rejected outright.
+    var px = $gamePlayer ? $gamePlayer.x : x;
+    var py = $gamePlayer ? $gamePlayer.y : y;
+    var bestOpaque = null;
+    var bestOpaqueDist = Infinity;
+    var bestFallback = null;
+    var bestFallbackDist = Infinity;
     for (var key in doorByMap) {
       var door = doorByMap[key];
       var entry = neighborCache[door.mapId];
@@ -1365,20 +1598,29 @@
       var tx = x - (door.ev.x - door.bx);
       var ty = y - (door.ev.y - door.by);
       if (tx < 0 || tx >= entry.w || ty < 0 || ty >= entry.h) continue;
-      var ddx = door.ev.x - x;
-      var ddy = door.ev.y - y;
-      var dd = ddx * ddx + ddy * ddy;
-      if (dd < bestDist) {
-        bestDist = dd;
-        best = {
-          mapId: door.mapId,
-          tx: Math.floor(tx),
-          ty: Math.floor(ty),
-          pt: door,
-        };
+      var op = neighborOpaqueAt(door.mapId, tx, ty);
+      if (op === false) continue; // confirmed void of this neighbour -> not it
+      var pdx = door.ev.x - px;
+      var pdy = door.ev.y - py;
+      var pd = pdx * pdx + pdy * pdy; // change block -> player distance
+      var cand = {
+        mapId: door.mapId,
+        tx: Math.floor(tx),
+        ty: Math.floor(ty),
+        pt: door,
+      };
+      if (op === true) {
+        if (pd < bestOpaqueDist) {
+          bestOpaqueDist = pd;
+          bestOpaque = cand;
+        }
+      } else if (pd < bestFallbackDist) {
+        // op === null: art not loaded -> only used if nothing is confirmed.
+        bestFallbackDist = pd;
+        bestFallback = cand;
       }
     }
-    return best;
+    return bestOpaque || bestFallback;
   };
 
 })();
