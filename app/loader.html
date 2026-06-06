@@ -396,6 +396,12 @@
         gap: clamp(8px, 1.2vmin, 14px);
         text-align: center;
       }
+      /* The native [hidden] rule (display:none) loses to .info-panel's
+         display:flex above, so the manage-panel install card must opt back
+         out explicitly when hidden. */
+      .info-panel[hidden] {
+        display: none;
+      }
 
       .info-panel .info {
         font-size: clamp(14px, 1.7vmin, 18px);
@@ -2897,11 +2903,31 @@
       // Show/hide the install step and the "Step 1 / Step 2" numbering as a
       // unit: the numbered path only makes sense when the install step is
       // actually present (otherwise import is the lone, unnumbered action).
+      // True when the loader is running as an installed app (launched from the
+      // home screen / standalone window) rather than a browser tab. In that
+      // case the app is already installed, so the install step must never show
+      // regardless of any install-prompt signal. Covers the standard
+      // display-mode query plus iOS Safari's navigator.standalone.
+      function isRunningInstalled() {
+        try {
+          if (
+            window.matchMedia &&
+            (window.matchMedia("(display-mode: standalone)").matches ||
+              window.matchMedia("(display-mode: minimal-ui)").matches ||
+              window.matchMedia("(display-mode: fullscreen)").matches)
+          ) {
+            return true;
+          }
+        } catch (e) {}
+        return navigator.standalone === true;
+      }
+
       function setInstallStepVisible(visible) {
         // Toggle both install steps (fresh-import panel + manage panel) as a
         // unit; whichever panel is currently visible shows its own copy. The
         // fresh step is the .install-step itself; the manage step is wrapped
         // in its own info panel, so we toggle the wrapper there.
+        if (isRunningInstalled()) visible = false;
         var ids = ["install-step", "install-step-manage"];
         for (var i = 0; i < ids.length; i++) {
           var el = document.getElementById(ids[i]);
