@@ -1,22 +1,38 @@
 #!/usr/bin/env node
-// Extracts a CLD (Compiled Language Data) file into the TCOAAL translator
-// layout: img/, font/, dialogue.csv (canonical sectioned CSV).
-//
-// CLD format: "LANGDATA" (8 bytes) + UTF-8 JSON. Top-level fields:
-//   langVers, langName, langInfo, fontFace, fontSize  (metadata)
-//   fontFile   base64 font (TTF/OTF)
-//   imgFiles   { "img/<path>": base64 PNG }
-//   sysLabel   { "English label": "translation" }
-//   sysMenus   { "English menu": "translation" }
-//   labelLUT   { "<hash>": "translation" }
-//   linesLUT   { "<hash>": array (or JSON-encoded array) of translated lines }
-//
-// If the input is TCOAAL-encrypted (starts with "TCOAAL"), decrypt it first.
-// When a base-game English CLD is available (default:
-// base-game/www/data/9c7050ae76645487, override with --english <path>),
-// its strings fill the "English" column of the emitted CSV.
-//
-// Usage: node tools/extract-cld.js <input.cld> [outDir] [--english <path>]
+/*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
+ * Extracts a CLD (Compiled Language Data) file into the TCOAAL translator
+ * layout: img/, font/, dialogue.csv (canonical sectioned CSV).
+ *
+ * CLD format: "LANGDATA" (8 bytes) + UTF-8 JSON. Top-level fields:
+ *   langVers, langName, langInfo, fontFace, fontSize  (metadata)
+ *   fontFile   base64 font (TTF/OTF)
+ *   imgFiles   { "img/<path>": base64 PNG }
+ *   sysLabel   { "English label": "translation" }
+ *   sysMenus   { "English menu": "translation" }
+ *   labelLUT   { "<hash>": "translation" }
+ *   linesLUT   { "<hash>": array (or JSON-encoded array) of translated lines }
+ *
+ * If the input is TCOAAL-encrypted (starts with "TCOAAL"), decrypt it first.
+ * When a base-game English CLD is available (default:
+ * base-game/www/data/9c7050ae76645487, override with --english <path>),
+ * its strings fill the "English" column of the emitted CSV.
+ *
+ * Usage: node tools/extract-cld.js <input.cld> [outDir] [--english <path>]
+ */
 
 const fs = require("fs");
 const path = require("path");

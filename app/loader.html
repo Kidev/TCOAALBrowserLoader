@@ -1,4 +1,18 @@
 <!doctype html>
+<!--
+  TCOAAL Browser Player
+  Copyright (C) 2026 kidev
+
+  This program is free software: you can redistribute it and/or modify it
+  under the terms of the GNU Affero General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or (at your
+  option) any later version. This program is distributed in the hope that it
+  will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+  of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+  General Public License for more details: <https://www.gnu.org/licenses/>.
+
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -983,7 +997,8 @@
          text labels (their accessible name lives on each anchor's
          aria-label), tighten the chips, and surface the compact Steam buy
          link that replaces the full banner. */
-      @media (max-width: 720px), (orientation: landscape) and (max-height: 600px) {
+      @media (max-width: 720px),
+        (orientation: landscape) and (max-height: 600px) {
         .github-link,
         .tool-link,
         .feedback-link,
@@ -1327,7 +1342,9 @@
           -->
           <div class="install-step" id="install-step" hidden>
             <!--<p class="step-label">Step 1: Install app (optional)</p>-->
-            <p class="info">Install TCOAAL as browser app (no download required, optional)</p>
+            <p class="info">
+              Install TCOAAL as browser app (no download required, optional)
+            </p>
             <p class="info-aside">
               You get a home-screen icon, offline play, and your browser won't
               clear the game you import below when storage runs low.
@@ -1345,46 +1362,50 @@
                install card on short landscape screens. In portrait/desktop
                it's a plain stacked column, identical to before. -->
           <div class="import-col">
-          <p class="step-label" id="import-step-label" hidden>
-            Import your game
-          </p>
-          <p class="info">
-            You need to own the game
-            <b
-              onclick="
-                window.open(
-                  'https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/',
-                  '_blank',
-                )
-              "
-              style="cursor: pointer"
-              >The Coffin of Andy and Leyley</b
-            >
-            by Kit9
-          </p>
-          <p class="info">
-            Load your owned copy of the game into your browser,<br />
-            either as a folder or as a .zip archive.
-          </p>
-          <p class="info-aside">
-            Your files stay on your device and are never uploaded anywhere
-          </p>
-          <p class="path-hint" id="path-hint">
-            Your game folder is likely located at<br />
-            <code id="path-hint-value"></code>
-          </p>
-          <div class="panel-footer">
-            <button class="action-btn" id="btn-load" onclick="loadGameFiles()">
-              Import Folder
-            </button>
-            <button
-              class="action-btn"
-              id="btn-load-zip"
-              onclick="loadGameZip()"
-            >
-              Import .zip file
-            </button>
-          </div>
+            <p class="step-label" id="import-step-label" hidden>
+              Import your game
+            </p>
+            <p class="info">
+              You need to own the game
+              <b
+                onclick="
+                  window.open(
+                    'https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/',
+                    '_blank',
+                  )
+                "
+                style="cursor: pointer"
+                >The Coffin of Andy and Leyley</b
+              >
+              by Kit9
+            </p>
+            <p class="info">
+              Load your owned copy of the game into your browser,<br />
+              either as a folder or as a .zip archive.
+            </p>
+            <p class="info-aside">
+              Your files stay on your device and are never uploaded anywhere
+            </p>
+            <p class="path-hint" id="path-hint">
+              Your game folder is likely located at<br />
+              <code id="path-hint-value"></code>
+            </p>
+            <div class="panel-footer">
+              <button
+                class="action-btn"
+                id="btn-load"
+                onclick="loadGameFiles()"
+              >
+                Import Folder
+              </button>
+              <button
+                class="action-btn"
+                id="btn-load-zip"
+                onclick="loadGameZip()"
+              >
+                Import .zip file
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1411,7 +1432,7 @@
             keeping both sides aligned at the same top edge.
           -->
           <div class="manage-info-col">
-          <!--
+            <!--
             Same PWA install step as the fresh-import panel, surfaced for
             users who already imported the game. Wrapped in its own info panel
             (like #info-fresh) so it reads as a distinct card. Installing as a
@@ -1420,70 +1441,74 @@
             fresh-panel step by setInstallStepVisible(); hidden when the
             browser doesn't offer a prompt (iOS, desktop, already installed).
           -->
-          <div class="panel info-panel" id="install-step-manage" hidden>
-            <div class="install-step install-step-standalone">
-              <p class="info">Install TCOAAL as browser app (no download required, optional)</p>
-              <p class="info-aside">
-                You get a home-screen icon, offline play, and your browser
-                won't clear your imported game or saves when storage runs low.
-              </p>
+            <div class="panel info-panel" id="install-step-manage" hidden>
+              <div class="install-step install-step-standalone">
+                <p class="info">
+                  Install TCOAAL as browser app (no download required, optional)
+                </p>
+                <p class="info-aside">
+                  You get a home-screen icon, offline play, and your browser
+                  won't clear your imported game or saves when storage runs low.
+                </p>
+                <button
+                  class="action-btn secondary"
+                  id="btn-install-manage"
+                  onclick="promptInstall()"
+                >
+                  Install
+                </button>
+              </div>
+            </div>
+            <div class="panel health-panel" id="health-panel">
+              <div class="health-header">
+                <span class="health-dot"></span>
+                <div class="health-summary" id="health-summary">
+                  Scanning...
+                </div>
+              </div>
+              <div class="health-counts" id="health-counts"></div>
+              <div class="health-note" id="health-note"></div>
               <button
-                class="action-btn secondary"
-                id="btn-install-manage"
-                onclick="promptInstall()"
+                class="health-toggle"
+                id="health-toggle"
+                onclick="toggleMissingList()"
+                style="display: none"
               >
-                Install
+                Show missing files
               </button>
+              <div class="missing-list" id="missing-list"></div>
+              <div class="health-footer">
+                <button
+                  class="action-btn compact"
+                  id="btn-reimport"
+                  onclick="loadGameFiles()"
+                >
+                  Re-import folder
+                </button>
+                <button
+                  class="action-btn compact"
+                  id="btn-reimport-zip"
+                  onclick="loadGameZip()"
+                >
+                  Re-import .zip
+                </button>
+                <button
+                  class="action-btn compact danger"
+                  id="btn-clear"
+                  onclick="askClearAll()"
+                >
+                  Clear browser data
+                </button>
+              </div>
             </div>
-          </div>
-          <div class="panel health-panel" id="health-panel">
-            <div class="health-header">
-              <span class="health-dot"></span>
-              <div class="health-summary" id="health-summary">Scanning...</div>
-            </div>
-            <div class="health-counts" id="health-counts"></div>
-            <div class="health-note" id="health-note"></div>
-            <button
-              class="health-toggle"
-              id="health-toggle"
-              onclick="toggleMissingList()"
-              style="display: none"
+            <div
+              id="offline-indicator"
+              role="status"
+              aria-live="polite"
+              aria-hidden="true"
             >
-              Show missing files
-            </button>
-            <div class="missing-list" id="missing-list"></div>
-            <div class="health-footer">
-              <button
-                class="action-btn compact"
-                id="btn-reimport"
-                onclick="loadGameFiles()"
-              >
-                Re-import folder
-              </button>
-              <button
-                class="action-btn compact"
-                id="btn-reimport-zip"
-                onclick="loadGameZip()"
-              >
-                Re-import .zip
-              </button>
-              <button
-                class="action-btn compact danger"
-                id="btn-clear"
-                onclick="askClearAll()"
-              >
-                Clear browser data
-              </button>
+              You are offline
             </div>
-          </div>
-          <div
-            id="offline-indicator"
-            role="status"
-            aria-live="polite"
-            aria-hidden="true"
-          >
-            You are offline
-          </div>
           </div>
           <script>
             (function () {

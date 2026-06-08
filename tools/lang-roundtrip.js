@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 /*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
  * lang-roundtrip.js: the bake <-> un-bake bridge for the extract/edit/play loop.
  *
  * TCOAAL stores dialogue as a placeholder the runtime Lang/VN engine resolves:
@@ -234,7 +248,8 @@ const TEXT_GROUPS = {
 /** Mint short CLD keys in the existing 8-char base62 style, unique within the
  *  CLD (and across this un-bake run). */
 function makeMinter(cld) {
-  const ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const ALPHA =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   const used = new Set([
     ...Object.keys(cld.linesLUT || {}),
     ...Object.keys(cld.labelLUT || {}),
@@ -364,14 +379,20 @@ function createUnbaker(cld) {
       const cmd = list[i];
       // Show Choices: re-key the choice-text array (parameters[0]); the 402
       // branch labels are a literal mirror the engine regenerates, left as-is.
-      if (cmd && cmd.code === 102 && cmd.parameters && Array.isArray(cmd.parameters[0])) {
+      if (
+        cmd &&
+        cmd.code === 102 &&
+        cmd.parameters &&
+        Array.isArray(cmd.parameters[0])
+      ) {
         cmd.parameters[0] = cmd.parameters[0].map((c) =>
           typeof c === "string" ? restoreChoice(c) : c,
         );
         out.push(cmd);
         continue;
       }
-      const lineCode = cmd && typeof cmd.code === "number" ? TEXT_GROUPS[cmd.code] : undefined;
+      const lineCode =
+        cmd && typeof cmd.code === "number" ? TEXT_GROUPS[cmd.code] : undefined;
       if (lineCode === undefined) {
         out.push(cmd);
         continue;

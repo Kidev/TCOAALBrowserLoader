@@ -1,5 +1,19 @@
 #!/usr/bin/env node
-/**
+/*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
  * dedup-mods.js
  *
  * Scans a single mod folder (passed as a required argument: either the
@@ -247,7 +261,9 @@ function main() {
     process.exit(1);
   }
   if (POSITIONAL.length > 1) {
-    console.error("Error: expected a single mod folder, got: " + POSITIONAL.join(", "));
+    console.error(
+      "Error: expected a single mod folder, got: " + POSITIONAL.join(", "),
+    );
     process.exit(1);
   }
 
@@ -341,7 +357,9 @@ function main() {
   // Update mods.json: remove deleted files from the files array
   if (modEntry && removedFiles.length > 0 && modEntry.entry.files) {
     const removedSet = new Set(removedFiles);
-    modEntry.entry.files = modEntry.entry.files.filter((f) => !removedSet.has(f));
+    modEntry.entry.files = modEntry.entry.files.filter(
+      (f) => !removedSet.has(f),
+    );
   }
 
   // Clean up empty directories

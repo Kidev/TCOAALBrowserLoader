@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 /*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
  * decode.js: decrypt/decode a single logical file (or dump map names) from any
  * version of the game, for inspection.
  *
@@ -45,7 +59,10 @@ function resolveWww(input) {
 
 /** Rolling-XOR decrypt a whole logical-name file (old XORENCODE format). */
 function decodeOldXor(buf, logical) {
-  const base = logical.split("/").pop().replace(/\.[^.]+$/, "");
+  const base = logical
+    .split("/")
+    .pop()
+    .replace(/\.[^.]+$/, "");
   let mask = fileMask(base) & 0xff;
   const out = Buffer.allocUnsafe(buf.length);
   for (let i = 0; i < buf.length; i++) {
@@ -118,7 +135,11 @@ function recoverJson(buf) {
     }
   }
   if (s[lastClose] === "]") {
-    for (let i = s.indexOf("{"); i >= 0 && i < lastClose; i = s.indexOf("{", i + 1)) {
+    for (
+      let i = s.indexOf("{");
+      i >= 0 && i < lastClose;
+      i = s.indexOf("{", i + 1)
+    ) {
       try {
         return JSON.parse("[" + s.slice(i, lastClose + 1));
       } catch (_) {

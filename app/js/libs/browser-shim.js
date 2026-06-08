@@ -1,4 +1,18 @@
-/**
+/*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
  * Browser compatibility shim for The Coffin of Andy and Leyley.
  *
  * Load this script immediately after rpg_core.js (and after pako_inflate.min.js).
@@ -685,8 +699,7 @@
           _origTitlePlacement.apply(this, arguments);
           try {
             var full =
-              this.maxItems() * this.itemHeight() +
-              this.standardPadding() * 2;
+              this.maxItems() * this.itemHeight() + this.standardPadding() * 2;
             if (full > 0 && this.height !== full) {
               var center = this.y + this.height / 2;
               this.height = full; // setter triggers _refreshAllParts()

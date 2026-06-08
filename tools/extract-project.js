@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 /*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
  * extract-project.js: recover an editable RPG Maker MV project from a shipped
  * TCOAAL game folder.
  *
@@ -279,7 +293,10 @@ async function compositeLayers(parallaxDir, ground, par) {
   ctx.drawImage(p, 0, 0);
 
   const name = `bg_${ground}_${par}`;
-  fs.writeFileSync(path.join(parallaxDir, name + ".png"), c.toBuffer("image/png"));
+  fs.writeFileSync(
+    path.join(parallaxDir, name + ".png"),
+    c.toBuffer("image/png"),
+  );
   _compositeCache.set(key, name);
   return name;
 }
@@ -373,7 +390,11 @@ function extract(www, out, nameMap, lut, mapNameIndex) {
       } else {
         const ren = lookupRename(rel);
         if (ren) {
-          outRel = ren.dir + "/" + ren.stem + (detectExtension(dec) || dirExt(ren.dir));
+          outRel =
+            ren.dir +
+            "/" +
+            ren.stem +
+            (detectExtension(dec) || dirExt(ren.dir));
           renamedAssets++;
         } else if (!path.extname(rel)) {
           const detected = detectExtension(dec);
@@ -596,7 +617,8 @@ function parseArgs(argv) {
     else if (a === "--force" || a === "-f") opts.force = true;
     else if (a === "--no-bake") opts.bake = false;
     else if (a === "--not-playable") opts.playable = false;
-    else if (a === "--playable") opts.playable = true; // default; kept as a no-op for back-compat
+    else if (a === "--playable")
+      opts.playable = true; // default; kept as a no-op for back-compat
     else if (a === "--no-map-names") opts.mapNames = false;
     else if (a === "--names-from") opts.namesFrom = argv[++i];
     else if (a === "--help" || a === "-h") {
@@ -706,7 +728,9 @@ async function main() {
       ".",
   );
   if (stats.baked) {
-    console.log(`Baked ${stats.baked} localized text placeholders into the data.`);
+    console.log(
+      `Baked ${stats.baked} localized text placeholders into the data.`,
+    );
   }
   if (stats.mapsRecovered) {
     console.log(
@@ -714,10 +738,14 @@ async function main() {
     );
   }
   if (stats.mapsNamed) {
-    console.log(`Filled ${stats.mapsNamed} remaining blank map name${stats.mapsNamed === 1 ? "" : "s"} (MapNNN).`);
+    console.log(
+      `Filled ${stats.mapsNamed} remaining blank map name${stats.mapsNamed === 1 ? "" : "s"} (MapNNN).`,
+    );
   }
   if (mapsBg) {
-    console.log(`Set ${mapsBg} map parallax background${mapsBg === 1 ? "" : "s"} from <ground>/<par> notes.`);
+    console.log(
+      `Set ${mapsBg} map parallax background${mapsBg === 1 ? "" : "s"} from <ground>/<par> notes.`,
+    );
   }
   if (opts.playable) {
     console.log(

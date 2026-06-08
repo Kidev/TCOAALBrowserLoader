@@ -1,4 +1,18 @@
 /*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
  * map-names.js: recover human map names for a remaster extract by content match.
  *
  * The remaster blanks MapInfos[].name and hashes filenames irreversibly, so a
@@ -76,7 +90,9 @@ function maps() {
     const stemToHash = new Map();
     for (const name of ASSET_NAMES[dir]) {
       const stem = name + suffix;
-      const basename = hashPath(dir + "/" + stem + ext).split("/").pop();
+      const basename = hashPath(dir + "/" + stem + ext)
+        .split("/")
+        .pop();
       // First name wins on the rare duplicate (the same logical file listed
       // twice in old dumps), so the mapping stays one-to-one and reversible.
       if (!hashToStem.has(basename)) hashToStem.set(basename, stem);
@@ -123,22 +139,23 @@ function transformNote(note, fn) {
 // which positional parameter holds the reference and which directory it targets;
 // "audio" means the parameter is an {name,volume,pitch,pan} object.
 const COMMAND_REFS = {
-  101: [{ index: 0, dir: "img/faces" }],            // Show Text (face)
-  231: [{ index: 1, dir: "img/pictures" }],         // Show Picture
+  101: [{ index: 0, dir: "img/faces" }], // Show Text (face)
+  231: [{ index: 1, dir: "img/pictures" }], // Show Picture
   241: [{ index: 0, dir: "audio/bgm", audio: true }], // Play BGM
   132: [{ index: 0, dir: "audio/bgm", audio: true }], // Change Battle BGM
   140: [{ index: 1, dir: "audio/bgm", audio: true }], // Change Vehicle BGM
   245: [{ index: 0, dir: "audio/bgs", audio: true }], // Play BGS
-  249: [{ index: 0, dir: "audio/me", audio: true }],  // Play ME
-  133: [{ index: 0, dir: "audio/me", audio: true }],  // Change Victory ME
-  139: [{ index: 0, dir: "audio/me", audio: true }],  // Change Defeat ME
-  250: [{ index: 0, dir: "audio/se", audio: true }],  // Play SE
-  284: [{ index: 0, dir: "img/parallaxes" }],         // Change Parallax
-  322: [                                              // Change Actor Images
+  249: [{ index: 0, dir: "audio/me", audio: true }], // Play ME
+  133: [{ index: 0, dir: "audio/me", audio: true }], // Change Victory ME
+  139: [{ index: 0, dir: "audio/me", audio: true }], // Change Defeat ME
+  250: [{ index: 0, dir: "audio/se", audio: true }], // Play SE
+  284: [{ index: 0, dir: "img/parallaxes" }], // Change Parallax
+  322: [
+    // Change Actor Images
     { index: 1, dir: "img/faces" },
     { index: 3, dir: "img/characters" },
   ],
-  323: [{ index: 1, dir: "img/characters" }],         // Change Vehicle Image
+  323: [{ index: 1, dir: "img/characters" }], // Change Vehicle Image
 };
 
 // Object property names whose value is an asset reference, by directory.
@@ -151,15 +168,24 @@ const IMAGE_FIELDS = {
 };
 // Object property names whose value is an audio object ({name,volume,...}).
 const AUDIO_FIELDS = {
-  bgm: "audio/bgm", battleBgm: "audio/bgm", titleBgm: "audio/bgm",
+  bgm: "audio/bgm",
+  battleBgm: "audio/bgm",
+  titleBgm: "audio/bgm",
   bgs: "audio/bgs",
-  me: "audio/me", victoryMe: "audio/me", defeatMe: "audio/me", gameoverMe: "audio/me",
+  me: "audio/me",
+  victoryMe: "audio/me",
+  defeatMe: "audio/me",
+  gameoverMe: "audio/me",
   se: "audio/se",
 };
 
 function isAudio(o) {
-  return o && typeof o === "object" && typeof o.name === "string" &&
-    typeof o.volume === "number";
+  return (
+    o &&
+    typeof o === "object" &&
+    typeof o.name === "string" &&
+    typeof o.volume === "number"
+  );
 }
 
 // Walk a data document and apply `fn(dir, value) -> value` to every asset
@@ -201,7 +227,8 @@ function transformDoc(doc, fn) {
       }
     }
     if (Array.isArray(node.sounds)) {
-      for (const s of node.sounds) if (isAudio(s)) s.name = fn("audio/se", s.name);
+      for (const s of node.sounds)
+        if (isAudio(s)) s.name = fn("audio/se", s.name);
     }
     if (Array.isArray(node.tilesetNames)) {
       node.tilesetNames = node.tilesetNames.map((n) =>

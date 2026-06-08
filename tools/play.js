@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 /*
+ * TCOAAL Browser Player
+ * Copyright (C) 2026 kidev
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version. This program is distributed in the hope that it
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+ * General Public License for more details: <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+/*
  * play.js: run an extracted project in true browser mode (correct TCOAAL VN
  * rendering), straight from Linux: no RPG Maker MV editor, no NW.js, no Wine.
  *
@@ -51,7 +65,9 @@ function parseArgs(argv) {
     if (a === "--port") o.port = parseInt(argv[++i], 10) || o.port;
     else if (a === "--no-open") o.open = false;
     else if (a === "--help" || a === "-h") {
-      console.log("Usage: node tools/play.js <projectDir> [--port <n>] [--no-open]");
+      console.log(
+        "Usage: node tools/play.js <projectDir> [--port <n>] [--no-open]",
+      );
       process.exit(0);
     } else if (!o.project) o.project = a;
   }
@@ -78,7 +94,8 @@ function bootHtml(project) {
   const inject =
     '<script type="text/javascript" src="/_play/pako_inflate.min.js"></script>\n' +
     '<script type="text/javascript" src="/_play/browser-shim.js"></script>\n';
-  const coreTag = /(<script[^>]*\bsrc=["'][^"']*rpg_core\.js["'][^>]*>\s*<\/script>)/i;
+  const coreTag =
+    /(<script[^>]*\bsrc=["'][^"']*rpg_core\.js["'][^>]*>\s*<\/script>)/i;
   if (coreTag.test(html)) return html.replace(coreTag, "$1\n" + inject);
   // Fallbacks: no rpg_core.js tag found (custom index): best effort.
   return /<body[^>]*>/i.test(html)
@@ -143,7 +160,9 @@ function serveFile(res, abs, mime) {
 function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.project) {
-    console.error("Usage: node tools/play.js <projectDir> [--port <n>] [--no-open]");
+    console.error(
+      "Usage: node tools/play.js <projectDir> [--port <n>] [--no-open]",
+    );
     process.exit(1);
   }
   const project = fs.existsSync(path.join(opts.project, "www"))
@@ -166,12 +185,22 @@ function main() {
     // The DRM resolves files against App.rootPath() = "." with Windows-style
     // separators, so requests arrive as ".\data\<hash>". A real BrowserPlayer
     // run normalizes these in the Service Worker; here we do it inline.
-    rel = rel.replace(/\\/g, "/").replace(/^\/+/, "").replace(/^(\.\/)+/, "");
-    if (rel.split("/").includes("..")) return send(res, 403, "text/plain", "no");
+    rel = rel
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
+      .replace(/^(\.\/)+/, "");
+    if (rel.split("/").includes(".."))
+      return send(res, 403, "text/plain", "no");
 
     // BrowserPlayer's themed loading image (browser-shim requests /img/loading.png).
     if (rel === "img/loading.png") {
-      if (serveFile(res, path.join(ROOT, "app", "img", "loading.png"), "image/png"))
+      if (
+        serveFile(
+          res,
+          path.join(ROOT, "app", "img", "loading.png"),
+          "image/png",
+        )
+      )
         return;
     }
 
@@ -189,7 +218,8 @@ function main() {
 
     // BrowserPlayer shim (served from the repo, not the project).
     if (rel.startsWith("_play/")) {
-      if (serveFile(res, path.join(LIBS, path.basename(rel)), mimeFor(rel))) return;
+      if (serveFile(res, path.join(LIBS, path.basename(rel)), mimeFor(rel)))
+        return;
       return send(res, 404, "text/plain", "missing shim: " + rel);
     }
 
@@ -215,8 +245,9 @@ function main() {
     console.log("Ctrl+C to stop.\n");
     if (opts.open) {
       const open =
-        { darwin: "open", win32: "start", linux: "xdg-open" }[process.platform] ||
-        "xdg-open";
+        { darwin: "open", win32: "start", linux: "xdg-open" }[
+          process.platform
+        ] || "xdg-open";
       try {
         require("child_process")
           .spawn(open, [u], { detached: true, stdio: "ignore" })
