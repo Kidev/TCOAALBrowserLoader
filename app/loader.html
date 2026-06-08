@@ -2439,7 +2439,13 @@
         await dropDb("tcoaal-saves");
         await dropDb("tcoaal-translations");
 
+        // Signal completion on the button, then reload. The dying SW can
+        // swallow the navigation, so guard with a hard-reload fallback.
+        if (btn) {
+          btn.textContent = "Reloading...";
+        }
         location.replace("/loader.html");
+        setTimeout(() => location.reload(), 1500);
       }
 
       // Service Worker registration
@@ -2871,7 +2877,13 @@
         await dropDb("tcoaal-saves");
         await dropDb("tcoaal-translations");
 
+        // Signal completion on the button, then reload. The dying SW can
+        // swallow the navigation, so guard with a hard-reload fallback.
+        if ($btnClear) {
+          $btnClear.textContent = "Reloading...";
+        }
         location.replace("/loader.html");
+        setTimeout(() => location.reload(), 1500);
       }
 
       // Save export

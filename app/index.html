@@ -794,8 +794,20 @@
           await dropDb(SAVE_DB_NAME);
           await dropDb(TRANSLATIONS_DB_NAME);
 
-          // 5. Redirect.
+          // 5. Done. Surface it on the button so the user knows the
+          //    wipe finished, then reload into the loader. The SW we
+          //    unregistered in step 1 still controls this page until it
+          //    unloads, so it can swallow the navigation: guard with a
+          //    hard reload fallback so the user is never stranded on a
+          //    dead error page with a frozen "Clearing..." button.
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = "Reloading...";
+          }
           location.replace("/loader.html");
+          setTimeout(function () {
+            location.reload();
+          }, 1500);
         };
 
         window.__bootToggleDiag = function () {
