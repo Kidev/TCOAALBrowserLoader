@@ -426,6 +426,15 @@
         gap: clamp(8px, 1.2vmin, 14px);
         text-align: center;
       }
+      /* Groups the import instructions + buttons. Default is a plain stacked
+         column (same look as before the wrapper); landscape turns it into the
+         column beside the install card. */
+      .import-col {
+        display: flex;
+        flex-direction: column;
+        gap: clamp(8px, 1.2vmin, 14px);
+        width: 100%;
+      }
       /* The native [hidden] rule (display:none) loses to .info-panel's
          display:flex above, so the manage-panel install card must opt back
          out explicitly when hidden. */
@@ -474,7 +483,6 @@
         gap: clamp(8px, 1vmin, 14px);
         margin-top: clamp(4px, 0.6vmin, 10px);
         padding-top: clamp(10px, 1.4vmin, 18px);
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
       }
       .panel-footer .action-btn {
         flex: 1 1 50%;
@@ -1055,12 +1063,17 @@
         }
 
         .content {
-          /* Drop the whole row down into the empty lower space so the
-             background's title (top-middle) stays visible above it. The
-             column scrolls internally, so a tall panel is never clipped. */
-          padding-top: clamp(64px, 33vh, 240px);
+          /* Default (fresh-import view): it's the taller panel, so keep a
+             small top offset; the background title is partly masked here on
+             purpose since this special case lacks vertical room. */
+          padding-top: clamp(16px, 7vh, 70px);
           padding-bottom: calc(58px + env(safe-area-inset-bottom, 0px));
           gap: clamp(8px, 1.6vh, 16px);
+        }
+        /* Post-import (manage) view is short, so drop it down into the empty
+           lower space to reveal the title at the top-middle of the bg. */
+        .content:has(#manage-panel.visible) {
+          padding-top: clamp(64px, 33vh, 240px);
         }
 
         /* Widen the post-import card so the two columns have room. */
@@ -1084,6 +1097,40 @@
           flex: 1 1 0;
           min-width: 0;
           width: auto;
+        }
+
+        /* Fresh-import view: same two-column trick to fit without scrolling.
+           Import instructions/buttons on the left, the install card on the
+           right. The panel title is dropped (the bg shows the title) to
+           reclaim vertical space. When the install card is hidden (no install
+           prompt) it drops out of flow and the import column centres. */
+        #info-fresh {
+          max-width: min(880px, 96vw);
+          flex-direction: row-reverse;
+          align-items: flex-start;
+          justify-content: center;
+          gap: clamp(12px, 1.8vw, 26px);
+        }
+        #info-fresh .panel-title {
+          display: none;
+        }
+        #info-fresh .import-col {
+          flex: 1 1 0;
+          min-width: 0;
+        }
+        #info-fresh #install-step {
+          flex: 0 0 auto;
+          width: clamp(190px, 36%, 320px);
+          /* Stretch to the row height so the divider spans the full column. */
+          align-self: stretch;
+          /* The bottom divider separates install from the import flow when
+             stacked; side-by-side it would be a stray underline. */
+          padding-bottom: 0;
+          border-bottom: none;
+          /* Vertical bar separating the import (left) from the install
+             (right). Only present when the install card is shown. */
+          border-left: 1px solid rgba(255, 255, 255, 0.12);
+          padding-left: clamp(12px, 1.8vw, 24px);
         }
       }
     </style>
@@ -1294,6 +1341,10 @@
             </button>
           </div>
 
+          <!-- Import part: grouped so it can sit as one column beside the
+               install card on short landscape screens. In portrait/desktop
+               it's a plain stacked column, identical to before. -->
+          <div class="import-col">
           <p class="step-label" id="import-step-label" hidden>
             Import your game
           </p>
@@ -1333,6 +1384,7 @@
             >
               Import .zip file
             </button>
+          </div>
           </div>
         </div>
 
