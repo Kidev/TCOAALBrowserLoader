@@ -122,7 +122,20 @@
       }
     </script>
 
-    <script src="js/libs/pako_inflate.min.js"></script>
+    <!-- LCP background art: a CSS background-image is only discovered after
+         the CSSOM builds, so preload it to start the fetch during HTML parse. -->
+    <link
+      rel="preload"
+      as="image"
+      href="img/bg.webp"
+      type="image/webp"
+      fetchpriority="high"
+    />
+
+    <!-- pako is only needed once the user imports a game (file-processing
+         pipeline), never to render this page: defer it so it stops blocking
+         first paint while still being ready well before any user action. -->
+    <script src="js/libs/pako_inflate.min.js" defer></script>
     <style>
       :root {
         --green: #86d37a;
@@ -229,7 +242,8 @@
 
       .github-link,
       .tool-link,
-      .feedback-link {
+      .feedback-link,
+      .steam-link {
         color: rgba(255, 255, 255, 0.9);
         text-decoration: none;
         transition: all 0.3s ease;
@@ -242,6 +256,14 @@
         border: 1px solid rgba(255, 255, 255, 0.1);
         font-size: 0.85em;
         font-family: "Georgia", serif;
+      }
+
+      /* The Steam buy link is icon-only and only surfaces on mobile, where
+         the full "Buy on Steam" banner is removed. On desktop/tablet the
+         banner covers it, so it stays hidden until a mobile media query
+         opts it back in. */
+      .steam-link {
+        display: none;
       }
 
       .github-link:hover {
@@ -265,9 +287,17 @@
         transform: translateY(-1px);
       }
 
+      .steam-link:hover {
+        color: var(--white);
+        background: rgba(74, 144, 226, 0.18);
+        border-color: rgba(102, 192, 244, 0.4);
+        transform: translateY(-1px);
+      }
+
       .tool-link .tool-icon,
       .github-link .github-icon,
-      .feedback-link .feedback-icon {
+      .feedback-link .feedback-icon,
+      .steam-link .steam-icon {
         width: 18px;
         height: 18px;
         fill: currentColor;
@@ -644,6 +674,17 @@
         gap: clamp(8px, 1vmin, 14px);
         width: 100%;
       }
+      /* Groups the install + status panels. By default it's a plain stacked
+         column (the same look as before this wrapper existed); landscape
+         turns it into the column opposite the action buttons. The gap
+         mirrors the manage-panel gap so spacing is unchanged. */
+      .manage-info-col {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: clamp(12px, 1.5vmin, 22px);
+        width: 100%;
+      }
       .manage-actions .action-btn.play {
         background: var(--green);
         color: var(--black);
@@ -929,6 +970,122 @@
         margin-right: 7px;
         box-shadow: 0 0 6px rgba(255, 95, 110, 0.7);
       }
+
+      /* Icon-only treatment shared by both mobile orientations: drop the
+         text labels (their accessible name lives on each anchor's
+         aria-label), tighten the chips, and surface the compact Steam buy
+         link that replaces the full banner. */
+      @media (max-width: 720px), (orientation: landscape) and (max-height: 600px) {
+        .github-link,
+        .tool-link,
+        .feedback-link,
+        .steam-link {
+          padding: 9px 11px;
+          gap: 0;
+          background: rgba(15, 15, 15, 0.9);
+        }
+        .github-link span,
+        .tool-link span,
+        .feedback-link span,
+        .steam-link span {
+          display: none;
+        }
+        .steam-link {
+          display: flex;
+        }
+        .tool-link .tool-icon,
+        .github-link .github-icon,
+        .feedback-link .feedback-icon,
+        .steam-link .steam-icon {
+          width: 22px;
+          height: 22px;
+        }
+
+        /* Link buttons move to a compact bar pinned to the bottom of the
+           screen, in both orientations. */
+        .top-links {
+          top: auto;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          flex-direction: row;
+          justify-content: center;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
+          /* Gentle scrim so the icons stay legible over the art, and let
+             taps in the empty gutter fall through to the content. */
+          background: linear-gradient(
+            to top,
+            rgba(0, 0, 0, 0.72),
+            rgba(0, 0, 0, 0)
+          );
+          pointer-events: none;
+        }
+        .top-links > a {
+          pointer-events: auto;
+        }
+      }
+
+      /* Mobile portrait
+         Push the content column down so more of the background art (the
+         title sits at the top-middle) shows through. The column scrolls
+         internally, so a tall panel is never clipped: it just scrolls. */
+      @media (max-width: 720px) and (orientation: portrait) {
+        .content {
+          /* Push the panel down to reveal the title in the bg, bounded so it
+             still fits; overflow-y:auto keeps it reachable if it doesn't. */
+          padding-top: clamp(130px, 34vh, 320px);
+          /* Clear the fixed bottom link bar so the last control isn't hidden
+             behind it when the column scrolls. */
+          padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+          gap: clamp(12px, 2.4vh, 22px);
+        }
+      }
+
+      /* Mobile landscape (horizontal)
+         Too short for the banner or a big top margin. The link bar already
+         sits at the bottom (shared block above). The post-import view splits
+         into two columns: the PLAY / export-saves actions on the left, the
+         status / install info panel on the right: keeping the top-middle of
+         the background (the title) visible above the panel. */
+      @media (orientation: landscape) and (max-height: 600px) {
+        .steam-buy-card {
+          display: none;
+        }
+
+        .content {
+          /* Drop the whole row down into the empty lower space so the
+             background's title (top-middle) stays visible above it. The
+             column scrolls internally, so a tall panel is never clipped. */
+          padding-top: clamp(64px, 33vh, 240px);
+          padding-bottom: calc(58px + env(safe-area-inset-bottom, 0px));
+          gap: clamp(8px, 1.6vh, 16px);
+        }
+
+        /* Widen the post-import card so the two columns have room. */
+        .manage-panel {
+          max-width: min(880px, 96vw);
+        }
+        /* Two columns as sibling flex items so both share the same top edge.
+           row-reverse puts the action buttons (first in DOM, so still first
+           in tab order) on the right and the info column on the left. */
+        .manage-panel.visible {
+          display: flex;
+          flex-direction: row-reverse;
+          align-items: flex-start;
+          gap: clamp(10px, 1.6vw, 22px);
+        }
+        .manage-actions {
+          flex: 0 0 auto;
+          width: clamp(170px, 32%, 290px);
+        }
+        .manage-info-col {
+          flex: 1 1 0;
+          min-width: 0;
+          width: auto;
+        }
+      }
     </style>
   </head>
   <body>
@@ -939,9 +1096,10 @@
           target="_blank"
           rel="noopener"
           class="github-link"
+          aria-label="AGPLv3 licensed, hosted on GitHub Pages"
           onclick="event.stopPropagation()"
         >
-          <svg class="github-icon" viewBox="0 0 24 24">
+          <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               d="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"
             ></path>
@@ -953,9 +1111,10 @@
           target="_blank"
           rel="noopener"
           class="tool-link"
+          aria-label="More tools and utilities for TCOAAL"
           onclick="event.stopPropagation()"
         >
-          <svg class="tool-icon" viewBox="0 0 24 24">
+          <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
             />
@@ -968,14 +1127,30 @@
           rel="noopener"
           class="feedback-link"
           data-feedback-link
+          aria-label="Share feedback or report an issue"
           onclick="event.stopPropagation()"
         >
-          <svg class="feedback-icon" viewBox="0 0 24 24">
+          <svg class="feedback-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               d="M5 3h14a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-7.2l-4.3 3.4a1 1 0 0 1-1.62-.78V18H5a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm6.94 4.1c-1.62 0-2.86 1-2.86 2.55h1.86c0-.62.4-1 .98-1 .55 0 .94.34.94.84 0 .42-.2.7-.85 1.12-.78.49-1.13.99-1.1 1.93l.01.28h1.82c0-.55.13-.82.78-1.23.86-.55 1.36-1.17 1.36-2.16 0-1.4-1.18-2.33-2.94-2.33Zm-.05 6.95a1.08 1.08 0 1 0 .01 2.16 1.08 1.08 0 0 0-.01-2.16Z"
             />
           </svg>
           <span>Share feedback or report an issue</span>
+        </a>
+        <a
+          href="https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/"
+          target="_blank"
+          rel="noopener"
+          class="steam-link"
+          aria-label="Buy The Coffin of Andy and Leyley on Steam"
+          onclick="event.stopPropagation()"
+        >
+          <svg class="steam-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M11.979 0C5.678 0 .511 4.86.022 11.037l6.432 2.658a3.39 3.39 0 0 1 1.912-.59l2.86-4.142v-.06a4.526 4.526 0 0 1 4.524-4.524 4.526 4.526 0 0 1 0 9.052h-.105l-4.076 2.911v.16a3.396 3.396 0 0 1-6.722.667L.436 15.27C1.862 20.307 6.486 24 11.979 24c6.627 0 12-5.373 12-12s-5.373-12-12-12zM7.54 18.21l-1.473-.61c.262.543.714.999 1.314 1.25 1.297.539 2.793-.076 3.332-1.375a2.55 2.55 0 0 0-.005-1.949 2.52 2.52 0 0 0-1.377-1.383 2.53 2.53 0 0 0-1.878-.03l1.523.63a1.86 1.86 0 0 1 1.009 2.455 1.86 1.86 0 0 1-2.454 1.012zm11.415-9.303a3.018 3.018 0 0 0-3.015-3.015 3.02 3.02 0 0 0-3.015 3.015 3.02 3.02 0 0 0 3.015 3.015 3.018 3.018 0 0 0 3.015-3.015zm-5.273-.005a2.266 2.266 0 0 1 2.265-2.266 2.27 2.27 0 0 1 2.266 2.266 2.267 2.267 0 0 1-2.266 2.265 2.265 2.265 0 0 1-2.265-2.265z"
+            />
+          </svg>
+          <span>Buy The Coffin of Andy and Leyley on Steam</span>
         </a>
       </div>
 
@@ -1177,6 +1352,14 @@
           </div>
 
           <!--
+            Info column: the install + status panels grouped so they form a
+            single block opposite the action buttons. In portrait/desktop the
+            manage-panel is a flex column, so this just stacks normally; in
+            landscape it becomes the left column beside the action buttons,
+            keeping both sides aligned at the same top edge.
+          -->
+          <div class="manage-info-col">
+          <!--
             Same PWA install step as the fresh-import panel, surfaced for
             users who already imported the game. Wrapped in its own info panel
             (like #info-fresh) so it reads as a distinct card. Installing as a
@@ -1248,6 +1431,7 @@
             aria-hidden="true"
           >
             You are offline
+          </div>
           </div>
           <script>
             (function () {

@@ -660,6 +660,50 @@
       }
     }
 
+    // Title command menu: grow to fit, never scroll.
+    //
+    // The DRM payload's custom title window caps its height to a fixed
+    // number of visible rows. With the extra entries this player adds
+    // (Achievements, Mods, Help, Languages from lang-shim) plus a mod's
+    // own additions, the command list can exceed that cap and the title
+    // menu turns into a scrolling list: which looks wrong for a title
+    // screen. Force the window to size itself to every command and keep
+    // it vertically centred where the payload placed it.
+    if (typeof Window_TitleCommand !== "undefined") {
+      // Used by the stock Window_Command.windowHeight() path.
+      Window_TitleCommand.prototype.numVisibleRows = function () {
+        return this.maxItems();
+      };
+      // The payload computes/locks height in updatePlacement() (called at
+      // the end of initialize, after makeCommandList()). Wrap it so that
+      // whatever height it settled on, we re-expand to hold every row and
+      // re-centre around the same point. Guarded on existence so a stock
+      // window (no custom updatePlacement) is left to numVisibleRows above.
+      if (typeof Window_TitleCommand.prototype.updatePlacement === "function") {
+        var _origTitlePlacement = Window_TitleCommand.prototype.updatePlacement;
+        Window_TitleCommand.prototype.updatePlacement = function () {
+          _origTitlePlacement.apply(this, arguments);
+          try {
+            var full =
+              this.maxItems() * this.itemHeight() +
+              this.standardPadding() * 2;
+            if (full > 0 && this.height !== full) {
+              var center = this.y + this.height / 2;
+              this.height = full; // setter triggers _refreshAllParts()
+              this.y = Math.round(center - full / 2);
+              if (this.y < 0) this.y = 0;
+              var maxY = Graphics.boxHeight - full;
+              if (maxY >= 0 && this.y > maxY) this.y = maxY;
+              // Height grew after createContents() ran in initialize, so
+              // rebuild the contents bitmap and redraw at the new size or
+              // rows past the old height would not paint.
+              this.refresh();
+            }
+          } catch (e) {}
+        };
+      }
+    }
+
     // "Now Loading" image: force our bundled themed loading.png.
     //
     // The stock engine sets Graphics._loadingImage from a plain
