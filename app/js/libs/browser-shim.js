@@ -620,48 +620,88 @@
         };
     }
 
+    // Quit-to-loader: tear the game down before navigating, then go.
+    //
+    // Both the title "Quit Game" command (Scene_Title.commandQuitGame ->
+    // SceneManager.exit -> terminate) and the crash path (App.close) end up
+    // leaving the page for /loader.html. Stock terminate is window.close(),
+    // a no-op for a user-opened tab, so we navigate instead.
+    //
+    // The slow part isn't the navigation (loader.html is precached) but the
+    // browser tearing down a still-live page during unload: the rAF render
+    // loop is still scheduling frames, the PIXI WebGL context is live, and
+    // the title BGM is still streaming from the Service Worker. Doing that
+    // synchronously on unload is what made quitting "freeze for a few
+    // seconds". So quiesce everything first: stop the scene loop (halts
+    // requestUpdate), stop all audio, and close the AudioContext (which ends
+    // the open WebAudio stream). Each step is independently guarded so a
+    // missing API never blocks the redirect.
+    function quitToLoader() {
+      try {
+        if (typeof SceneManager !== "undefined") SceneManager.stop();
+      } catch (e) {}
+      try {
+        if (typeof AudioManager !== "undefined") {
+          if (typeof AudioManager.stopAll === "function")
+            AudioManager.stopAll();
+          else {
+            AudioManager.stopBgm();
+            AudioManager.stopBgs();
+            AudioManager.stopMe();
+            AudioManager.stopSe();
+          }
+        }
+      } catch (e) {}
+      try {
+        if (
+          typeof WebAudio !== "undefined" &&
+          WebAudio._context &&
+          WebAudio._context.state !== "closed" &&
+          typeof WebAudio._context.close === "function"
+        ) {
+          WebAudio._context.close();
+        }
+      } catch (e) {}
+      window.location.href = "/loader.html";
+    }
+
     // Non-blocking crash (prevent alert() freeze + nw.gui close)
     if (typeof App !== "undefined") {
       App.crash = function (msg) {
         console.error("[DRM] CRITICAL:", msg);
       };
-      // Quit Game (title menu) -> back to the loader so the user lands
-      // on the manage UI instead of an inert tab. window.close() (which
-      // stock SceneManager.terminate calls) is a no-op for tabs the user
-      // opened themselves, so the original code path was a dead end.
-      App.close = function () {
-        window.location.href = "/loader.html";
-      };
+      App.close = quitToLoader;
       App.report = function () {};
     }
     if (typeof SceneManager !== "undefined") {
-      SceneManager.terminate = function () {
-        window.location.href = "/loader.html";
-      };
+      SceneManager.terminate = quitToLoader;
 
-      // Quit-to-title transition speed-up.
+      // Quit/return transition speed-up.
       //
       // Returning to the title from in-game runs fadeOutAll(): a 48-frame
-      // (~0.8s) "slow" fade-to-black: immediately before
-      // SceneManager.goto(Scene_Title). For a plain menu return that long
-      // dissolve feels sluggish "for nothing". Cap just that outgoing fade so
-      // the screen goes black in ~0.3s, then the title fades back in at its
-      // stock 24-frame speed: still a smooth cross-fade, just snappier.
+      // (~0.8s) "slow" fade-to-black immediately before
+      // SceneManager.goto(Scene_Title). Quitting from the title runs the same
+      // fadeOutAll() and then SceneManager.exit() -> goto(null). For both, that
+      // long dissolve feels sluggish "for nothing" (and on quit it's dead time
+      // before the loader redirect). Cap just that outgoing fade so the screen
+      // goes black in ~0.3s; on a title return the title then fades back in at
+      // its stock 24-frame speed (still a smooth cross-fade, just snappier),
+      // and on quit the redirect fires that much sooner.
       //
-      // Narrowly scoped on purpose: only when the destination is Scene_Title
-      // and the current scene is already fading OUT (_fadeSign < 0). The
-      // intentionally-slow game-over reveal runs as a fade-IN inside
-      // Scene_Gameover.start (never through this goto), so it is untouched, as
-      // are all in-cutscene Game_Screen fades. If a mod returns to title via
-      // some non-Scene_Base mechanism, _fadeSign/_fadeDuration are unset and
-      // this is a harmless no-op.
+      // Narrowly scoped on purpose: only when the destination is Scene_Title or
+      // the game is exiting (sceneClass null) AND the current scene is already
+      // fading OUT (_fadeSign < 0). The intentionally-slow game-over reveal
+      // runs as a fade-IN inside Scene_Gameover.start (never through this goto),
+      // so it is untouched, as are all in-cutscene Game_Screen fades. If a mod
+      // transitions via some non-Scene_Base mechanism, _fadeSign/_fadeDuration
+      // are unset and this is a harmless no-op.
       if (typeof Scene_Title !== "undefined") {
         var QUIT_FADE_FRAMES = 18; // ~0.3s at 60fps (was 48 / ~0.8s)
         var _origSceneGoto = SceneManager.goto;
         SceneManager.goto = function (sceneClass) {
           var s = this._scene;
           if (
-            sceneClass === Scene_Title &&
+            (sceneClass === Scene_Title || !sceneClass) &&
             s &&
             s._fadeSign < 0 &&
             typeof s._fadeDuration === "number" &&

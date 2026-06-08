@@ -62,11 +62,6 @@ jobs:
 
       - name: Minify and stamp
         run: |
-          # Minify the app shell only. mods/ is excluded: it ships engine JS
-          # and the zlib/base64 DRM payload plugins verbatim: minifying those
-          # would corrupt the payload. mangle is OFF everywhere so global
-          # functions referenced from inline on* handlers (and any string-based
-          # lookups) keep their names; the win is comment + whitespace removal.
           for f in _site/*.html; do
             npx --yes html-minifier-terser@7 \
               --collapse-whitespace --remove-comments \
@@ -75,13 +70,10 @@ jobs:
               -o "$f.tmp" "$f"
             mv "$f.tmp" "$f"
           done
-          # Standalone JS shipped under the app root (sw.js + js/**), skipping
-          # files already minified at source (e.g. pako_inflate.min.js).
           while IFS= read -r f; do
             npx --yes terser@5 "$f" --compress --comments false -o "$f.tmp"
             mv "$f.tmp" "$f"
           done < <(find _site/js _site/sw.js -name '*.js' ! -name '*.min.js')
-          # Build marker, appended after minify so it survives comment removal.
           BUILD_TS=$(TZ=UTC date '+%d/%m/%Y %H:%M:%S')
           printf '\n<!-- %s -->\n' "$BUILD_TS" >> _site/index.html
           printf '\n<!-- %s -->\n' "$BUILD_TS" >> _site/loader.html
