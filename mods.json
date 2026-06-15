@@ -8684,14 +8684,14 @@
   "translation_BASE_portuguese-brazil": {
     "name": "Portuguese (Brazil)",
     "icon": "https://translations.tcoaal.app/translations/BASE_translations/portuguese-brazil/icon.png",
-    "author": "Brendon, crimsonKss",
-    "lastUpdate": "2026-05-29",
+    "author": "Max027",
+    "lastUpdate": "2026-06-15",
     "path": "https://translations.tcoaal.app/translations/BASE_translations/portuguese-brazil",
     "type": "translation",
     "mod": "BASE",
     "description": "Português (Brasil)",
     "langFile": "dialogue.txt",
-    "version": "2026-05-29",
+    "version": "2026-04-07",
     "files": [
       "dialogue.txt",
       "icon.png"

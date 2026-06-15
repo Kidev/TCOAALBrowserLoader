@@ -78,6 +78,7 @@ const APP_SHELL = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/favicon16.ico",
+  "/favicon64.ico",
   "/img/icon-192.png",
   "/img/icon-512.png",
   "/img/icon-maskable-512.png",
@@ -418,6 +419,7 @@ const MIME_MAP = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".ogg": "audio/ogg",
   ".m4a": "audio/mp4",
   ".mp4": "video/mp4",
@@ -1283,6 +1285,37 @@ async function tryModOverlay(db, modId, logicalPath) {
     }
   }
 
+  // M2b. WebP sibling (mods only). The engine always requests images with the
+  //      base game's extension (img/pictures/picture25.png), but a mod may ship
+  //      the lighter picture25.webp instead. When the .png/.jpg/.jpeg lookups
+  //      above miss, retry the same path with a .webp extension: both the
+  //      human-named (M1) and hashed+ext (M3b) layouts. Browsers decode by
+  //      content, so serving these bytes under the requested URL is fine; we
+  //      just declare the correct image/webp type. Base game is unaffected:
+  //      this runs only inside the mod-overlay chain.
+  if (/\.(png|jpe?g)$/i.test(logicalPath)) {
+    const webpPath = logicalPath.replace(/\.[^./]+$/, ".webp");
+    const webpHeaders = { "Content-Type": "image/webp" };
+
+    // Human-named (mirrors M1).
+    const modWebpCI = await getAssetCI(db, modPrefix + webpPath);
+    if (modWebpCI !== null) {
+      const keyForDecrypt = modWebpCI.actualKey.substring(modPrefix.length);
+      const decrypted = dekit(modWebpCI.value, keyForDecrypt);
+      return new Response(decrypted, { status: 200, headers: webpHeaders });
+    }
+
+    // Hashed name + .webp (mirrors M3b: hash the requested path, swap only the
+    // trailing extension). Mod images aren't TCOAAL-encrypted, so dekit is a
+    // no-op and the seed is immaterial: only the IDB key needs to match.
+    const reqHashed = await hashPath(logicalPath);
+    const modWebpHashed = await getAsset(db, modPrefix + reqHashed + ".webp");
+    if (modWebpHashed !== null) {
+      const decrypted = dekit(modWebpHashed, reqHashed);
+      return new Response(decrypted, { status: 200, headers: webpHeaders });
+    }
+  }
+
   // M3. Hashed path.
   const modHashed = await hashPath(logicalPath);
   const modEncrypted = await getAsset(db, modPrefix + modHashed);
@@ -1413,6 +1446,7 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "expected-files.json" ||
     logicalPath === "favicon.ico" ||
     logicalPath === "favicon16.ico" ||
+    logicalPath === "favicon64.ico" ||
     logicalPath === "img/icon-192.png" ||
     logicalPath === "img/icon-512.png" ||
     logicalPath === "img/icon-maskable-512.png" ||

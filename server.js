@@ -45,6 +45,7 @@ const MIME = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".ogg": "audio/ogg",
   ".m4a": "audio/mp4",
   ".mp4": "video/mp4",

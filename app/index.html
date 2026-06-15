@@ -78,8 +78,10 @@
       content="https://tcoaal.app/img/tcoaal-steam-header.jpg"
     />
 
-    <link rel="icon" id="favicon" type="image/png" />
-    <link rel="apple-touch-icon" id="apple-icon" />
+    <!-- Default to the BrowserPlayer icon during boot (game not started yet).
+         loadFavicon() swaps both to the loaded game's own icon/icon.png. -->
+    <link rel="icon" id="favicon" href="favicon.ico" type="image/x-icon" />
+    <link rel="apple-touch-icon" id="apple-icon" href="favicon64.ico" />
 
     <script type="application/ld+json">
       {
@@ -1364,7 +1366,10 @@
               var url = URL.createObjectURL(blob);
               var fav = document.getElementById("favicon");
               var apple = document.getElementById("apple-icon");
-              if (fav) fav.href = url;
+              if (fav) {
+                fav.href = url;
+                fav.type = "image/png";
+              }
               if (apple) apple.href = url;
             } catch (e) {}
           });
