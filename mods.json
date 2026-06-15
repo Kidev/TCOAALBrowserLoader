@@ -6,7 +6,7 @@
     "type": "built-in plugin",
     "description": "Enables mouse and touch input for menus and gameplay",
     "author": "kidev",
-    "version": "424d6e4",
+    "version": "fce8851",
     "files": [
       "img/icon.png",
       "js/plugins/MouseControl.js"
@@ -19,7 +19,7 @@
     "type": "built-in plugin",
     "description": "On-screen controller: a D-pad on the left and four action buttons on the right",
     "author": "kidev",
-    "version": "424d6e4",
+    "version": "fce8851",
     "files": [
       "img/icon.png",
       "js/plugins/VirtualController.js"
@@ -32,7 +32,7 @@
     "type": "built-in plugin",
     "description": "Keeps the player centered and turns door transfers into a smooth pan into the next map",
     "author": "kidev",
-    "version": "c86d750",
+    "version": "fce8851",
     "requiresBaseGame": false,
     "files": [
       "img/icon.png",
@@ -46,7 +46,7 @@
     "type": "built-in plugin",
     "description": "While enabled, the vision room, visions and stars are all available",
     "author": "kidev",
-    "version": "424d6e4",
+    "version": "fce8851",
     "requiresBaseGame": true,
     "files": [
       "img/icon.png",
@@ -60,7 +60,7 @@
     "type": "built-in plugin",
     "description": "Changes party character movement to dot movement that does not depend on tiles",
     "author": "Sanshiro",
-    "version": "424d6e4",
+    "version": "fce8851",
     "lastUpdate": "2024-03-29",
     "files": [
       "img/icon.png",
@@ -75,7 +75,7 @@
     "type": "built-in plugin",
     "description": "Add a message backlog function to the game's message system (shortcut: TAB)",
     "author": "Yanfly",
-    "version": "424d6e4",
+    "version": "fce8851",
     "lastUpdate": "2024-03-29",
     "files": [
       "img/icon.png",
@@ -8691,10 +8691,17 @@
     "mod": "BASE",
     "description": "Português (Brasil)",
     "langFile": "dialogue.txt",
-    "version": "2026-04-07",
+    "version": "2026-06-15",
     "files": [
       "dialogue.txt",
-      "icon.png"
+      "icon.png",
+      "img/pictures/057974b069d30654.png",
+      "img/pictures/12ecbfd10eb675b4.png",
+      "img/pictures/2e165e53783c6e41.png",
+      "img/pictures/4bb0151c008236ca.png",
+      "img/pictures/5972d18a4e7f34a8.png",
+      "img/pictures/e5230bf37c4fabb0.png",
+      "img/system/e5230bf37c4fabb0.png"
     ]
   },
   "translation_BASE_russian": {
