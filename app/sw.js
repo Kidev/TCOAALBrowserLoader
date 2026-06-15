@@ -93,6 +93,7 @@ const APP_SHELL = [
   "/img/tcoaal-steam-header.jpg",
   "/js/libs/pako_inflate.min.js",
   "/js/libs/browser-shim.js",
+  "/js/libs/lang-format.js",
   "/js/libs/lang-shim.js",
   "/js/libs/achievements-shim.js",
   "/mods.json",

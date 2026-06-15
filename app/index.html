@@ -1354,6 +1354,228 @@
             });
         }
 
+        //
+        // A returning user may have a translation installed that this app
+        // update improved the parser for (LANG_PARSE_VERSION bump in
+        // lang-format.js), or whose content the translations server has
+        // revved. lang-shim.js's background sync only applies on the NEXT
+        // launch, so the reconnecting launch would still show stale text
+        // (e.g. untranslated choices). We detect it here, BEFORE
+        // preloadLangData reads the merged CLD, show the loading image, apply
+        // the fix to IDB, and reload so the engine boots once with correct
+        // text. Scope: the ACTIVE translation only (bounded, usually a fast
+        // local re-parse); every other language stays on lang-shim's lazy
+        // background sync.
+
+        function showUpdateSplash() {
+          try {
+            splash.classList.remove("hidden");
+            splash.innerHTML =
+              '<div style="display:flex;flex-direction:column;' +
+              'align-items:center;gap:18px;padding:24px;box-sizing:border-box">' +
+              '<img src="/img/loading.png" alt="Loading" ' +
+              'style="max-width:70vw;max-height:45vh;object-fit:contain" />' +
+              "<div>Updating translation...</div></div>";
+          } catch (e) {}
+        }
+
+        // Rebuild the cached CLD (__mod_lang_data__) from the langFile already
+        // in IDB, using the same format handling as lang-shim.js's
+        // extractModLangData: .csv/.txt go through the shared parser, .loc/.json
+        // (and "LANGDATA"-prefixed CLDs) are JSON with any leading padding
+        // stripped. No network. Returns true on success.
+        function extractTranslationCache(db, id, entry) {
+          var langFile = entry.langFile;
+          return idbGet(db, "mod:" + id + ":" + langFile).then(function (raw) {
+            if (raw == null) return false;
+            var text =
+              typeof raw === "string" ? raw : new TextDecoder().decode(raw);
+            var LF = window.LangFormat;
+            var parsed, json;
+            if (/\.csv$/i.test(langFile)) {
+              parsed = LF.parseDialogueCsv(text);
+              json = JSON.stringify(parsed);
+            } else if (/\.txt$/i.test(langFile)) {
+              parsed = LF.parseDialogueTxt(text);
+              json = JSON.stringify(parsed);
+            } else {
+              json = text.trim();
+              var s = json.indexOf("{");
+              if (s > 0) json = json.substring(s);
+              try {
+                parsed = JSON.parse(json);
+              } catch (e) {
+                return false;
+              }
+            }
+            if (
+              !parsed ||
+              (!parsed.linesLUT && !parsed.labelLUT && !parsed.sysMenus)
+            )
+              return false;
+            return idbPut(db, "__mod_lang_data__:" + id, json).then(
+              function () {
+                return true;
+              },
+            );
+          });
+        }
+
+        // Re-fetch every file of a (remote) translation into IDB. Returns true
+        // only when every file stored OK, so a partial download never
+        // half-replaces a working translation.
+        function downloadTranslation(db, id, entry) {
+          var base = String(entry.path || "").replace(/\/$/, "") + "/";
+          var files = entry.files || [];
+          if (!files.length) return Promise.resolve(false);
+          var ok = true;
+          var chain = Promise.resolve();
+          files.forEach(function (rel) {
+            chain = chain.then(function () {
+              if (!ok) return;
+              return fetch(base + rel)
+                .then(function (res) {
+                  if (!res.ok) throw new Error(String(res.status));
+                  return res.arrayBuffer();
+                })
+                .then(function (buf) {
+                  return idbPut(db, "mod:" + id + ":" + rel, buf);
+                })
+                .catch(function () {
+                  ok = false;
+                });
+            });
+          });
+          return chain.then(function () {
+            return ok;
+          });
+        }
+
+        function ensureActiveTranslationFresh(ctx) {
+          var db = ctx && ctx.db;
+          if (!db || !window.indexedDB) return Promise.resolve();
+          var activeLang = null;
+          try {
+            activeLang = localStorage.getItem("_activeLang") || null;
+          } catch (e) {}
+          if (!activeLang) return Promise.resolve();
+
+          var modsData = null;
+          try {
+            modsData = JSON.parse(window.__modsDataJson || "null");
+          } catch (e) {}
+          var entry = modsData && modsData[activeLang];
+          if (!entry || entry.type !== "translation" || !entry.langFile)
+            return Promise.resolve();
+
+          return idbGet(db, "__mod_meta__:" + activeLang).then(
+            function (rawMeta) {
+              if (rawMeta == null) return; // not installed -> nothing to refresh
+              var meta = {};
+              try {
+                meta =
+                  typeof rawMeta === "string" ? JSON.parse(rawMeta) : rawMeta;
+              } catch (e) {
+                meta = {};
+              }
+
+              var curVer = entry.version || "";
+              var versionOk = !curVer || meta.version === curVer;
+              var canReparse = /\.(csv|txt)$/i.test(entry.langFile);
+              // Fast exit: version current AND not a locally re-parsable format
+              // (e.g. a .loc translation) -> nothing this gate can refresh.
+              if (versionOk && !canReparse) return;
+
+              // Judging parse-staleness needs LANG_PARSE_VERSION, and applying
+              // either fix needs the parser itself - both live in lang-format.js.
+              // It's in GAME_SCRIPTS but loads later, so pull it in now. Only
+              // reached for an installed active translation, so users without a
+              // translation never load it on the boot path.
+              var ensureLF = window.LangFormat
+                ? Promise.resolve()
+                : loadScripts(["js/libs/lang-format.js"], 0).catch(
+                    function () {},
+                  );
+
+              return ensureLF.then(function () {
+                if (!window.LangFormat) return; // couldn't load -> leave to bg sync
+                var parseVer = window.LangFormat.LANG_PARSE_VERSION;
+                var parseStale =
+                  canReparse && (meta.langParseVersion || 0) < parseVer;
+                if (versionOk && !parseStale) return; // already fresh
+
+                // Loop guard: only the reload path (below) sets this; it stops a
+                // reload-requiring update that never "sticks" from looping.
+                var GUARD = "__langUpdateTried:" + activeLang;
+                try {
+                  if (sessionStorage.getItem(GUARD) === "1") return;
+                } catch (e) {}
+
+                var needsDownload = !versionOk;
+                // A re-download needs the network; a local re-parse does not.
+                if (needsDownload && navigator.onLine === false) return;
+
+                showUpdateSplash();
+
+                var work;
+                if (needsDownload) {
+                  work = downloadTranslation(db, activeLang, entry).then(
+                    function (downloaded) {
+                      if (!downloaded) return false;
+                      var newMeta = {
+                        version: entry.version || "",
+                        date: new Date().toISOString().substring(0, 10),
+                        files: (entry.files || []).length,
+                        langParseVersion: parseVer,
+                      };
+                      return idbPut(
+                        db,
+                        "__mod_meta__:" + activeLang,
+                        JSON.stringify(newMeta),
+                      ).then(function () {
+                        return extractTranslationCache(db, activeLang, entry);
+                      });
+                    },
+                  );
+                } else {
+                  work = extractTranslationCache(db, activeLang, entry).then(
+                    function (reparsed) {
+                      if (!reparsed) return false;
+                      meta.langParseVersion = parseVer;
+                      return idbPut(
+                        db,
+                        "__mod_meta__:" + activeLang,
+                        JSON.stringify(meta),
+                      ).then(function () {
+                        return true;
+                      });
+                    },
+                  );
+                }
+                return work.then(function (result) {
+                  // result === false   -> update failed; continue with the stale
+                  //   data (lang-shim's background sync retries it next launch).
+                  // result truthy       -> applied to IDB in-place. preloadLangData
+                  //   runs right after this and reads the corrected
+                  //   /lang-data.json, so NO restart is needed.
+                  // result === "reload" -> applied, but the change can only take
+                  //   effect on a fresh boot. No action needs this today; it is
+                  //   the escape hatch for a future preload step that mutates
+                  //   something already consumed earlier in this boot (e.g. the
+                  //   SW's active-state read). Such an action returns "reload".
+                  if (result === "reload") {
+                    try {
+                      sessionStorage.setItem(GUARD, "1");
+                    } catch (e) {}
+                    location.reload();
+                    return new Promise(function () {}); // halt this boot
+                  }
+                });
+              });
+            },
+          );
+        }
+
         // Step 2c: load favicon from IDB (icon/icon.png from the user's game files)
         function loadFavicon(db) {
           idbGet(db, "icon/icon.png").then(function (data) {
@@ -1413,6 +1635,7 @@
           "js/rpg_sprites.js",
           "js/rpg_windows.js",
           "js/plugins.js",
+          "js/libs/lang-format.js",
           "js/libs/lang-shim.js",
           "js/libs/achievements-shim.js",
           "js/main.js",
@@ -1521,160 +1744,169 @@
             // Preload language data and favicon (favicon is non-blocking).
             if (ctx.db) loadFavicon(ctx.db);
 
-            return Promise.all([
-              preloadLangData(ctx.db, ctx.files),
-              preloadModsData(ctx.db),
-            ]).then(function () {
-              // If we still don't have language data and there's no active
-              // mod, fail loudly: the DRM will produce cryptic errors
-              // ("Cannot create property imageLUT on string ''", etc.) if
-              // we let it run without it.
-              var activeMod = null;
-              try {
-                activeMod = localStorage.getItem("_activeMod") || null;
-              } catch (e) {}
-              if (!activeMod && !window.__langData) {
-                showError(
-                  "Language data unavailable",
-                  "The game's language data couldn't be decoded. This " +
-                    "usually means the import was incomplete. Clearing " +
-                    "and re-importing the game folder fixes it.",
-                  new Error("__langData empty after preload"),
-                );
-                return null;
-              }
+            // Order matters: load mods.json first (the freshness gate reads
+            // it), then refresh the active translation BEFORE the language
+            // data is read, then preload the now-current language data.
+            return preloadModsData(ctx.db)
+              .then(function () {
+                return ensureActiveTranslationFresh(ctx);
+              })
+              .then(function () {
+                return preloadLangData(ctx.db, ctx.files);
+              })
+              .then(function () {
+                // If we still don't have language data and there's no active
+                // mod, fail loudly: the DRM will produce cryptic errors
+                // ("Cannot create property imageLUT on string ''", etc.) if
+                // we let it run without it.
+                var activeMod = null;
+                try {
+                  activeMod = localStorage.getItem("_activeMod") || null;
+                } catch (e) {}
+                if (!activeMod && !window.__langData) {
+                  showError(
+                    "Language data unavailable",
+                    "The game's language data couldn't be decoded. This " +
+                      "usually means the import was incomplete. Clearing " +
+                      "and re-importing the game folder fixes it.",
+                    new Error("__langData empty after preload"),
+                  );
+                  return null;
+                }
 
-              setPhase("load-scripts", "Starting game...");
+                setPhase("load-scripts", "Starting game...");
 
-              // Load the font CSS first (it may also be in IDB)
-              var link = document.createElement("link");
-              link.rel = "stylesheet";
-              link.type = "text/css";
-              link.href = "fonts/gamefont.css";
-              document.head.appendChild(link);
+                // Load the font CSS first (it may also be in IDB)
+                var link = document.createElement("link");
+                link.rel = "stylesheet";
+                link.type = "text/css";
+                link.href = "fonts/gamefont.css";
+                document.head.appendChild(link);
 
-              // Intercept the onload handler that main.js will set
-              // window.onload already fired so a plain assignment would
-              // never trigger. We capture it and call it ourselves once
-              // all plugin scripts have loaded.
-              var _bootOnload = null;
-              Object.defineProperty(window, "onload", {
-                set: function (fn) {
-                  _bootOnload = fn;
-                },
-                get: function () {
-                  return _bootOnload;
-                },
-                configurable: true,
-              });
-
-              return loadScripts(GAME_SCRIPTS, 0).then(function () {
-                setPhase("plugins", "Loading game plugins...");
-                // Hide the splash
-                splash.classList.add("hidden");
-                setTimeout(function () {
-                  splash.remove();
-                }, 400);
-
-                // main.js called PluginManager.setup($plugins). The
-                // hardened loader in lang-shim.js fetches every plugin
-                // source in parallel and exposes window.__pluginsLoaded
-                // as a Promise that resolves once every plugin has been
-                // injected as an inline <script>. Wait on it so we don't
-                // boot before plugins (incl. the DRM payload) execute.
-                // Falls back to a resolved Promise when the hardened
-                // loader is absent (no behavioural change in that case).
-                return Promise.resolve(window.__pluginsLoaded).then(
-                  function () {
-                    bootAfterPlugins();
+                // Intercept the onload handler that main.js will set
+                // window.onload already fired so a plain assignment would
+                // never trigger. We capture it and call it ourselves once
+                // all plugin scripts have loaded.
+                var _bootOnload = null;
+                Object.defineProperty(window, "onload", {
+                  set: function (fn) {
+                    _bootOnload = fn;
                   },
-                );
+                  get: function () {
+                    return _bootOnload;
+                  },
+                  configurable: true,
+                });
 
-                function bootAfterPlugins() {
-                  // Finish boot: apply browser overrides then start game.
-                  function finishBoot() {
-                    setPhase("apply-overrides", "Applying overrides...");
-                    // Apply browser overrides for non-zlib DRM types
-                    // (deobfuscated.js, GameCode.js, etc.). For zlib DRM,
-                    // the overrides were already applied via inflateSync
-                    // but __applyBrowserOverrides is idempotent.
-                    if (window.__applyBrowserOverrides)
-                      window.__applyBrowserOverrides();
+                return loadScripts(GAME_SCRIPTS, 0).then(function () {
+                  setPhase("plugins", "Loading game plugins...");
+                  // Hide the splash
+                  splash.classList.add("hidden");
+                  setTimeout(function () {
+                    splash.remove();
+                  }, 400);
 
-                    // Hook lang-shim into Scene_Boot AFTER DRM payload
-                    // has loaded (it overwrites Scene_Boot.prototype.start)
-                    if (window.__langShimHookBoot) window.__langShimHookBoot();
-                    if (window.__achvShimHookBoot) window.__achvShimHookBoot();
-                    delete window.onload;
-                    bootDone = true;
+                  // main.js called PluginManager.setup($plugins). The
+                  // hardened loader in lang-shim.js fetches every plugin
+                  // source in parallel and exposes window.__pluginsLoaded
+                  // as a Promise that resolves once every plugin has been
+                  // injected as an inline <script>. Wait on it so we don't
+                  // boot before plugins (incl. the DRM payload) execute.
+                  // Falls back to a resolved Promise when the hardened
+                  // loader is absent (no behavioural change in that case).
+                  return Promise.resolve(window.__pluginsLoaded).then(
+                    function () {
+                      bootAfterPlugins();
+                    },
+                  );
 
-                    function startScene() {
-                      if (_bootOnload) {
-                        _bootOnload();
-                      } else if (typeof SceneManager !== "undefined") {
-                        SceneManager.run(Scene_Boot);
+                  function bootAfterPlugins() {
+                    // Finish boot: apply browser overrides then start game.
+                    function finishBoot() {
+                      setPhase("apply-overrides", "Applying overrides...");
+                      // Apply browser overrides for non-zlib DRM types
+                      // (deobfuscated.js, GameCode.js, etc.). For zlib DRM,
+                      // the overrides were already applied via inflateSync
+                      // but __applyBrowserOverrides is idempotent.
+                      if (window.__applyBrowserOverrides)
+                        window.__applyBrowserOverrides();
+
+                      // Hook lang-shim into Scene_Boot AFTER DRM payload
+                      // has loaded (it overwrites Scene_Boot.prototype.start)
+                      if (window.__langShimHookBoot)
+                        window.__langShimHookBoot();
+                      if (window.__achvShimHookBoot)
+                        window.__achvShimHookBoot();
+                      delete window.onload;
+                      bootDone = true;
+
+                      function startScene() {
+                        if (_bootOnload) {
+                          _bootOnload();
+                        } else if (typeof SceneManager !== "undefined") {
+                          SceneManager.run(Scene_Boot);
+                        }
+                      }
+
+                      // The DRM payload wraps SceneManager.run to call
+                      // DataManager.init() synchronously, which enumerates
+                      // auto*.rpgsave keys from localStorage to rebuild the
+                      // globalInfo autoSaves dict. For overhaul mods the
+                      // keys live under "<modId>:RPG Auto<ts>"; if they
+                      // haven't been restored from IDB yet (LS eviction),
+                      // the cleanup loop sees an empty directory and wipes
+                      // the dict, making autosaves vanish from the load
+                      // menu even though they persist in IDB. Block boot
+                      // until lang-shim signals restoration is complete.
+                      if (window.__langShimSavesReady) {
+                        Promise.resolve(window.__langShimSavesReady).then(
+                          startScene,
+                        );
+                      } else {
+                        startScene();
                       }
                     }
 
-                    // The DRM payload wraps SceneManager.run to call
-                    // DataManager.init() synchronously, which enumerates
-                    // auto*.rpgsave keys from localStorage to rebuild the
-                    // globalInfo autoSaves dict. For overhaul mods the
-                    // keys live under "<modId>:RPG Auto<ts>"; if they
-                    // haven't been restored from IDB yet (LS eviction),
-                    // the cleanup loop sees an empty directory and wipes
-                    // the dict, making autosaves vanish from the load
-                    // menu even though they persist in IDB. Block boot
-                    // until lang-shim signals restoration is complete.
-                    if (window.__langShimSavesReady) {
-                      Promise.resolve(window.__langShimSavesReady).then(
-                        startScene,
-                      );
-                    } else {
-                      startScene();
-                    }
-                  }
-
-                  // Some mods load game code via async <script> tags
-                  // (e.g. deobfuscated.js injected by _()), which may not
-                  // have executed yet. Detect and wait for them before
-                  // applying overrides and booting the game.
-                  var pendingGameCode = null;
-                  var scripts = document.getElementsByTagName("script");
-                  for (var si = 0; si < scripts.length; si++) {
-                    var src = scripts[si].getAttribute("src") || "";
-                    if (
-                      src.indexOf("deobfuscated") >= 0 ||
-                      src.indexOf("GameCode") >= 0
-                    ) {
-                      // Check if game globals exist (script already ran)
+                    // Some mods load game code via async <script> tags
+                    // (e.g. deobfuscated.js injected by _()), which may not
+                    // have executed yet. Detect and wait for them before
+                    // applying overrides and booting the game.
+                    var pendingGameCode = null;
+                    var scripts = document.getElementsByTagName("script");
+                    for (var si = 0; si < scripts.length; si++) {
+                      var src = scripts[si].getAttribute("src") || "";
                       if (
-                        typeof Lang === "undefined" &&
-                        typeof App === "undefined"
+                        src.indexOf("deobfuscated") >= 0 ||
+                        src.indexOf("GameCode") >= 0
                       ) {
-                        pendingGameCode = scripts[si];
+                        // Check if game globals exist (script already ran)
+                        if (
+                          typeof Lang === "undefined" &&
+                          typeof App === "undefined"
+                        ) {
+                          pendingGameCode = scripts[si];
+                        }
+                        break;
                       }
-                      break;
                     }
-                  }
 
-                  if (pendingGameCode) {
-                    var _booted = false;
-                    function onceDone() {
-                      if (_booted) return;
-                      _booted = true;
+                    if (pendingGameCode) {
+                      var _booted = false;
+                      function onceDone() {
+                        if (_booted) return;
+                        _booted = true;
+                        finishBoot();
+                      }
+                      pendingGameCode.addEventListener("load", onceDone);
+                      pendingGameCode.addEventListener("error", onceDone);
+                      // Safety timeout: don't block forever
+                      setTimeout(onceDone, 5000);
+                    } else {
                       finishBoot();
                     }
-                    pendingGameCode.addEventListener("load", onceDone);
-                    pendingGameCode.addEventListener("error", onceDone);
-                    // Safety timeout: don't block forever
-                    setTimeout(onceDone, 5000);
-                  } else {
-                    finishBoot();
                   }
-                }
-              });
-            }); // end preloadLangData().then
+                });
+              }); // end preloadLangData().then
           })
           .catch(function (e) {
             console.error("[boot] Fatal:", e);

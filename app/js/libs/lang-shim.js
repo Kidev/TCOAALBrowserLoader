@@ -32,6 +32,17 @@
 (function () {
   "use strict";
 
+  // Translator-format parsers and their schema version live in the shared,
+  // dependency-free lang-format.js (loaded before this script via GAME_SCRIPTS,
+  // and independently by the index.html bootstrap so a parser bump can apply on
+  // the reconnecting launch itself). Alias them here so the rest of the mod
+  // system keeps calling them by their original names. Bump LANG_PARSE_VERSION
+  // in lang-format.js, not here.
+  var LANG_FORMAT = (typeof window !== "undefined" && window.LangFormat) || {};
+  var LANG_PARSE_VERSION = LANG_FORMAT.LANG_PARSE_VERSION || 1;
+  var parseDialogueCsv = LANG_FORMAT.parseDialogueCsv;
+  var parseDialogueTxt = LANG_FORMAT.parseDialogueTxt;
+
   // Plugin loader hardening (iOS Safari mobile fix)
   //
   // Stock PluginManager.loadScript appends <script async=false src=...> for
@@ -1681,10 +1692,24 @@
       var entry = _modsData[key];
       checkModInstalled(key, function (installed, meta) {
         var curVer = entry.version || "";
-        var upToDate =
-          installed && (!curVer || !meta || meta.version === curVer);
-        if (upToDate) {
+        var versionOk = !curVer || !meta || meta.version === curVer;
+        // The .csv/.txt translator formats are parsed locally into the cached
+        // CLD; if the parser has since improved (LANG_PARSE_VERSION bumped) the
+        // download is fine but the cache is stale.
+        var canReparse = /\.(csv|txt)$/i.test(entry.langFile || "");
+        var parseStale =
+          canReparse &&
+          (!meta || (meta.langParseVersion || 0) < LANG_PARSE_VERSION);
+        if (installed && versionOk && !parseStale) {
           next();
+          return;
+        }
+        // Content is current but parsed by an older parser: re-parse the file
+        // already in IDB instead of re-downloading the whole translation.
+        if (installed && versionOk && parseStale) {
+          reextractModLangData(key, function () {
+            next();
+          });
           return;
         }
         installMod(
@@ -1717,299 +1742,6 @@
   }
 
   // Mod installation (same-origin fetch from /mods/{id}/)
-
-  /**
-   * Parse a single CSV line into an array of fields. Handles RFC 4180
-   * double-quote escaping: "" inside a quoted field -> literal ".
-   */
-  function parseCsvLine(line) {
-    var out = [];
-    var buf = "";
-    var i = 0;
-    var inQ = false;
-    while (i < line.length) {
-      var c = line.charAt(i);
-      if (inQ) {
-        if (c === '"') {
-          if (line.charAt(i + 1) === '"') {
-            buf += '"';
-            i += 2;
-            continue;
-          }
-          inQ = false;
-          i++;
-          continue;
-        }
-        buf += c;
-        i++;
-        continue;
-      }
-      if (c === '"') {
-        inQ = true;
-        i++;
-        continue;
-      }
-      if (c === ",") {
-        out.push(buf);
-        buf = "";
-        i++;
-        continue;
-      }
-      buf += c;
-      i++;
-    }
-    out.push(buf);
-    return out;
-  }
-
-  /**
-   * Parse a TCOAAL translator dialogue.csv into a lang-data object matching
-   * the CLD schema ({ sysLabel, sysMenus, labelLUT, linesLUT }).
-   *
-   * The CSV is sectioned: each section begins after a blank row with a
-   * header row naming the section, and rows inside the section describe
-   * key -> translation mappings. We only consume sections that map cleanly
-   * onto the CLD LUTs; other sections (Version, Language, Credits,
-   * Descriptions, etc.) are ignored. Untranslated rows (empty translation
-   * column) are skipped so the SW merge falls back to the base game.
-   */
-  function parseDialogueCsv(text) {
-    var out = { sysLabel: {}, sysMenus: {}, labelLUT: {}, linesLUT: {} };
-    if (!text) return out;
-    // Normalize newlines, then walk logical CSV records (quotes can span lines).
-    text = text.replace(/\r\n?/g, "\n");
-
-    var records = [];
-    var buf = "";
-    var inQ = false;
-    for (var i = 0; i < text.length; i++) {
-      var c = text.charAt(i);
-      if (c === '"') {
-        inQ = !inQ;
-        buf += c;
-        continue;
-      }
-      if (c === "\n" && !inQ) {
-        records.push(buf);
-        buf = "";
-        continue;
-      }
-      buf += c;
-    }
-    if (buf.length) records.push(buf);
-
-    var section = null; // "labels" | "menus" | "items" | "lines" | "language" | "version" | null
-    for (var r = 0; r < records.length; r++) {
-      var raw = records[r];
-      if (!raw || raw.replace(/,+$/g, "").trim() === "") {
-        section = null;
-        continue;
-      }
-      var cells = parseCsvLine(raw);
-      var c0 = (cells[0] || "").trim();
-      // Section headers: only recognised at section boundaries (after
-      // a blank line resets section=null). Otherwise "Language, Langue"
-      // inside the Menus block would be mistaken for a header.
-      if (section === null) {
-        if (c0 === "Labels") {
-          section = "labels";
-          continue;
-        }
-        if (c0 === "Menus") {
-          section = "menus";
-          continue;
-        }
-        if (c0 === "Speakers" || c0 === "Items") {
-          section = "items";
-          continue;
-        }
-        if (c0 === "Descriptions") {
-          section = "lines";
-          continue;
-        }
-        if (c0 === "Language") {
-          section = "language";
-          continue;
-        }
-        if (c0 === "Version") {
-          section = "version";
-          continue;
-        }
-        if (c0 === "Section") {
-          section = "lines";
-          continue;
-        }
-      }
-      if (section === "language") {
-        // row shape: <langName>, <fontFile>, <fontSize>, ...
-        if (!out.langName && c0) out.langName = c0;
-        var ff = (cells[1] || "").trim();
-        if (ff && !out.fontFace) out.fontFace = ff;
-        var fs = parseInt((cells[2] || "").trim(), 10);
-        if (!isNaN(fs) && !out.fontSize) out.fontSize = fs;
-        section = null;
-        continue;
-      }
-      if (section === "version") {
-        if (!out.langVers && c0) out.langVers = c0;
-        section = null;
-        continue;
-      }
-      // Inside "Section" the following row is a column header (ID,Source,...)
-      if (section === "lines" && c0 === "ID") continue;
-
-      switch (section) {
-        case "labels": {
-          // key, English, Translation
-          var lk = c0;
-          var lt = (cells[2] || "").trim();
-          if (lk && lt) out.sysLabel[lk] = lt;
-          break;
-        }
-        case "menus": {
-          // key, Translation, ...
-          var mk = c0;
-          var mt = (cells[1] || "").trim();
-          if (mk && mt) out.sysMenus[mk] = mt;
-          break;
-        }
-        case "items": {
-          // hash, English, Translation
-          var ik = c0;
-          var it = (cells[2] || "").trim();
-          if (ik && it) out.labelLUT[ik] = it;
-          break;
-        }
-        case "lines": {
-          // hash, Speaker, English, Translation
-          var sh = c0;
-          var tr = cells[3];
-          if (!sh || tr == null || tr === "") break;
-          if (!out.linesLUT[sh]) out.linesLUT[sh] = [];
-          out.linesLUT[sh].push(tr);
-          break;
-        }
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Parse a TCOAAL translator dialogue.txt into a lang-data object. The
-   * format uses [SECTION] headers followed by "key : value" lines; map
-   * file sections ([CommonEvents.json], [Map###.json]) use "#hash (Speaker)"
-   * block headers with one or more ": text" continuation lines. Blank
-   * values skip the row so the SW merge falls back to the base game.
-   */
-  function parseDialogueTxt(text) {
-    var out = { sysLabel: {}, sysMenus: {}, labelLUT: {}, linesLUT: {} };
-    if (!text) return out;
-    text = text.replace(/\r\n?/g, "\n");
-    var lines = text.split("\n");
-
-    var section = null; // "labels" | "menus" | "items" | "choices" | "lines" | "language" | "font" | null
-    var curHash = null;
-
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      if (line === "") {
-        curHash = null;
-        continue;
-      }
-      // Section header
-      var m = line.match(/^\[([^\]]+)\]\s*$/);
-      if (m) {
-        curHash = null;
-        var name = m[1];
-        if (name === "LABELS") section = "labels";
-        else if (name === "MENUS") section = "menus";
-        else if (name === "SPEAKERS" || name === "ITEMS") section = "items";
-        else if (name === "CHOICES" || /\.json$/i.test(name)) section = "lines";
-        else if (name === "DESCRIPTIONS") section = "lines";
-        else if (name === "LANGUAGE") section = "language";
-        else if (name === "FONT") section = "font";
-        else if (name === "VERSION") section = "version";
-        else section = null;
-        continue;
-      }
-
-      if (section === "language") {
-        // Single free-form line = language display name
-        if (!out.langName) out.langName = line.trim();
-        continue;
-      }
-
-      if (section === "version") {
-        if (!out.langVers) out.langVers = line.trim();
-        continue;
-      }
-
-      if (section === "font") {
-        var fkv = line.match(/^\s*([^:]+?)\s*:\s*(.*)$/);
-        if (fkv) {
-          var fk = fkv[1].trim().toLowerCase();
-          var fv = fkv[2].trim();
-          // "File" in dialogue.txt is the font face name (matches
-          // the base CLD's fontFace field, e.g. "GameFont").
-          if (fk === "file" || fk === "face" || fk === "name") {
-            if (fv) out.fontFace = fv;
-          } else if (fk === "size") {
-            var n = parseInt(fv, 10);
-            if (!isNaN(n)) out.fontSize = n;
-          }
-        }
-        continue;
-      }
-
-      if (section === "lines") {
-        // "#hash (Speaker)" opens a multi-line record with ": text" continuations.
-        // "#hash : text" is a single-line record (common in CHOICES).
-        var inline = line.match(/^#([^\s(:]+)\s*:\s?(.*)$/);
-        if (inline) {
-          var ih = inline[1];
-          var iv = inline[2];
-          if (iv !== "") {
-            if (!out.linesLUT[ih]) out.linesLUT[ih] = [];
-            out.linesLUT[ih].push(iv);
-          }
-          curHash = null;
-          continue;
-        }
-        var hdr = line.match(/^#([^\s(]+)\s*(?:\([^)]*\))?\s*$/);
-        if (hdr) {
-          curHash = hdr[1];
-          if (!out.linesLUT[curHash]) out.linesLUT[curHash] = [];
-          continue;
-        }
-        var cont = line.match(/^:\s?(.*)$/);
-        if (cont && curHash) {
-          out.linesLUT[curHash].push(cont[1]);
-          continue;
-        }
-        continue;
-      }
-
-      // Key/value sections: "#hash : value" or "key : value"
-      var kv = line.match(/^\s*#?([^:]+?)\s*:\s*(.*)$/);
-      if (!kv) continue;
-      var key = kv[1].trim();
-      var val = kv[2].trim();
-      if (!key || !val) continue;
-
-      switch (section) {
-        case "labels":
-          out.sysLabel[key] = val;
-          break;
-        case "menus":
-          out.sysMenus[key] = val;
-          break;
-        case "items":
-          out.labelLUT[key] = val;
-          break;
-      }
-    }
-    return out;
-  }
 
   /**
    * After mod installation, extract language data from the mod's langFile
@@ -2086,6 +1818,46 @@
     };
   }
 
+  /**
+   * Re-parse an already-installed translation's langFile (still in IDB from a
+   * prior install) into the __mod_lang_data__ cache, without re-downloading.
+   * Used when LANG_PARSE_VERSION bumps: the file content is unchanged but the
+   * parser that produces the cached CLD has improved, so we just re-run it and
+   * stamp the new langParseVersion. Works offline.
+   */
+  function reextractModLangData(modId, callback) {
+    var modEntry = _modsData && _modsData[modId];
+    if (!modEntry || !modEntry.langFile) {
+      if (callback) callback();
+      return;
+    }
+    openAssetsDb(function (db) {
+      if (!db) {
+        if (callback) callback();
+        return;
+      }
+      extractModLangData(db, modId, modEntry, function () {
+        getAssetMain(db, "__mod_meta__:" + modId, function (val) {
+          var meta = {};
+          try {
+            if (val) meta = typeof val === "string" ? JSON.parse(val) : val;
+          } catch (e) {
+            meta = {};
+          }
+          meta.langParseVersion = LANG_PARSE_VERSION;
+          putAsset(
+            db,
+            "__mod_meta__:" + modId,
+            JSON.stringify(meta),
+            function () {
+              if (callback) callback();
+            },
+          );
+        });
+      });
+    });
+  }
+
   function installMod(modId, basePath, onProgress, onDone, onError) {
     if (!basePath) {
       if (onError) onError("No mod path configured");
@@ -2126,6 +1898,7 @@
             version: version,
             date: new Date().toISOString().substring(0, 10),
             files: stored,
+            langParseVersion: LANG_PARSE_VERSION,
           });
           putAsset(db, "__mod_meta__:" + modId, meta, function () {
             // Extract and cache mod lang data if langFile is specified
