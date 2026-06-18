@@ -181,20 +181,17 @@ function parseArgs(argv) {
   return opts;
 }
 
-function main() {
-  const opts = parseArgs(process.argv.slice(2));
+function run(opts) {
   const project = fs.existsSync(path.join(opts.project, "www"))
     ? path.join(opts.project, "www")
     : opts.project;
 
   if (!fs.existsSync(path.join(project, "data"))) {
-    console.error(`No data/ folder under: ${opts.project}`);
-    process.exit(1);
+    throw new Error(`No data/ folder under: ${opts.project}`);
   }
   if (fs.existsSync(opts.out)) {
     if (!opts.force) {
-      console.error(`Output exists: ${opts.out} (pass --force).`);
-      process.exit(1);
+      throw new Error(`Output exists: ${opts.out} (pass --force).`);
     }
     rmrf(opts.out);
   }
@@ -264,4 +261,14 @@ function main() {
   console.log(`Play it with: node server.js ${opts.out}`);
 }
 
-main();
+// Importable as a library (browser bundle / share-project call run() in-process).
+module.exports = { run, parseArgs };
+
+if (require.main === module) {
+  try {
+    run(parseArgs(process.argv.slice(2)));
+  } catch (e) {
+    console.error(e && e.message ? e.message : e);
+    process.exit(1);
+  }
+}

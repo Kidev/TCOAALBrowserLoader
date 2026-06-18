@@ -249,11 +249,16 @@ async function setMapBackground(map, parallaxDir) {
   const par = (map.note.match(/<par:([^>]+)>/) || [])[1];
   if (!ground && !par) return false;
 
+  // The parallaxName VALUE is chosen deterministically (independent of whether
+  // a canvas backend is available), so the extracted data, and therefore the
+  // share-project fingerprint is identical with or without @napi-rs/canvas.
+  // With both layers we always name the composite `bg_<ground>_<par>`; canvas
+  // only decides whether the cosmetic editor PNG actually gets written (the
+  // runtime draws the background from the note's <ground>/<par>, not this slot).
   let name = ground || par;
   if (ground && par) {
-    const composite = await compositeLayers(parallaxDir, ground, par);
-    if (composite) name = composite;
-    // No canvas / missing source: fall back to the ground floor (or par).
+    name = `bg_${ground}_${par}`;
+    await compositeLayers(parallaxDir, ground, par); // best-effort PNG write
   }
 
   map.parallaxName = name;
@@ -654,21 +659,24 @@ function resolveWww(input) {
   return input;
 }
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
+async function run(opts) {
+  // Reset cross-run caches: composites are cached by (ground,par) but written
+  // into the run's own parallax dir, so a stale hit would skip writing the file
+  // when run() is called repeatedly in-process (share-project / browser bundle)
+  // with different output dirs.
+  _compositeCache.clear();
+
   const www = resolveWww(opts.www);
   const out = opts.out;
 
   if (!fs.existsSync(www) || !fs.statSync(www).isDirectory()) {
-    console.error(`Game www folder not found: ${opts.www}`);
-    process.exit(1);
+    throw new Error(`Game www folder not found: ${opts.www}`);
   }
   if (fs.existsSync(out)) {
     if (!opts.force) {
-      console.error(
+      throw new Error(
         `Output folder already exists: ${out} (pass --force to overwrite).`,
       );
-      process.exit(1);
     }
     rmrf(out);
   }
@@ -755,7 +763,13 @@ async function main() {
   console.log(`\nProject ready: ${path.resolve(out, "Game.rpgproject")}`);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Importable as a library (the browser bundle and share-project call run()
+// in-process). Only auto-run + own the process when invoked directly as a CLI.
+module.exports = { run, parseArgs, resolveWww, extract, buildNameMap };
+
+if (require.main === module) {
+  run(parseArgs(process.argv.slice(2))).catch((e) => {
+    console.error(e && e.message ? e.message : e);
+    process.exit(1);
+  });
+}

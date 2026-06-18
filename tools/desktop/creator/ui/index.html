@@ -1,0 +1,412 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TCOAAL Mod Creator</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --green: #86d37a;
+        --purple: #ec83c3;
+        --yellow: #eeea72;
+        --default: #d3d0c0;
+        --red: #955456;
+        --white: #ffffff;
+        --black: #000000;
+        --accent-light: #666666;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Georgia", serif;
+        color: var(--default);
+        background:
+          radial-gradient(
+            circle at 50% 90%,
+            rgba(128, 0, 255, 0.18),
+            rgba(0, 0, 0, 0) 60%
+          ),
+          linear-gradient(to bottom, #141014, #0a0a0a);
+        min-height: 100vh;
+      }
+      .wrap {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 26px 18px 60px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      h1 {
+        font-weight: normal;
+        letter-spacing: 0.06em;
+        color: var(--white);
+        font-size: 1.7rem;
+      }
+      .sub {
+        opacity: 0.7;
+        font-size: 0.95rem;
+        margin-top: 4px;
+      }
+      .panel {
+        background: rgba(20, 20, 20, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 18px 20px;
+      }
+      .panel-title {
+        color: var(--purple);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 0.9rem;
+        margin-bottom: 12px;
+      }
+      label {
+        display: block;
+        font-size: 0.82rem;
+        opacity: 0.7;
+        margin: 10px 0 4px;
+      }
+      input[type="text"] {
+        width: 100%;
+        font-family: inherit;
+        font-size: 0.95rem;
+        color: var(--white);
+        background: #161616;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 5px;
+        padding: 8px 10px;
+      }
+      .field {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .field input {
+        flex: 1;
+      }
+      .btn {
+        font-family: inherit;
+        font-size: 0.92rem;
+        font-weight: bold;
+        color: var(--white);
+        background: var(--accent-light);
+        border: none;
+        border-radius: 4px;
+        padding: 8px 16px;
+        cursor: pointer;
+        transition: all 0.18s;
+        white-space: nowrap;
+      }
+      .btn:hover {
+        background: #7a7a7a;
+      }
+      .btn.primary {
+        background: var(--purple);
+        color: #1a0f16;
+      }
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 12px;
+      }
+      .bases {
+        margin-top: 6px;
+      }
+      .base-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        background: #1d1d1d;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 5px;
+        padding: 6px 10px;
+        margin-top: 6px;
+        font-size: 0.9rem;
+      }
+      .base-item button {
+        background: none;
+        border: none;
+        color: var(--red);
+        cursor: pointer;
+        font-family: inherit;
+      }
+      #log {
+        background: #0c0c0c;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 12px;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+        max-height: 240px;
+        overflow: auto;
+        color: #b8d0b0;
+      }
+      .ok {
+        color: var(--green);
+      }
+      .err {
+        color: var(--red);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div>
+        <h1>TCOAAL Mod Creator</h1>
+        <div class="sub">
+          Create a project from your game, edit it in RPG Maker MV, test it in
+          the browser, then share it as a copyright-safe .tcoaalmod diff.
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">1. Create project from a game</div>
+        <label>Game folder (contains www/)</label>
+        <div class="field">
+          <input type="text" id="ex-www" placeholder="path to your game folder" />
+          <button class="btn" onclick="pick('ex-www')">Browse</button>
+        </div>
+        <label>Output project folder</label>
+        <div class="field">
+          <input type="text" id="ex-out" placeholder="where to write the project" />
+          <button class="btn" onclick="pick('ex-out')">Browse</button>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="btn-extract" onclick="doExtract()">
+            Create project
+          </button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">2. Test in browser (dev loop)</div>
+        <label>Project folder</label>
+        <div class="field">
+          <input type="text" id="play-project" placeholder="project folder to run" />
+          <button class="btn" onclick="pick('play-project')">Browse</button>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="btn-play" onclick="doPlay()">
+            Run in browser
+          </button>
+          <button class="btn" id="btn-stop" onclick="doStop()">Stop</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">3. Pack project (re-encode for the game)</div>
+        <label>Project folder</label>
+        <div class="field">
+          <input type="text" id="pk-project" placeholder="edited project folder" />
+          <button class="btn" onclick="pick('pk-project')">Browse</button>
+        </div>
+        <label>Output www folder</label>
+        <div class="field">
+          <input type="text" id="pk-out" placeholder="where to write the packed www" />
+          <button class="btn" onclick="pick('pk-out')">Browse</button>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="btn-pack" onclick="doPack()">
+            Pack project
+          </button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">4. Share (build .tcoaalmod)</div>
+        <label>Edited project folder</label>
+        <div class="field">
+          <input type="text" id="sh-project" placeholder="the project to share" />
+          <button class="btn" onclick="pick('sh-project')">Browse</button>
+        </div>
+        <label>Base game versions to support (add one or more)</label>
+        <div class="row">
+          <button class="btn" onclick="addBase()">Add base game folder</button>
+        </div>
+        <div class="bases" id="bases"></div>
+        <label>Name</label>
+        <input type="text" id="sh-name" placeholder="My Mod" />
+        <label>Author</label>
+        <input type="text" id="sh-author" placeholder="you" />
+        <label>Version</label>
+        <input type="text" id="sh-version" placeholder="1.0.0" />
+        <label>Description</label>
+        <input type="text" id="sh-desc" placeholder="(optional)" />
+        <label>Output file</label>
+        <div class="field">
+          <input type="text" id="sh-out" placeholder="mymod.tcoaalmod" />
+          <button class="btn" onclick="pickSave('sh-out')">Choose</button>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="btn-share" onclick="doShare()">
+            Build shareable mod
+          </button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Output</div>
+        <div id="log">Ready.</div>
+      </div>
+    </div>
+
+    <script>
+      var invoke = window.__TAURI__.core.invoke;
+      var dialog = window.__TAURI__.dialog;
+      var bases = [];
+
+      function $(id) {
+        return document.getElementById(id);
+      }
+      function log(text, cls) {
+        var el = $("log");
+        el.className = cls || "";
+        el.textContent = text;
+        el.scrollTop = el.scrollHeight;
+      }
+      function appendResult(res) {
+        var out = (res.stdout || "") + (res.stderr ? "\n" + res.stderr : "");
+        log(out.trim() || (res.success ? "Done." : "Failed."), res.success ? "ok" : "err");
+      }
+
+      async function pick(id) {
+        var p = await dialog.open({ directory: true, multiple: false });
+        if (p) $(id).value = p;
+      }
+      async function pickSave(id) {
+        var p = await dialog.save({
+          defaultPath: "mymod.tcoaalmod",
+          filters: [{ name: "TCOAAL mod", extensions: ["tcoaalmod"] }],
+        });
+        if (p) $(id).value = p;
+      }
+      async function addBase() {
+        var p = await dialog.open({ directory: true, multiple: false });
+        if (!p) return;
+        bases.push(p);
+        renderBases();
+      }
+      function renderBases() {
+        var box = $("bases");
+        box.innerHTML = "";
+        bases.forEach(function (b, i) {
+          var d = document.createElement("div");
+          d.className = "base-item";
+          var span = document.createElement("span");
+          span.textContent = b;
+          var btn = document.createElement("button");
+          btn.textContent = "remove";
+          btn.onclick = function () {
+            bases.splice(i, 1);
+            renderBases();
+          };
+          d.appendChild(span);
+          d.appendChild(btn);
+          box.appendChild(d);
+        });
+      }
+
+      function busy(id, on) {
+        $(id).disabled = on;
+      }
+
+      async function doExtract() {
+        if (!$("ex-www").value || !$("ex-out").value)
+          return log("Pick a game folder and an output folder.", "err");
+        busy("btn-extract", true);
+        log("Creating project... this can take a minute.");
+        try {
+          var res = await invoke("extract_project", {
+            www: $("ex-www").value,
+            out: $("ex-out").value,
+            extraArgs: [],
+          });
+          if (res.success && !$("play-project").value)
+            $("play-project").value = $("ex-out").value;
+          if (res.success && !$("pk-project").value)
+            $("pk-project").value = $("ex-out").value;
+          if (res.success && !$("sh-project").value)
+            $("sh-project").value = $("ex-out").value;
+          appendResult(res);
+        } catch (e) {
+          log(String(e), "err");
+        }
+        busy("btn-extract", false);
+      }
+
+      async function doPlay() {
+        if (!$("play-project").value)
+          return log("Pick a project folder to run.", "err");
+        try {
+          await invoke("start_play", { project: $("play-project").value });
+          log("Running in browser. A browser window/tab should open.", "ok");
+        } catch (e) {
+          log(String(e), "err");
+        }
+      }
+      async function doStop() {
+        try {
+          await invoke("stop_play");
+          log("Stopped the dev server.", "ok");
+        } catch (e) {
+          log(String(e), "err");
+        }
+      }
+
+      async function doPack() {
+        if (!$("pk-project").value || !$("pk-out").value)
+          return log("Pick a project folder and an output folder.", "err");
+        busy("btn-pack", true);
+        log("Packing...");
+        try {
+          appendResult(
+            await invoke("pack_project", {
+              project: $("pk-project").value,
+              out: $("pk-out").value,
+            }),
+          );
+        } catch (e) {
+          log(String(e), "err");
+        }
+        busy("btn-pack", false);
+      }
+
+      async function doShare() {
+        if (!$("sh-project").value) return log("Pick the project to share.", "err");
+        if (!bases.length) return log("Add at least one base game folder.", "err");
+        if (!$("sh-out").value) return log("Choose an output .tcoaalmod file.", "err");
+        busy("btn-share", true);
+        log("Building shareable mod... extracting each base, this can take a while.");
+        try {
+          appendResult(
+            await invoke("share_build", {
+              project: $("sh-project").value,
+              bases: bases,
+              out: $("sh-out").value,
+              name: $("sh-name").value,
+              author: $("sh-author").value,
+              version: $("sh-version").value,
+              description: $("sh-desc").value,
+            }),
+          );
+        } catch (e) {
+          log(String(e), "err");
+        }
+        busy("btn-share", false);
+      }
+    </script>
+  </body>
+</html>

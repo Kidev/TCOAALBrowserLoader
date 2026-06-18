@@ -60,9 +60,9 @@ const { hashPath, dekit, decodeK9a } = require("./build-tomb-mod.js");
 // here: extract-project recovers those through its own hard-coded engine-name
 // sets (their remaster hashing differs).
 
-const ASSET_NAMES = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "map-filenames.json"), "utf8"),
-);
+// require() (not fs.readFileSync) so esbuild inlines the JSON into the browser
+// bundle; Node resolves it identically.
+const ASSET_NAMES = require("./map-filenames.json");
 
 // img assets are PNG, audio is OGG in TCOAAL.
 function dirExt(dir) {
@@ -272,8 +272,6 @@ const MIN_KEYS = 3; // a current map needs at least this many codes to match
 const THRESHOLD = 0.5; // minimum Jaccard overlap to accept
 const MARGIN = 0.15; // best must beat the runner-up by at least this much
 
-const BUNDLED_REF = path.join(__dirname, "map-name-keys.json");
-
 /** Decode a logical data file from any game layout (old .k9a, remaster
  *  hashed+TCOAAL, or a plain dump), returning plaintext bytes or null. .k9a is
  *  tried first because some builds ship both a clean .k9a and a hashed copy. */
@@ -339,8 +337,8 @@ function loadMapNameRefs(namesFrom) {
     return refs.length ? refs : null;
   }
 
-  if (!fs.existsSync(BUNDLED_REF)) return null;
-  const raw = JSON.parse(fs.readFileSync(BUNDLED_REF, "utf8"));
+  // require() so esbuild inlines the (large) reference into the browser bundle.
+  const raw = require("./map-name-keys.json");
   return raw.map((m) => ({ name: m.n, keys: new Set(m.k) }));
 }
 

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "tcoaal-mod-installer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Install and uninstall TCOAAL mods on your game"
+
+[[bin]]
+name = "tcoaal-mod-installer"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-shell = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tcoaal_desktop_core = { path = "../../core" }

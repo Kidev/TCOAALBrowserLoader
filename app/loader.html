@@ -834,15 +834,44 @@
       .health-footer {
         display: flex;
         flex-wrap: wrap;
-        justify-content: center;
+        justify-content: space-between;
         align-items: center;
         gap: clamp(6px, 0.9vmin, 12px);
         margin-top: clamp(2px, 0.4vmin, 6px);
         padding-top: clamp(8px, 1.2vmin, 14px);
         border-top: 1px solid rgba(255, 255, 255, 0.08);
       }
+      /* Three zones: justified-left (Custom mods), centered (re-imports),
+         justified-right (Clear browser data). */
+      .health-footer .hf-left,
+      .health-footer .hf-right {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        gap: clamp(6px, 0.9vmin, 12px);
+      }
+      .health-footer .hf-left {
+        justify-content: flex-start;
+      }
+      .health-footer .hf-right {
+        justify-content: flex-end;
+      }
+      .health-footer .hf-center {
+        flex: 0 1 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: clamp(6px, 0.9vmin, 12px);
+      }
       .health-footer .action-btn.compact {
         flex: 0 1 auto;
+      }
+      .action-btn.accent {
+        background: rgba(236, 131, 195, 0.18);
+        border-color: rgba(236, 131, 195, 0.5);
+      }
+      .action-btn.accent:hover {
+        background: rgba(236, 131, 195, 0.3);
       }
 
       .action-btn.compact {
@@ -1478,27 +1507,41 @@
               </button>
               <div class="missing-list" id="missing-list"></div>
               <div class="health-footer">
-                <button
-                  class="action-btn compact"
-                  id="btn-reimport"
-                  onclick="loadGameFiles()"
-                >
-                  Re-import folder
-                </button>
-                <button
-                  class="action-btn compact"
-                  id="btn-reimport-zip"
-                  onclick="loadGameZip()"
-                >
-                  Re-import .zip
-                </button>
-                <button
-                  class="action-btn compact danger"
-                  id="btn-clear"
-                  onclick="askClearAll()"
-                >
-                  Clear browser data
-                </button>
+                <div class="hf-left">
+                  <button
+                    class="action-btn compact accent"
+                    id="btn-custom-mods"
+                    onclick="location.href='custom-mods.html'"
+                    title="Import, inspect and manage community mods"
+                  >
+                    Custom mods
+                  </button>
+                </div>
+                <div class="hf-center">
+                  <button
+                    class="action-btn compact"
+                    id="btn-reimport"
+                    onclick="loadGameFiles()"
+                  >
+                    Re-import folder
+                  </button>
+                  <button
+                    class="action-btn compact"
+                    id="btn-reimport-zip"
+                    onclick="loadGameZip()"
+                  >
+                    Re-import .zip
+                  </button>
+                </div>
+                <div class="hf-right">
+                  <button
+                    class="action-btn compact danger"
+                    id="btn-clear"
+                    onclick="askClearAll()"
+                  >
+                    Clear browser data
+                  </button>
+                </div>
               </div>
             </div>
             <div

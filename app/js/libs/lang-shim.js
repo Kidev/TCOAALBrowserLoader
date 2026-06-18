@@ -335,6 +335,13 @@
   var _modsData = null;
   var _modsLoaded = false;
 
+  // Registry of mods the user imported via custom-mods.html (keyed by content
+  // tag, e.g. "wafda24joj"). Their files already live in IDB under
+  // mod:{tag}:..., so they are merged into _modsData as already-installed
+  // entries and surfaced in the Mods menu (enable / disable / uninstall).
+  var IMPORTED_MODS_KEY = "__imported_mods__";
+  var _importedMods = {};
+
   // IDB key the SW (and index.html's preloadModsData) write the latest
   // mods.json text to. Mirrored here so a successful sync XHR also tops
   // up the durable copy independently of whether the SW intercepted.
@@ -392,6 +399,9 @@
   }
 
   loadModsData();
+  // Merge user-imported mods (async IDB read; resolves before the Mods menu can
+  // be opened). Runs after the var declarations below are set at IIFE end.
+  loadImportedMods();
 
   var MOD_TYPE_OVERHAUL = "overhaul";
   var MOD_TYPE_TRANSLATION = "translation";
@@ -462,6 +472,51 @@
   function getModEntry(modKey) {
     if (!modKey || !_modsData) return null;
     return _modsData[modKey] || null;
+  }
+
+  /**
+   * Merge user-imported mods (custom-mods.html, key __imported_mods__) into
+   * _modsData as already-installed overhaul entries, so they show up in the
+   * Mods menu. Their files are already in IDB under mod:{tag}:..., so there is
+   * no remote path/file-list to fetch (path:"" / files:[]). Async (IDB), but it
+   * resolves long before the player can open the Mods menu; harmless if empty.
+   */
+  function loadImportedMods(cb) {
+    openAssetsDb(function (db) {
+      if (!db) {
+        if (cb) cb();
+        return;
+      }
+      getAssetMain(db, IMPORTED_MODS_KEY, function (raw) {
+        try {
+          var reg = raw
+            ? typeof raw === "string"
+              ? JSON.parse(raw)
+              : raw
+            : null;
+          if (reg && typeof reg === "object") {
+            _importedMods = reg;
+            if (!_modsData) _modsData = {};
+            Object.keys(reg).forEach(function (tag) {
+              var m = reg[tag] || {};
+              _modsData[tag] = {
+                name: m.name || tag,
+                author: m.author || "",
+                version: m.version || "",
+                description: m.description || "",
+                type: m.type || MOD_TYPE_OVERHAUL,
+                icon: m.icon || "",
+                imported: true,
+                addedDate: m.addedDate || "",
+                path: "", // already in IDB; nothing to fetch
+                files: [],
+              };
+            });
+          }
+        } catch (e) {}
+        if (cb) cb();
+      });
+    });
   }
 
   /**
@@ -1972,7 +2027,18 @@
         deleteAsset(db, "__mod_meta__:" + modId, function () {
           delete _modStatus[modId];
           if (getActiveMod() === modId) setActiveMod(null);
-          if (callback) callback(null, count);
+          // If this was an imported (custom) mod, drop it from the registry too
+          // so it no longer appears in the Mods menu. Its save scope ({tag}:)
+          // is intentionally left intact, so a later re-import keeps the saves.
+          if (_importedMods && _importedMods[modId]) {
+            delete _importedMods[modId];
+            if (_modsData) delete _modsData[modId];
+            putAsset(db, IMPORTED_MODS_KEY, JSON.stringify(_importedMods), function () {
+              if (callback) callback(null, count);
+            });
+          } else if (callback) {
+            callback(null, count);
+          }
         });
       });
     });

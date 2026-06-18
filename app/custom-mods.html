@@ -1,0 +1,942 @@
+<!doctype html>
+<!--
+  TCOAAL Browser Player
+  Copyright (C) 2026 kidev
+
+  This program is free software: you can redistribute it and/or modify it
+  under the terms of the GNU Affero General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or (at your
+  option) any later version. This program is distributed in the hope that it
+  will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+  of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+  General Public License for more details: <https://www.gnu.org/licenses/>.
+
+  SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Custom Mods - TCOAAL Browser Player</title>
+    <link rel="icon" href="favicon.ico" sizes="any" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --green: #86d37a;
+        --purple: #ec83c3;
+        --blue: #596891;
+        --yellow: #eeea72;
+        --grey: #5b5b5b;
+        --default: #d3d0c0;
+        --red: #955456;
+        --white: #ffffff;
+        --black: #000000;
+        --bg-color-section: #2a2a2a;
+        --bg-color-section-lighter: #3a3a3a;
+        --txt-color: var(--white);
+        --accent-color: #555555;
+        --accent-color-light: #666666;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: var(--black);
+        color: var(--default);
+        font-family: "Georgia", serif;
+        min-height: 100vh;
+      }
+
+      /* Fixed background layer (mirrors loader.html): darkened bg.webp. */
+      .bg {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(
+            to bottom,
+            rgba(0, 0, 0, 0.35) 0%,
+            rgba(0, 0, 0, 0.6) 60%,
+            rgba(0, 0, 0, 0.82) 100%
+          ),
+          url("img/bg.webp") top center / cover no-repeat,
+          var(--black);
+      }
+      .bg::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+          circle,
+          rgba(128, 0, 255, 0.22) 0,
+          rgba(128, 0, 255, 0.05) 40%,
+          rgba(0, 0, 0, 0) 80%
+        );
+        background-repeat: no-repeat;
+        background-size: 200% 200%;
+        background-position: 50% 85%;
+        animation: haloPulse 4s ease-in-out infinite;
+      }
+      @keyframes haloPulse {
+        0% {
+          opacity: 0.3;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.6;
+          transform: scale(1.1);
+        }
+        100% {
+          opacity: 0.3;
+          transform: scale(1);
+        }
+      }
+
+      .wrap {
+        position: relative;
+        z-index: 1;
+        max-width: min(720px, 94vw);
+        margin: 0 auto;
+        padding: clamp(20px, 4vmin, 48px) 16px 80px;
+        display: flex;
+        flex-direction: column;
+        gap: clamp(12px, 1.8vmin, 18px);
+      }
+
+      header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      h1 {
+        font-family: "Georgia", serif;
+        font-weight: normal;
+        letter-spacing: 0.06em;
+        font-size: clamp(22px, 3.4vmin, 32px);
+        color: var(--white);
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+      }
+      a.back {
+        color: rgba(255, 255, 255, 0.8);
+        text-decoration: none;
+        font-size: 0.95rem;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: rgba(15, 15, 15, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        transition: all 0.2s;
+      }
+      a.back:hover {
+        color: var(--white);
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+
+      .panel {
+        width: 100%;
+        padding: clamp(16px, 2.2vmin, 26px) clamp(18px, 2.4vmin, 30px);
+        background: rgba(20, 20, 20, 0.88);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        box-shadow:
+          0 6px 24px rgba(0, 0, 0, 0.55),
+          inset 0 0 24px rgba(0, 0, 0, 0.35);
+      }
+      .panel-title {
+        color: var(--purple);
+        font-size: clamp(14px, 1.7vmin, 18px);
+        font-weight: normal;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin: 0 0 12px;
+      }
+      p.lede {
+        color: var(--default);
+        line-height: 1.6;
+        opacity: 0.92;
+      }
+
+      .action-btn {
+        background: var(--accent-color-light);
+        color: var(--txt-color);
+        border: none;
+        border-radius: 4px;
+        padding: clamp(8px, 1vmin, 12px) clamp(14px, 2vmin, 22px);
+        cursor: pointer;
+        font-size: clamp(14px, 1.7vmin, 17px);
+        font-family: "Georgia", serif;
+        font-weight: bold;
+        transition: all 0.2s;
+        white-space: nowrap;
+      }
+      .action-btn:hover {
+        background: #777;
+      }
+      .action-btn.primary {
+        background: var(--purple);
+        color: #1a0f16;
+      }
+      .action-btn.primary:hover {
+        filter: brightness(1.08);
+      }
+      .action-btn.danger {
+        background: rgba(149, 84, 86, 0.85);
+        color: var(--white);
+      }
+      .action-btn.danger:hover {
+        background: var(--red);
+      }
+      .action-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .drop {
+        border: 2px dashed rgba(255, 255, 255, 0.18);
+        border-radius: 8px;
+        padding: clamp(20px, 4vmin, 34px);
+        text-align: center;
+        transition: all 0.15s;
+        cursor: pointer;
+      }
+      .drop.over {
+        border-color: var(--purple);
+        background: rgba(236, 131, 195, 0.08);
+      }
+      .drop strong {
+        color: var(--white);
+      }
+      .meta {
+        color: var(--default);
+        opacity: 0.65;
+        font-size: 0.9rem;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 4px 14px;
+        margin: 10px 0 0;
+        font-size: 0.95rem;
+      }
+      .kv dt {
+        color: var(--default);
+        opacity: 0.6;
+      }
+      .kv dd {
+        margin: 0;
+      }
+      .pill {
+        display: inline-block;
+        font-size: 0.78rem;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        opacity: 0.85;
+      }
+      .ok {
+        color: var(--green);
+      }
+      .warn {
+        color: var(--yellow);
+      }
+      .err {
+        color: var(--red);
+      }
+      .status {
+        margin-top: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        font-size: 0.95rem;
+      }
+      .modcard {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: rgba(42, 42, 42, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 7px;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+      }
+      .empty {
+        opacity: 0.6;
+        font-style: italic;
+      }
+      code {
+        color: var(--green);
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.88em;
+      }
+      .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.18);
+        border-top-color: var(--purple);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -2px;
+        margin-right: 6px;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bg"></div>
+    <div class="wrap">
+      <header>
+        <h1>Custom mods</h1>
+        <a class="back" href="loader.html">&lt;- Back to loader</a>
+      </header>
+
+      <div class="panel">
+        <p class="lede">
+          Import a community mod into your in-browser copy of the game. A mod is
+          a diff: it carries only the author's changes, none of the game's
+          content, so your imported base game is required. Imported mods then
+          appear in the in-game <strong>Mods</strong> menu, where you can enable,
+          disable or uninstall them.
+        </p>
+        <div id="base-state" style="margin-top: 10px"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Import a mod</h2>
+        <div class="drop" id="drop">
+          <p><strong>Drop a mod file here</strong> or click to choose</p>
+          <p class="meta">
+            Supported: <code>.tcoaalmod</code> (diff mods) and packaged mod
+            <code>.zip</code> archives.
+          </p>
+          <input
+            type="file"
+            id="file"
+            accept=".tcoaalmod,.zip,application/zip"
+            hidden
+          />
+        </div>
+        <div class="status" id="analysis" hidden></div>
+        <div class="row" id="install-row" hidden style="margin-top: 14px">
+          <button class="action-btn primary" id="btn-install" disabled>
+            Install into my game
+          </button>
+          <span class="meta" id="install-note"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Installed custom mods</h2>
+        <div id="installed-list"></div>
+      </div>
+    </div>
+
+    <script>
+      "use strict";
+      var DB_NAME = "tcoaal";
+      var STORE = "assets";
+      var REGISTRY_KEY = "__imported_mods__";
+
+      function openDb() {
+        return new Promise(function (resolve, reject) {
+          var req = indexedDB.open(DB_NAME);
+          req.onsuccess = function () {
+            resolve(req.result);
+          };
+          req.onerror = function () {
+            reject(req.error);
+          };
+          req.onupgradeneeded = function () {
+            if (!req.result.objectStoreNames.contains(STORE)) {
+              req.result.createObjectStore(STORE);
+            }
+          };
+        });
+      }
+      function idbGet(db, key) {
+        return new Promise(function (resolve) {
+          var r = db.transaction(STORE).objectStore(STORE).get(key);
+          r.onsuccess = function () {
+            resolve(r.result);
+          };
+          r.onerror = function () {
+            resolve(undefined);
+          };
+        });
+      }
+      function idbPut(db, key, val) {
+        return new Promise(function (resolve, reject) {
+          var tx = db.transaction(STORE, "readwrite");
+          tx.objectStore(STORE).put(val, key);
+          tx.oncomplete = resolve;
+          tx.onerror = function () {
+            reject(tx.error);
+          };
+        });
+      }
+      function idbDelete(db, key) {
+        return new Promise(function (resolve) {
+          var tx = db.transaction(STORE, "readwrite");
+          tx.objectStore(STORE).delete(key);
+          tx.oncomplete = resolve;
+          tx.onerror = resolve;
+        });
+      }
+      function idbKeys(db) {
+        return new Promise(function (resolve) {
+          var out = [];
+          var r = db.transaction(STORE).objectStore(STORE).openKeyCursor();
+          r.onsuccess = function () {
+            var c = r.result;
+            if (!c) return resolve(out);
+            out.push(c.key);
+            c.continue();
+          };
+          r.onerror = function () {
+            resolve(out);
+          };
+        });
+      }
+      function idbDeletePrefix(db, prefix) {
+        return new Promise(function (resolve) {
+          var tx = db.transaction(STORE, "readwrite");
+          var store = tx.objectStore(STORE);
+          // "\\uffff" (highest BMP code unit) is the upper bound for the prefix.
+          var range = IDBKeyRange.bound(prefix, prefix + "\uffff");
+          var r = store.openKeyCursor(range);
+          var n = 0;
+          r.onsuccess = function () {
+            var c = r.result;
+            if (!c) return;
+            store.delete(c.key);
+            n++;
+            c.continue();
+          };
+          tx.oncomplete = function () {
+            resolve(n);
+          };
+          tx.onerror = function () {
+            resolve(n);
+          };
+        });
+      }
+
+      async function getRegistry(db) {
+        var raw = await idbGet(db, REGISTRY_KEY);
+        if (!raw) return {};
+        try {
+          return typeof raw === "string" ? JSON.parse(raw) : raw;
+        } catch (e) {
+          return {};
+        }
+      }
+      async function setRegistry(db, reg) {
+        await idbPut(db, REGISTRY_KEY, JSON.stringify(reg));
+      }
+
+      // Base-game files are stored under their plain relative path; mod overlays
+      // use a "mod:" prefix and bookkeeping keys use "__...__".
+      function isBaseFileKey(k) {
+        return (
+          typeof k === "string" &&
+          k.indexOf("mod:") !== 0 &&
+          k.indexOf("__") !== 0
+        );
+      }
+
+      var _runtimeP = null;
+      function loadRuntime() {
+        if (_runtimeP) return _runtimeP;
+        _runtimeP = new Promise(function (resolve, reject) {
+          if (window.ModRuntime) return resolve(window.ModRuntime);
+          var s = document.createElement("script");
+          s.src = "js/libs/mod-runtime.js";
+          s.onload = function () {
+            window.ModRuntime
+              ? resolve(window.ModRuntime)
+              : reject(new Error("mod-runtime failed to initialize"));
+          };
+          s.onerror = function () {
+            reject(
+              new Error("Could not load the mod runtime (js/libs/mod-runtime.js)"),
+            );
+          };
+          document.head.appendChild(s);
+        });
+        return _runtimeP;
+      }
+
+      async function readBaseFiles(db) {
+        var keys = await idbKeys(db);
+        var files = {};
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          if (!isBaseFileKey(k)) continue;
+          var v = await idbGet(db, k);
+          if (v == null) continue;
+          files[k] = v instanceof ArrayBuffer ? new Uint8Array(v) : v;
+        }
+        return files;
+      }
+
+      var $ = function (id) {
+        return document.getElementById(id);
+      };
+      var _db = null;
+      var _selected = null; // { name, bytes, kind, info|entries }
+
+      function fmtBytes(n) {
+        var u = ["B", "KB", "MB", "GB"];
+        var i = 0;
+        while (n >= 1024 && i < u.length - 1) {
+          n /= 1024;
+          i++;
+        }
+        return n.toFixed(i ? 1 : 0) + " " + u[i];
+      }
+
+      async function hasBaseGame(db) {
+        var keys = await idbKeys(db);
+        return keys.some(function (k) {
+          return isBaseFileKey(k) && k.indexOf("data/") === 0;
+        });
+      }
+
+      async function renderBaseState() {
+        var ok = await hasBaseGame(_db);
+        var el = $("base-state");
+        if (ok) {
+          el.innerHTML =
+            '<span class="ok">[OK] Base game detected.</span> ' +
+            '<span class="meta">Imported mods will be layered on top of it.</span>';
+        } else {
+          el.innerHTML =
+            '<span class="err">[!] No base game imported yet.</span> ' +
+            '<span class="meta">Import your game on the <a class="back" href="loader.html">loader</a> first; mods are diffs and need it.</span>';
+        }
+      }
+
+      async function renderInstalled() {
+        var reg = await getRegistry(_db);
+        var ids = Object.keys(reg);
+        var box = $("installed-list");
+        if (!ids.length) {
+          box.innerHTML = '<p class="empty">No custom mods imported yet.</p>';
+          return;
+        }
+        box.innerHTML = "";
+        ids.forEach(function (tag) {
+          var m = reg[tag];
+          var card = document.createElement("div");
+          card.className = "modcard";
+          card.innerHTML =
+            "<div><div><strong>" +
+            escapeHtml(m.name || tag) +
+            '</strong> <span class="pill">' +
+            escapeHtml(tag) +
+            "</span></div>" +
+            '<div class="meta">' +
+            (m.author ? "by " + escapeHtml(m.author) + " / " : "") +
+            "v" +
+            escapeHtml(m.version || "?") +
+            " / " +
+            (m.fileCount || 0) +
+            " files" +
+            (m.baseLabel ? " / base " + escapeHtml(m.baseLabel) : "") +
+            "</div></div>";
+          var btn = document.createElement("button");
+          btn.className = "action-btn danger";
+          btn.textContent = "Remove";
+          btn.onclick = function () {
+            wipeMod(tag, m.name || tag);
+          };
+          card.appendChild(btn);
+          box.appendChild(card);
+        });
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (c) {
+          return {
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          }[c];
+        });
+      }
+
+      function setAnalysis(html, cls) {
+        var el = $("analysis");
+        el.hidden = false;
+        el.className = "status" + (cls ? " " + cls : "");
+        el.innerHTML = html;
+      }
+
+      async function analyzeFile(file) {
+        _selected = null;
+        $("install-row").hidden = true;
+        $("btn-install").disabled = true;
+        setAnalysis(
+          '<span class="spinner"></span>Analyzing ' +
+            escapeHtml(file.name) +
+            "...",
+        );
+        var bytes = new Uint8Array(await file.arrayBuffer());
+        var isTcoaalmod = /\.tcoaalmod$/i.test(file.name);
+
+        try {
+          var rt = await loadRuntime();
+          if (isTcoaalmod || sniffTcoaalmod(bytes, rt)) {
+            var info = rt.inspect(bytes);
+            _selected = {
+              name: file.name,
+              bytes: bytes,
+              kind: "tcoaalmod",
+              info: info,
+            };
+            renderTcoaalmodAnalysis(file, info);
+            return;
+          }
+          // A plain .zip: peek at its entries to classify it.
+          var entries = rt.readZip(bytes);
+          var names = Object.keys(entries);
+          if (
+            names.indexOf("mod.json") >= 0 &&
+            looksLikeTomb(entries["mod.json"])
+          ) {
+            setAnalysis(
+              '<span class="warn">Tomb-format mod detected.</span>\n' +
+                "In-browser Tomb import is not available yet (it needs the base-2_0_14 reference). " +
+                "Use the desktop tools for now.",
+              "warn",
+            );
+            return;
+          }
+          var shipped = names.filter(function (n) {
+            return /^(data|img|audio|js|fonts|movies)\//.test(n);
+          });
+          if (shipped.length) {
+            _selected = {
+              name: file.name,
+              bytes: bytes,
+              kind: "shippedzip",
+              entries: entries,
+            };
+            setAnalysis(
+              '<span class="ok">Packaged mod archive.</span>\n' +
+                shipped.length +
+                " game files found. This will be layered over your base game as-is.",
+              "ok",
+            );
+            $("install-row").hidden = false;
+            $("btn-install").disabled = false;
+            $("install-note").textContent = "";
+            return;
+          }
+          setAnalysis(
+            '<span class="err">Unrecognized archive.</span>\nIt does not look like a .tcoaalmod or a packaged game mod.',
+            "err",
+          );
+        } catch (e) {
+          setAnalysis(
+            '<span class="err">Could not read this file:</span>\n' +
+              escapeHtml(e.message || String(e)),
+            "err",
+          );
+        }
+      }
+
+      function sniffTcoaalmod(bytes, rt) {
+        try {
+          var entries = rt.readZip(bytes);
+          return (
+            !!entries["mod.json"] &&
+            /tcoaal-share/.test(new TextDecoder().decode(entries["mod.json"]))
+          );
+        } catch (e) {
+          return false;
+        }
+      }
+      function looksLikeTomb(modJsonBytes) {
+        try {
+          var o = JSON.parse(new TextDecoder().decode(modJsonBytes));
+          return !!(o && (o.dataDeltas || o.imageDeltas || o.assets || o.files));
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function renderTcoaalmodAnalysis(file, info) {
+        var variantsHtml = info.variants
+          .map(function (v) {
+            var s = v.stats;
+            var detail = s
+              ? s.patched +
+                " patches, " +
+                s.added +
+                " added, " +
+                s.replaced +
+                " replaced, " +
+                s.deleted +
+                " deleted"
+              : "";
+            return (
+              "<li><strong>" +
+              escapeHtml(v.label) +
+              '</strong> <span class="meta">(' +
+              v.fileCount +
+              " data files" +
+              (detail ? " / " + detail : "") +
+              ")</span></li>"
+            );
+          })
+          .join("");
+        setAnalysis(
+          '<span class="ok">[OK] Valid mod diff (' +
+            escapeHtml(info.format) +
+            ").</span>\n" +
+            '<dl class="kv">' +
+            "<dt>Name</dt><dd>" +
+            escapeHtml(info.name) +
+            "</dd>" +
+            (info.author
+              ? "<dt>Author</dt><dd>" + escapeHtml(info.author) + "</dd>"
+              : "") +
+            "<dt>Version</dt><dd>" +
+            escapeHtml(info.version || "?") +
+            "</dd>" +
+            (info.description
+              ? "<dt>About</dt><dd>" + escapeHtml(info.description) + "</dd>"
+              : "") +
+            '<dt>Supports</dt><dd><ul style="margin:0;padding-left:18px">' +
+            variantsHtml +
+            "</ul></dd>" +
+            "<dt>Size</dt><dd>" +
+            fmtBytes(file.size) +
+            "</dd>" +
+            "</dl>",
+        );
+        $("install-row").hidden = false;
+        $("btn-install").disabled = false;
+        $("install-note").textContent =
+          "On install, your base game is matched against the supported versions above.";
+      }
+
+      async function doInstall() {
+        if (!_selected) return;
+        if (!(await hasBaseGame(_db))) {
+          setAnalysis(
+            '<span class="err">Import your base game first (on the loader).</span>',
+            "err",
+          );
+          return;
+        }
+        $("btn-install").disabled = true;
+        setAnalysis(
+          '<span class="spinner"></span>Installing - this can take a moment (extracting + repacking your game)...',
+        );
+        try {
+          var rt = await loadRuntime();
+          var tag, meta, files, deletions;
+
+          if (_selected.kind === "tcoaalmod") {
+            var baseFiles = await readBaseFiles(_db);
+            var res = await rt.applyTcoaalmod(baseFiles, _selected.bytes);
+            tag = res.tag;
+            files = res.files;
+            deletions = res.deletions || [];
+            meta = {
+              name: res.name,
+              author: res.author,
+              version: res.version,
+              description: res.description,
+              baseLabel: res.baseLabel,
+            };
+          } else {
+            // shipped-format .zip: store its entries verbatim.
+            files = _selected.entries;
+            deletions = [];
+            tag = await contentTagOf(files);
+            meta = {
+              name: _selected.name.replace(/\.zip$/i, ""),
+              author: "",
+              version: "1.0.0",
+            };
+          }
+
+          var relList = Object.keys(files);
+          for (var i = 0; i < relList.length; i++) {
+            var rel = relList[i];
+            await idbPut(_db, "mod:" + tag + ":" + rel, bufOf(files[rel]));
+          }
+          await idbPut(
+            _db,
+            "__mod_meta__:" + tag,
+            JSON.stringify({
+              version: meta.version || "",
+              date: new Date().toISOString().substring(0, 10),
+              files: relList.length,
+              imported: true,
+              deletions: deletions,
+            }),
+          );
+          var reg = await getRegistry(_db);
+          reg[tag] = {
+            name: meta.name,
+            author: meta.author || "",
+            version: meta.version || "",
+            description: meta.description || "",
+            baseLabel: meta.baseLabel || "",
+            type: "overhaul",
+            imported: true,
+            fileCount: relList.length,
+            deletions: deletions,
+            addedDate: new Date().toISOString().substring(0, 10),
+          };
+          await setRegistry(_db, reg);
+
+          setAnalysis(
+            '<span class="ok">[OK] Installed "' +
+              escapeHtml(meta.name) +
+              '" (' +
+              relList.length +
+              " files, id <code>" +
+              escapeHtml(tag) +
+              "</code>).</span>\nOpen the game and enable it from the <strong>Mods</strong> menu.",
+            "ok",
+          );
+          $("install-row").hidden = true;
+          _selected = null;
+          await renderInstalled();
+        } catch (e) {
+          setAnalysis(
+            '<span class="err">Install failed:</span>\n' +
+              escapeHtml(e.message || String(e)),
+            "err",
+          );
+          $("btn-install").disabled = false;
+        }
+      }
+
+      function bufOf(u8) {
+        if (u8 instanceof ArrayBuffer) return u8;
+        return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+      }
+      async function contentTagOf(files) {
+        // SHA-256 of sorted rel+content -> base36; mirrors mod-runtime.contentTag.
+        var enc = new TextEncoder();
+        var parts = [];
+        Object.keys(files)
+          .sort()
+          .forEach(function (rel) {
+            parts.push(enc.encode(rel));
+            parts.push(
+              files[rel] instanceof ArrayBuffer
+                ? new Uint8Array(files[rel])
+                : files[rel],
+            );
+          });
+        var total = parts.reduce(function (n, p) {
+          return n + p.length;
+        }, 0);
+        var buf = new Uint8Array(total);
+        var off = 0;
+        parts.forEach(function (p) {
+          buf.set(p, off);
+          off += p.length;
+        });
+        var digest = await crypto.subtle.digest("SHA-256", buf);
+        var hex = Array.from(new Uint8Array(digest).slice(0, 8))
+          .map(function (b) {
+            return b.toString(16).padStart(2, "0");
+          })
+          .join("");
+        return BigInt("0x" + hex)
+          .toString(36)
+          .slice(0, 10);
+      }
+
+      async function wipeMod(tag, name) {
+        if (
+          !confirm(
+            'Remove "' +
+              name +
+              '"?\n\nYour saves for it are kept, so re-importing later restores them.',
+          )
+        ) {
+          return;
+        }
+        await idbDeletePrefix(_db, "mod:" + tag + ":");
+        await idbDelete(_db, "__mod_meta__:" + tag);
+        var reg = await getRegistry(_db);
+        delete reg[tag];
+        await setRegistry(_db, reg);
+        try {
+          if (localStorage.getItem("_activeMod") === tag) {
+            localStorage.removeItem("_activeMod");
+          }
+        } catch (e) {}
+        await renderInstalled();
+      }
+
+      (async function init() {
+        try {
+          _db = await openDb();
+        } catch (e) {
+          document.querySelector(".wrap").innerHTML =
+            '<p class="err">Could not open the game database. Open this page from the same site as your game.</p>';
+          return;
+        }
+        await renderBaseState();
+        await renderInstalled();
+
+        var drop = $("drop");
+        var input = $("file");
+        drop.onclick = function () {
+          input.click();
+        };
+        input.onchange = function () {
+          if (input.files && input.files[0]) analyzeFile(input.files[0]);
+        };
+        ["dragenter", "dragover"].forEach(function (ev) {
+          drop.addEventListener(ev, function (e) {
+            e.preventDefault();
+            drop.classList.add("over");
+          });
+        });
+        ["dragleave", "drop"].forEach(function (ev) {
+          drop.addEventListener(ev, function (e) {
+            e.preventDefault();
+            drop.classList.remove("over");
+          });
+        });
+        drop.addEventListener("drop", function (e) {
+          if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            analyzeFile(e.dataTransfer.files[0]);
+          }
+        });
+        $("btn-install").onclick = doInstall;
+      })();
+    </script>
+  </body>
+</html>
