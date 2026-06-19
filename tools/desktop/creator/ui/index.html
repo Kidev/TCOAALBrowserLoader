@@ -56,26 +56,37 @@
         margin-top: 4px;
       }
 
-      /* Tab bar - one tab per feature, mirrors the browser Modding page. */
+      /* Tab layout - a vertical tab rail on the left, mirrors the browser
+         Modding page. */
+      .tab-layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+      }
       .tabs {
         display: flex;
-        flex-wrap: wrap;
+        flex-direction: column;
         gap: 4px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        flex: 0 0 auto;
+        min-width: 150px;
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+        padding-right: 10px;
       }
       .tab {
         background: transparent;
         border: none;
-        border-bottom: 2px solid transparent;
+        border-left: 2px solid transparent;
         color: var(--default);
         opacity: 0.62;
         font-family: "Georgia", serif;
         font-size: 0.95rem;
         letter-spacing: 0.03em;
-        padding: 9px 16px;
+        padding: 9px 14px;
         cursor: pointer;
         transition: all 0.15s;
-        border-radius: 6px 6px 0 0;
+        border-radius: 0 6px 6px 0;
+        text-align: left;
+        white-space: nowrap;
       }
       .tab:hover {
         opacity: 1;
@@ -84,11 +95,41 @@
       .tab.active {
         opacity: 1;
         color: var(--purple);
-        border-bottom-color: var(--purple);
+        border-left-color: var(--purple);
         background: rgba(236, 131, 195, 0.08);
+      }
+      .tab-content {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
       }
       .tabpane[hidden] {
         display: none;
+      }
+      @media (max-width: 560px) {
+        .tab-layout {
+          flex-direction: column;
+        }
+        .tabs {
+          flex-direction: row;
+          flex-wrap: wrap;
+          min-width: 0;
+          border-right: none;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+          padding-right: 0;
+          padding-bottom: 6px;
+        }
+        .tab {
+          border-left: none;
+          border-bottom: 2px solid transparent;
+          border-radius: 6px 6px 0 0;
+        }
+        .tab.active {
+          border-left-color: transparent;
+          border-bottom-color: var(--purple);
+        }
       }
 
       .panel {
@@ -173,6 +214,9 @@
         align-items: center;
         margin-top: 12px;
       }
+      .row.center {
+        justify-content: center;
+      }
       .bases {
         margin-top: 6px;
       }
@@ -253,212 +297,242 @@
         </div>
       </header>
 
-      <nav class="tabs" role="tablist">
-        <button class="tab active" data-tab="create">Create</button>
-        <button class="tab" data-tab="play">Play</button>
-        <button class="tab" data-tab="pack">Pack</button>
-        <button class="tab" data-tab="build">Build mod</button>
-        <button class="tab" data-tab="steam">Steam versions</button>
-      </nav>
+      <div class="tab-layout">
+        <nav class="tabs" role="tablist">
+          <button class="tab active" data-tab="create">Create</button>
+          <button class="tab" data-tab="play">Play</button>
+          <button class="tab" data-tab="pack">Pack</button>
+          <button class="tab" data-tab="build">Build mod</button>
+          <button class="tab" data-tab="steam">Steam versions</button>
+        </nav>
 
-      <!-- Create project from a game -->
-      <section class="tabpane" id="tab-create">
-        <div class="panel">
-          <div class="panel-title">Create project from a game</div>
-          <div class="lede">
-            Decrypt a game folder into an editable RPG Maker MV project.
-          </div>
-          <label>Game folder (contains www/)</label>
-          <div class="field">
-            <input
-              type="text"
-              id="ex-www"
-              placeholder="path to your game folder"
-            />
-            <button class="btn" onclick="pick('ex-www')">Browse</button>
-          </div>
-          <label>Output project folder</label>
-          <div class="field">
-            <input
-              type="text"
-              id="ex-out"
-              placeholder="where to write the project"
-            />
-            <button class="btn" onclick="pick('ex-out')">Browse</button>
-          </div>
-          <div class="row">
-            <button class="btn primary" id="btn-extract" onclick="doExtract()">
-              Create project
-            </button>
-          </div>
-        </div>
-      </section>
+        <div class="tab-content">
+          <!-- Create project from a game -->
+          <section class="tabpane" id="tab-create">
+            <div class="panel">
+              <div class="panel-title">Create project from a game</div>
+              <div class="lede">
+                Decrypt a game folder into an editable RPG Maker MV project.
+              </div>
+              <label>Game folder (contains www/)</label>
+              <div class="field">
+                <input
+                  type="text"
+                  id="ex-www"
+                  placeholder="path to your game folder"
+                />
+                <button class="btn" onclick="pick('ex-www')">Browse</button>
+              </div>
+              <label>Output project folder</label>
+              <div class="field">
+                <input
+                  type="text"
+                  id="ex-out"
+                  placeholder="where to write the project"
+                />
+                <button class="btn" onclick="pick('ex-out')">Browse</button>
+              </div>
+              <div class="row center">
+                <button
+                  class="btn primary"
+                  id="btn-extract"
+                  onclick="doExtract()"
+                >
+                  Create project
+                </button>
+              </div>
+            </div>
+          </section>
 
-      <!-- Test in browser -->
-      <section class="tabpane" id="tab-play" hidden>
-        <div class="panel">
-          <div class="panel-title">Test in browser (dev loop)</div>
-          <div class="lede">
-            Run the project in true browser mode and open it in your browser.
-          </div>
-          <label>Project folder</label>
-          <div class="field">
-            <input
-              type="text"
-              id="play-project"
-              placeholder="project folder to run"
-            />
-            <button class="btn" onclick="pick('play-project')">Browse</button>
-          </div>
-          <div class="row">
-            <button class="btn primary" id="btn-play" onclick="doPlay()">
-              Run in browser
-            </button>
-            <button class="btn" id="btn-stop" onclick="doStop()">Stop</button>
-          </div>
-        </div>
-      </section>
+          <!-- Test in browser -->
+          <section class="tabpane" id="tab-play" hidden>
+            <div class="panel">
+              <div class="panel-title">Test in browser (dev loop)</div>
+              <div class="lede">
+                Run the project in true browser mode and open it in your
+                browser.
+              </div>
+              <label>Project folder</label>
+              <div class="field">
+                <input
+                  type="text"
+                  id="play-project"
+                  placeholder="project folder to run"
+                />
+                <button class="btn" onclick="pick('play-project')">
+                  Browse
+                </button>
+              </div>
+              <div class="row center">
+                <button class="btn primary" id="btn-play" onclick="doPlay()">
+                  Run in browser
+                </button>
+                <button class="btn" id="btn-stop" onclick="doStop()">
+                  Stop
+                </button>
+              </div>
+            </div>
+          </section>
 
-      <!-- Pack project -->
-      <section class="tabpane" id="tab-pack" hidden>
-        <div class="panel">
-          <div class="panel-title">Pack project (re-encode for the game)</div>
-          <div class="lede">
-            Re-encode the edited project back into a playable www folder.
-          </div>
-          <label>Project folder</label>
-          <div class="field">
-            <input
-              type="text"
-              id="pk-project"
-              placeholder="edited project folder"
-            />
-            <button class="btn" onclick="pick('pk-project')">Browse</button>
-          </div>
-          <label>Output www folder</label>
-          <div class="field">
-            <input
-              type="text"
-              id="pk-out"
-              placeholder="where to write the packed www"
-            />
-            <button class="btn" onclick="pick('pk-out')">Browse</button>
-          </div>
-          <div class="row">
-            <button class="btn primary" id="btn-pack" onclick="doPack()">
-              Pack project
-            </button>
-          </div>
-        </div>
-      </section>
+          <!-- Pack project -->
+          <section class="tabpane" id="tab-pack" hidden>
+            <div class="panel">
+              <div class="panel-title">
+                Pack project (re-encode for the game)
+              </div>
+              <div class="lede">
+                Re-encode the edited project back into a playable www folder.
+              </div>
+              <label>Project folder</label>
+              <div class="field">
+                <input
+                  type="text"
+                  id="pk-project"
+                  placeholder="edited project folder"
+                />
+                <button class="btn" onclick="pick('pk-project')">Browse</button>
+              </div>
+              <label>Output www folder</label>
+              <div class="field">
+                <input
+                  type="text"
+                  id="pk-out"
+                  placeholder="where to write the packed www"
+                />
+                <button class="btn" onclick="pick('pk-out')">Browse</button>
+              </div>
+              <div class="row center">
+                <button class="btn primary" id="btn-pack" onclick="doPack()">
+                  Pack project
+                </button>
+              </div>
+            </div>
+          </section>
 
-      <!-- Share / build .tcoaalmod -->
-      <section class="tabpane" id="tab-build" hidden>
-        <div class="panel">
-          <div class="panel-title">Share (build .tcoaalmod)</div>
-          <div class="lede">
-            Diff the edited project against one or more base game versions to
-            produce a copyright-safe, shareable .tcoaalmod.
-          </div>
-          <label>Edited project folder</label>
-          <div class="field">
-            <input
-              type="text"
-              id="sh-project"
-              placeholder="the project to share"
-            />
-            <button class="btn" onclick="pick('sh-project')">Browse</button>
-          </div>
-          <label>Base game versions to support (add one or more)</label>
-          <div class="row">
-            <button class="btn" onclick="addBase()">Add base game folder</button>
-          </div>
-          <div class="bases" id="bases"></div>
-          <label>Name</label>
-          <input type="text" id="sh-name" placeholder="My Mod" />
-          <label>Author</label>
-          <input type="text" id="sh-author" placeholder="you" />
-          <label>Version</label>
-          <input type="text" id="sh-version" placeholder="1.0.0" />
-          <label>Description</label>
-          <input type="text" id="sh-desc" placeholder="(optional)" />
-          <label>Output file</label>
-          <div class="field">
-            <input type="text" id="sh-out" placeholder="mymod.tcoaalmod" />
-            <button class="btn" onclick="pickSave('sh-out')">Choose</button>
-          </div>
-          <div class="row">
-            <button class="btn primary" id="btn-share" onclick="doShare()">
-              Build shareable mod
-            </button>
-          </div>
-        </div>
-      </section>
+          <!-- Share / build .tcoaalmod -->
+          <section class="tabpane" id="tab-build" hidden>
+            <div class="panel">
+              <div class="panel-title">Share (build .tcoaalmod)</div>
+              <div class="lede">
+                Diff the edited project against one or more base game versions
+                to produce a copyright-safe, shareable .tcoaalmod.
+              </div>
+              <label>Edited project folder</label>
+              <div class="field">
+                <input
+                  type="text"
+                  id="sh-project"
+                  placeholder="the project to share"
+                />
+                <button class="btn" onclick="pick('sh-project')">Browse</button>
+              </div>
+              <label>Base game versions to support (add one or more)</label>
+              <div class="row">
+                <button class="btn" onclick="addBase()">
+                  Add base game folder
+                </button>
+              </div>
+              <div class="bases" id="bases"></div>
+              <label>Name</label>
+              <input type="text" id="sh-name" placeholder="My Mod" />
+              <label>Author</label>
+              <input type="text" id="sh-author" placeholder="you" />
+              <label>Version</label>
+              <input type="text" id="sh-version" placeholder="1.0.0" />
+              <label>Description</label>
+              <input type="text" id="sh-desc" placeholder="(optional)" />
+              <label>Output file</label>
+              <div class="field">
+                <input type="text" id="sh-out" placeholder="mymod.tcoaalmod" />
+                <button class="btn" onclick="pickSave('sh-out')">Choose</button>
+              </div>
+              <div class="row center">
+                <button class="btn primary" id="btn-share" onclick="doShare()">
+                  Build shareable mod
+                </button>
+              </div>
+            </div>
+          </section>
 
-      <!-- Steam version downloader -->
-      <section class="tabpane" id="tab-steam" hidden>
-        <div class="panel">
-          <div class="panel-title">Download game versions from Steam</div>
-          <div class="lede">
-            Detect your Steam install and download a specific TCOAAL version's
-            depot. Each downloaded version is archived permanently for this app,
-            safe from later Steam updates, and can be added as a base in the
-            Build mod tab.
-          </div>
-          <div id="steam-state" class="sub">Checking for Steam...</div>
-        </div>
+          <!-- Steam version downloader -->
+          <section class="tabpane" id="tab-steam" hidden>
+            <div class="panel">
+              <div class="panel-title">Download game versions from Steam</div>
+              <div class="lede">
+                Detect your Steam install and download a specific TCOAAL
+                version's depot. Each downloaded version is archived permanently
+                for this app, safe from later Steam updates, and can be added as
+                a base in the Build mod tab.
+              </div>
+              <div id="steam-state" class="sub">Checking for Steam...</div>
+            </div>
 
-        <div class="panel">
-          <div class="panel-title">Available versions</div>
-          <div class="row" style="margin-top: 0; margin-bottom: 8px">
-            <button class="btn" onclick="checkMissing()">
-              Check for missing versions
-            </button>
-            <span class="sub" id="steam-cat-note"
-              >Offline list. Click to pull the latest from the repo.</span
-            >
-          </div>
-          <div id="steam-catalog"><span class="sub">Loading catalog...</span></div>
-          <label>Or download by manifest id (read it from steamdb.info)</label>
-          <div class="field">
-            <input
-              type="text"
-              id="steam-manifest"
-              placeholder="e.g. 7415012965776985886"
-            />
-            <button class="btn" onclick="steamDownloadManual()">Download</button>
-          </div>
-        </div>
+            <div class="panel">
+              <div class="panel-title">Available versions</div>
+              <div class="row" style="margin-top: 0; margin-bottom: 8px">
+                <button class="btn" onclick="checkMissing()">
+                  Check for missing versions
+                </button>
+                <span class="sub" id="steam-cat-note"
+                  >Offline list. Click to pull the latest from the repo.</span
+                >
+              </div>
+              <div id="steam-catalog">
+                <span class="sub">Loading catalog...</span>
+              </div>
+              <label
+                >Or download by manifest id (read it from steamdb.info)</label
+              >
+              <div class="field">
+                <input
+                  type="text"
+                  id="steam-manifest"
+                  placeholder="e.g. 7415012965776985886"
+                />
+                <button class="btn" onclick="steamDownloadManual()">
+                  Download
+                </button>
+              </div>
+            </div>
 
-        <div class="panel" id="steam-dl-panel" hidden>
-          <div class="panel-title">Downloading <span id="steam-dl-name"></span></div>
-          <p class="sub">
-            1. The Steam console was opened. Paste this command there and press
-            Enter:
-          </p>
-          <div class="field">
-            <input type="text" id="steam-cmd" readonly />
-            <button class="btn" onclick="steamCopyCmd()">Copy</button>
-          </div>
-          <p class="sub" id="steam-copy-note"></p>
-          <p class="sub">
-            2. Steam shows no progress. When it finishes, archive the download:
-          </p>
-          <div class="row">
-            <button class="btn primary" id="btn-steam-wait" onclick="steamArchive(true)">
-              Wait and archive
-            </button>
-            <button class="btn" onclick="steamArchive(false)">
-              Archive now (already finished)
-            </button>
-          </div>
-        </div>
+            <div class="panel" id="steam-dl-panel" hidden>
+              <div class="panel-title">
+                Downloading <span id="steam-dl-name"></span>
+              </div>
+              <p class="sub">
+                1. The Steam console was opened. Paste this command there and
+                press Enter:
+              </p>
+              <div class="field">
+                <input type="text" id="steam-cmd" readonly />
+                <button class="btn" onclick="steamCopyCmd()">Copy</button>
+              </div>
+              <p class="sub" id="steam-copy-note"></p>
+              <p class="sub">
+                2. Steam shows no progress. When it finishes, archive the
+                download:
+              </p>
+              <div class="row">
+                <button
+                  class="btn primary"
+                  id="btn-steam-wait"
+                  onclick="steamArchive(true)"
+                >
+                  Wait and archive
+                </button>
+                <button class="btn" onclick="steamArchive(false)">
+                  Archive now (already finished)
+                </button>
+              </div>
+            </div>
 
-        <div class="panel">
-          <div class="panel-title">Archived versions</div>
-          <div id="steam-archived"></div>
+            <div class="panel">
+              <div class="panel-title">Archived versions</div>
+              <div id="steam-archived"></div>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
 
       <div class="panel">
         <div class="panel-title">Output</div>
@@ -620,11 +694,14 @@
       async function doShare() {
         if (!$("sh-project").value)
           return log("Pick the project to share.", "err");
-        if (!bases.length) return log("Add at least one base game folder.", "err");
+        if (!bases.length)
+          return log("Add at least one base game folder.", "err");
         if (!$("sh-out").value)
           return log("Choose an output .tcoaalmod file.", "err");
         busy("btn-share", true);
-        log("Building shareable mod... extracting each base, this can take a while.");
+        log(
+          "Building shareable mod... extracting each base, this can take a while.",
+        );
         try {
           appendResult(
             await invoke("share_build", {
@@ -700,7 +777,8 @@
         return null;
       }
       async function checkMissing() {
-        $("steam-cat-note").textContent = "Pulling the latest list from the repo...";
+        $("steam-cat-note").textContent =
+          "Pulling the latest list from the repo...";
         var remote = await remoteCatalog();
         if (!remote) {
           $("steam-cat-note").innerHTML =
@@ -734,11 +812,15 @@
 
       function steamStateHtml(info) {
         var parts = [
-          '<span class="ok">Steam found</span> at ' + escapeHtml(info.root) + ".",
+          '<span class="ok">Steam found</span> at ' +
+            escapeHtml(info.root) +
+            ".",
         ];
         if (info.installed_manifest) {
           parts.push(
-            " Installed build " + escapeHtml(info.installed_buildid || "?") + ".",
+            " Installed build " +
+              escapeHtml(info.installed_buildid || "?") +
+              ".",
           );
         }
         if (info.latest_buildid) {
@@ -792,7 +874,12 @@
         }
 
         // Latest first (so it sorts to the top of the synthetic group).
-        fold(info.latest_manifest, info.latest_buildid, "Latest available", "_latest");
+        fold(
+          info.latest_manifest,
+          info.latest_buildid,
+          "Latest available",
+          "_latest",
+        );
         if (info.installed_manifest !== info.latest_manifest) {
           fold(
             info.installed_manifest,
@@ -806,10 +893,15 @@
           return e._new;
         });
         var outdated = isOutdated(info);
-        if (!extra.length) return { cat: cat, newRelease: newRelease, outdated: outdated };
+        if (!extra.length)
+          return { cat: cat, newRelease: newRelease, outdated: outdated };
         var merged = {
           majors: [
-            { major: "steam", label: "From your Steam client", versions: extra },
+            {
+              major: "steam",
+              label: "From your Steam client",
+              versions: extra,
+            },
           ].concat(cat.majors || []),
         };
         return { cat: merged, newRelease: newRelease, outdated: outdated };
@@ -894,7 +986,13 @@
       function steamDownloadManual() {
         var m = $("steam-manifest").value.trim();
         if (!m) return log("Enter a manifest id.", "err");
-        steamStart({ manifest: m, name: m, version: "", buildid: "", date: "" });
+        steamStart({
+          manifest: m,
+          name: m,
+          version: "",
+          buildid: "",
+          date: "",
+        });
       }
 
       async function steamStart(sel) {

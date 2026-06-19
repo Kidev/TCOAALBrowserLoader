@@ -73,7 +73,7 @@ const APP_SHELL = [
   "/",
   "/index.html",
   "/loader.html",
-  "/custom-mods.html",
+  "/modding.html",
   "/lock.html",
   "/lock.json",
   "/manifest.webmanifest",

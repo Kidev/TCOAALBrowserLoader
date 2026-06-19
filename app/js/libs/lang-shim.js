@@ -335,7 +335,7 @@
   var _modsData = null;
   var _modsLoaded = false;
 
-  // Registry of mods the user imported via custom-mods.html (keyed by content
+  // Registry of mods the user imported via modding.html (keyed by content
   // tag, e.g. "wafda24joj"). Their files already live in IDB under
   // mod:{tag}:..., so they are merged into _modsData as already-installed
   // entries and surfaced in the Mods menu (enable / disable / uninstall).
@@ -475,7 +475,7 @@
   }
 
   /**
-   * Merge user-imported mods (custom-mods.html, key __imported_mods__) into
+   * Merge user-imported mods (modding.html, key __imported_mods__) into
    * _modsData as already-installed overhaul entries, so they show up in the
    * Mods menu. Their files are already in IDB under mod:{tag}:..., so there is
    * no remote path/file-list to fetch (path:"" / files:[]). Async (IDB), but it

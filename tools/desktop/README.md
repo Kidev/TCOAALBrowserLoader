@@ -14,7 +14,7 @@ CLI uses.
   (`share-project.js --apply` / `--rollback`).
 
 Both apps share a tabbed UI (one tab per feature, matching the browser
-`app/custom-mods.html` Modding page) and a **Steam versions** tab (see below).
+`app/modding.html` Modding page) and a **Steam versions** tab (see below).
 
 ## Steam version downloader
 
