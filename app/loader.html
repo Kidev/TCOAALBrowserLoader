@@ -863,17 +863,18 @@
       .action-btn.accent:hover {
         background: rgba(236, 131, 195, 0.3);
       }
-      /* Modding entry point: a brighter, filled green so it stands out from the
-         neutral re-import / danger buttons in the health footer. */
-      .action-btn.accent-green {
-        background: rgba(134, 211, 122, 0.28);
-        border: 1px solid rgba(134, 211, 122, 0.7);
-        color: var(--green);
+      /* Modding entry point: a brighter, filled pink so it stands out from the
+         neutral re-import / danger buttons in the health footer (pink reads as
+         "modding" here, green would imply a safe/confirm action). */
+      .action-btn.accent-pink {
+        background: rgba(236, 131, 195, 0.28);
+        border: 1px solid rgba(236, 131, 195, 0.7);
+        color: var(--purple);
         font-weight: bold;
       }
-      .action-btn.accent-green:hover {
-        background: rgba(134, 211, 122, 0.45);
-        border-color: var(--green);
+      .action-btn.accent-pink:hover {
+        background: rgba(236, 131, 195, 0.45);
+        border-color: var(--purple);
         color: var(--white);
       }
 
@@ -1504,7 +1505,7 @@
               <div class="health-footer">
                 <div class="hf-left">
                   <button
-                    class="action-btn compact accent-green"
+                    class="action-btn compact accent-pink"
                     id="btn-modding"
                     onclick="location.href='modding.html'"
                     title="Create, build, import and manage mods"

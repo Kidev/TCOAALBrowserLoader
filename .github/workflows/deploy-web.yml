@@ -1,12 +1,17 @@
-name: Deploy
+name: deploy-web
 
+# Manual only. Provide a semantic version X; on a successful Pages deploy the
+# build commit is tagged "web/vX".
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version X (semantic versioning, e.g. 1.2.3)"
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -92,3 +97,14 @@ jobs:
         uses: geekyeggo/delete-artifact@v6
         with:
           name: github-pages
+
+      # Only reached when the deploy step above succeeded. Tag the exact commit
+      # this site was built from as "web/v<version>".
+      - name: Tag the build commit
+        env:
+          TAG: web/v${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"

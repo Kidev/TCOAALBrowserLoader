@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Builds the two desktop apps (Mod Creator + Mod Installer) for Windows, macOS
+# and Linux. Each app is a Tauri v2 shell that shells out to a bundled Node
+# runtime running the repo's tools/. We bundle the runner's own Node binary
+# (same platform as the build) into src-tauri/runtime/, generate icons from
+# app/img/icon-512.png, then `tauri build`.
+#
+# Manual only. Provide a semantic version Y; when every matrix build succeeds
+# the build commit is tagged "desktop/vY" and a GitHub Release "Desktop vY" is
+# published with all the built installers attached.
+
+name: deploy-desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version Y (semantic versioning, e.g. 1.2.3)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [creator, user]
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev \
+            libgtk-3-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/desktop/target
+          key: ${{ matrix.os }}-cargo-${{ hashFiles('tools/desktop/**/Cargo.toml') }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Tauri CLI
+        working-directory: tools/desktop/${{ matrix.app }}
+        run: npm install
+
+      - name: Bundle the Node runtime (this runner's node, matches the target OS)
+        shell: bash
+        run: |
+          dest="tools/desktop/${{ matrix.app }}/src-tauri/runtime"
+          mkdir -p "$dest"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "$(command -v node)" "$dest/node.exe"
+          else
+            cp "$(command -v node)" "$dest/node"
+            chmod +x "$dest/node"
+          fi
+          node --version
+
+      - name: Generate icons
+        working-directory: tools/desktop/${{ matrix.app }}
+        run: npx @tauri-apps/cli icon ../../../app/img/icon-512.png
+
+      - name: Build
+        working-directory: tools/desktop/${{ matrix.app }}
+        env:
+          # linuxdeploy/appimagetool are AppImages needing FUSE; CI has none.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          NO_STRIP: "true"
+        run: npx @tauri-apps/cli build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcoaal-${{ matrix.app }}-${{ matrix.os }}
+          path: |
+            tools/desktop/target/release/bundle/**/*.dmg
+            tools/desktop/target/release/bundle/**/*.app
+            tools/desktop/target/release/bundle/**/*.AppImage
+            tools/desktop/target/release/bundle/**/*.deb
+            tools/desktop/target/release/bundle/**/*.rpm
+            tools/desktop/target/release/bundle/**/*.msi
+            tools/desktop/target/release/bundle/**/*.exe
+          if-no-files-found: ignore
+
+  # Runs only when every matrix build above succeeded ("entirely successful").
+  # Tags the build commit as "desktop/v<version>" and publishes a GitHub Release
+  # "Desktop v<version>" with all the built installers attached.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release and tag the build commit
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop/v${{ inputs.version }}
+          name: Desktop v${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          files: dist/**/*
