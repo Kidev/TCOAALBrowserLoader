@@ -1,12 +1,10 @@
-name: deploy-web
+name: Deploy Web
 
-# Manual only. Provide a semantic version X; on a successful Pages deploy the
-# build commit is tagged "web/vX".
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version X (semantic versioning, e.g. 1.2.3)"
+        description: "Release version"
         required: true
         type: string
 
@@ -98,8 +96,6 @@ jobs:
         with:
           name: github-pages
 
-      # Only reached when the deploy step above succeeded. Tag the exact commit
-      # this site was built from as "web/v<version>".
       - name: Tag the build commit
         env:
           TAG: web/v${{ inputs.version }}

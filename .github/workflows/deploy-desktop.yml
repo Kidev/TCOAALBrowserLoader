@@ -1,22 +1,10 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-#
-# Builds the two desktop apps (Mod Creator + Mod Installer) for Windows, macOS
-# and Linux. Each app is a Tauri v2 shell that shells out to a bundled Node
-# runtime running the repo's tools/. We bundle the runner's own Node binary
-# (same platform as the build) into src-tauri/runtime/, generate icons from
-# app/img/icon-512.png, then `tauri build`.
-#
-# Manual only. Provide a semantic version Y; when every matrix build succeeds
-# the build commit is tagged "desktop/vY" and a GitHub Release "Desktop vY" is
-# published with all the built installers attached.
-
-name: deploy-desktop
+name: Deploy Desktop
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version Y (semantic versioning, e.g. 1.2.3)"
+        description: "Release version"
         required: true
         type: string
 
@@ -26,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         app: [creator, user]
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-26, windows-11]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -86,7 +74,6 @@ jobs:
       - name: Build
         working-directory: tools/desktop/${{ matrix.app }}
         env:
-          # linuxdeploy/appimagetool are AppImages needing FUSE; CI has none.
           APPIMAGE_EXTRACT_AND_RUN: 1
           NO_STRIP: "true"
         run: npx @tauri-apps/cli build
@@ -105,9 +92,6 @@ jobs:
             tools/desktop/target/release/bundle/**/*.exe
           if-no-files-found: ignore
 
-  # Runs only when every matrix build above succeeded ("entirely successful").
-  # Tags the build commit as "desktop/v<version>" and publishes a GitHub Release
-  # "Desktop v<version>" with all the built installers attached.
   release:
     needs: build
     runs-on: ubuntu-latest
