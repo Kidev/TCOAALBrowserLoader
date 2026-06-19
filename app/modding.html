@@ -19,7 +19,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <title>Modding | TCOAAL Browser Player</title>
-    <link rel="icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
     <style>
       :root {
         color-scheme: dark;
@@ -103,29 +103,33 @@
       .wrap {
         position: relative;
         z-index: 1;
-        max-width: min(900px, 94vw);
+        max-width: min(56.25rem, 94vw);
         min-height: 100vh;
         margin: 0 auto;
-        padding: clamp(40px, 12vmin, 140px) 16px clamp(24px, 5vmin, 48px);
+        /* Small top padding: the visible gap above the content (which reveals
+           the background logo) comes from justify-content:flex-end, so tall
+           content can rise toward the top - covering the logo - before the
+           page ever has to scroll. */
+        padding: clamp(1rem, 4vmin, 2.5rem) 1rem clamp(1.5rem, 5vmin, 3rem);
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        gap: clamp(12px, 1.8vmin, 18px);
+        gap: clamp(0.75rem, 1.8vmin, 1.125rem);
       }
 
       /* Back link: lives at the foot of the tab rail, set apart from the tabs
          by a divider so it reads as "leave", not another tab. */
       a.tab-back {
-        margin-top: 14px;
-        padding-top: 14px;
+        margin-top: 0.875rem;
+        padding-top: 0.875rem;
         border-top: 1px solid rgba(255, 255, 255, 0.12);
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 0.5rem;
         color: rgba(255, 255, 255, 0.66);
         text-decoration: none;
         font-family: "Georgia", serif;
-        font-size: clamp(13px, 1.6vmin, 16px);
+        font-size: clamp(0.8125rem, 1.6vmin, 1rem);
         letter-spacing: 0.02em;
         transition: color 0.15s;
       }
@@ -133,9 +137,113 @@
         color: var(--white);
       }
       a.tab-back svg {
-        width: 15px;
-        height: 15px;
+        width: 0.9375rem;
+        height: 0.9375rem;
         flex: 0 0 auto;
+      }
+
+      /* Top-right link stack (mirrors loader.html): GitHub / Tools / Feedback.
+         Fixed so it stays on screen while a tall pane scrolls. */
+      .top-links {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+        padding: 8px;
+      }
+      .github-link,
+      .tool-link,
+      .feedback-link {
+        color: rgba(255, 255, 255, 0.9);
+        text-decoration: none;
+        transition: all 0.3s ease;
+        padding: 8px 12px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(15, 15, 15, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        font-size: 0.85em;
+        font-family: "Georgia", serif;
+      }
+      .github-link:hover {
+        color: var(--white);
+        background: rgba(74, 144, 226, 0.15);
+        border-color: rgba(74, 144, 226, 0.3);
+        transform: translateY(-1px);
+      }
+      .tool-link:hover {
+        color: var(--white);
+        background: rgba(236, 131, 195, 0.15);
+        border-color: rgba(236, 131, 195, 0.3);
+        transform: translateY(-1px);
+      }
+      .feedback-link:hover {
+        color: var(--white);
+        background: rgba(255, 183, 77, 0.15);
+        border-color: rgba(255, 183, 77, 0.35);
+        transform: translateY(-1px);
+      }
+      .tool-link .tool-icon,
+      .github-link .github-icon,
+      .feedback-link .feedback-icon {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
+        flex: 0 0 auto;
+      }
+
+      /* Same conditions as loader.html: on mobile / short landscape the links
+         become icon-only and move to a compact bar at the bottom. */
+      @media (max-width: 720px),
+        (orientation: landscape) and (max-height: 600px) {
+        .github-link,
+        .tool-link,
+        .feedback-link {
+          padding: 9px 11px;
+          gap: 0;
+          background: rgba(15, 15, 15, 0.9);
+        }
+        .github-link span,
+        .tool-link span,
+        .feedback-link span {
+          display: none;
+        }
+        .tool-link .tool-icon,
+        .github-link .github-icon,
+        .feedback-link .feedback-icon {
+          width: 22px;
+          height: 22px;
+        }
+        .top-links {
+          top: auto;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          flex-direction: row;
+          justify-content: center;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
+          background: linear-gradient(
+            to top,
+            rgba(0, 0, 0, 0.72),
+            rgba(0, 0, 0, 0)
+          );
+          pointer-events: none;
+        }
+        .top-links > a {
+          pointer-events: auto;
+        }
+        /* Clear the fixed bottom link bar so the last control isn't hidden. */
+        .wrap {
+          padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+        }
       }
 
       .panel {
@@ -297,70 +405,111 @@
         }
       }
 
-      /* Tab layout - a vertical tab rail on the left, panes on the right.
-         Mirrored by the desktop apps. */
+      /* Tab layout - a vertical tab rail anchored to the left of a pane block
+         that is centered in the page. The rail is absolutely positioned so it
+         does not count toward the centering (the result is intentionally
+         asymmetric). Mirrored by the desktop apps. */
       .tab-layout {
-        display: flex;
-        align-items: flex-start;
-        gap: clamp(12px, 2vmin, 22px);
+        position: relative;
+        min-height: 50vh;
+      }
+      .tabpanes {
+        position: relative;
+        width: min(100%, 38rem);
+        margin: 0 auto;
+        /* Stack every pane in one grid cell so the block always reserves the
+           tallest pane's height. The rail (anchored to the block's top) then
+           never shifts between tabs - reserve-the-tallest, with no JS. */
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
       }
       .tabs {
+        position: absolute;
+        top: 0;
+        right: 100%;
+        margin-right: clamp(0.75rem, 2vmin, 1.375rem);
         display: flex;
         flex-direction: column;
-        gap: 4px;
-        flex: 0 0 auto;
-        min-width: 148px;
+        gap: 0.25rem;
+        width: max-content;
         border-right: 1px solid rgba(255, 255, 255, 0.12);
-        padding-right: 10px;
+        padding-right: 0.625rem;
       }
       .tab {
         background: transparent;
         border: none;
         border-left: 2px solid transparent;
-        color: var(--default);
-        opacity: 0.62;
+        /* Dim via the text colour's alpha, NOT element opacity: animating
+           element opacity promotes the tab to its own layer mid-transition,
+           whose edges shimmer white pixels along the rail's 1px divider. */
+        color: rgba(211, 208, 192, 0.62);
         font-family: "Georgia", serif;
-        font-size: clamp(13px, 1.6vmin, 16px);
+        font-size: clamp(0.8125rem, 1.6vmin, 1rem);
         letter-spacing: 0.03em;
-        padding: 9px 14px;
+        padding: 0.5625rem 0.875rem;
         cursor: pointer;
-        transition: all 0.15s;
+        transition:
+          color 0.15s,
+          background-color 0.15s,
+          border-left-color 0.15s;
         border-radius: 0 6px 6px 0;
         text-align: left;
         white-space: nowrap;
       }
       .tab:hover {
-        opacity: 1;
         color: var(--white);
       }
       .tab.active {
-        opacity: 1;
         color: var(--purple);
         border-left-color: var(--purple);
         background: rgba(236, 131, 195, 0.08);
       }
       .tabpane {
-        flex: 1 1 auto;
-        min-width: 0;
+        grid-area: 1 / 1;
+        align-self: start;
         display: flex;
         flex-direction: column;
-        gap: clamp(12px, 1.8vmin, 18px);
+        gap: clamp(0.75rem, 1.8vmin, 1.125rem);
+        opacity: 1;
+        transition: opacity 0.18s ease;
       }
+      /* Inactive panes stay laid out (so the grid keeps reserving the tallest
+         pane) but are hidden *instantly* - no fade-out - so the outgoing and
+         incoming panes never overlap in the shared cell. The incoming pane
+         fades in via the base transition above. */
       .tabpane[hidden] {
-        display: none;
+        visibility: hidden;
+        opacity: 0;
+        transition: none;
       }
-      @media (max-width: 560px) {
-        .tab-layout {
+      /* Below this width the asymmetric rail would run off the left edge, so it
+         returns to the flow and stacks above the panes (nav is the first child
+         of .tabpanes). */
+      @media (max-width: 60rem) {
+        /* Stacked: the rail returns to the flow above the panes, so panes go
+           back to normal single-pane flow (no grid reserve needed). */
+        .tabpanes {
+          width: 100%;
+          display: flex;
           flex-direction: column;
+          gap: clamp(0.75rem, 1.8vmin, 1.125rem);
+        }
+        .tabpane {
+          align-self: auto;
+        }
+        .tabpane[hidden] {
+          display: none;
         }
         .tabs {
+          position: static;
+          width: auto;
           flex-direction: row;
           flex-wrap: wrap;
-          min-width: 0;
+          margin-right: 0;
           border-right: none;
           border-bottom: 1px solid rgba(255, 255, 255, 0.12);
           padding-right: 0;
-          padding-bottom: 6px;
+          padding-bottom: 0.375rem;
         }
         .tab {
           border-left: none;
@@ -370,6 +519,25 @@
         .tab.active {
           border-left-color: transparent;
           border-bottom-color: var(--purple);
+        }
+        /* The rail moved to the top of the content; pin "Back to loader" to the
+           top-left corner of the screen instead of trailing the tab row. */
+        a.tab-back {
+          position: fixed;
+          top: 8px;
+          left: 8px;
+          z-index: 10;
+          margin: 0;
+          padding: 8px 12px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          background: rgba(15, 15, 15, 0.8);
+          color: rgba(255, 255, 255, 0.9);
+        }
+        a.tab-back:hover {
+          color: var(--white);
+          background: rgba(236, 131, 195, 0.12);
+          border-color: rgba(236, 131, 195, 0.3);
         }
       }
 
@@ -403,20 +571,6 @@
         margin-top: 10px;
         font-size: 0.9rem;
         opacity: 0.85;
-      }
-      .source-row {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 8px;
-        margin-top: 8px;
-      }
-      .source-label {
-        font-size: 0.9rem;
-        opacity: 0.8;
-      }
-      .source-label code {
-        color: var(--green);
       }
       .base-item {
         display: flex;
@@ -461,37 +615,6 @@
       }
       .action-btn.small:hover {
         background: rgba(255, 255, 255, 0.12);
-      }
-
-      /* Base-game status line (mirrors the loader's health pill). */
-      .base-status {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        font-size: 0.96rem;
-      }
-      .base-status .dot {
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-        flex: 0 0 auto;
-      }
-      .base-status.ok .dot {
-        background: var(--green);
-        box-shadow: 0 0 8px rgba(134, 211, 122, 0.7);
-      }
-      .base-status.err .dot {
-        background: var(--red);
-        box-shadow: 0 0 8px rgba(149, 84, 86, 0.7);
-      }
-      .base-status .label {
-        font-weight: bold;
-      }
-      .base-status.ok .label {
-        color: var(--green);
-      }
-      .base-status.err .label {
-        color: var(--red);
       }
 
       /* Source picker modal (folder / .zip / imported, one button to open). */
@@ -568,6 +691,29 @@
         padding: 5px 6px 5px 12px;
         font-size: 0.9rem;
         white-space: nowrap;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+      .chip:hover {
+        background: rgba(60, 60, 60, 0.85);
+        border-color: rgba(255, 255, 255, 0.28);
+      }
+      /* No remove button: equal padding on both sides. */
+      .chip.chip-static {
+        padding: 5px 14px;
+      }
+      /* Selectable chip (single-select, e.g. Create's game version). */
+      .chip.chip-select {
+        padding: 5px 14px;
+        cursor: pointer;
+        font-family: "Georgia", serif;
+        color: var(--default);
+      }
+      .chip.chip-select.selected {
+        border-color: var(--purple);
+        background: rgba(236, 131, 195, 0.16);
+        color: var(--white);
       }
       .chip-x {
         display: inline-flex;
@@ -618,20 +764,208 @@
           grid-template-columns: 1fr;
         }
       }
+
+      .panel a {
+        color: var(--purple);
+        text-decoration: none;
+      }
+      .panel a:hover {
+        text-decoration: underline;
+      }
+
+      /* Modding home: one panel split by thin separators (no nested blocks). */
+      hr.sep {
+        border: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        margin: 16px 0;
+      }
+      .split {
+        display: flex;
+        align-items: stretch;
+      }
+      .split-col {
+        flex: 1 1 0;
+        min-width: 0;
+        padding: 0 20px;
+      }
+      .split-col:first-child {
+        padding-left: 0;
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .split-col:last-child {
+        padding-right: 0;
+      }
+      @media (max-width: 560px) {
+        .split {
+          flex-direction: column;
+        }
+        .split-col:first-child {
+          padding: 0 0 16px;
+          border-right: none;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        .split-col:last-child {
+          padding: 16px 0 0;
+        }
+      }
+      /* Column headers: same pink as the panel title, but their own size. */
+      .col-title {
+        color: var(--purple);
+        font-weight: normal;
+        letter-spacing: 0.04em;
+        font-size: 0.95rem;
+        margin-bottom: 10px;
+      }
+      .split-col .colp {
+        font-size: 0.9rem;
+        opacity: 0.85;
+        line-height: 1.5;
+        margin: 0 0 12px;
+      }
+      .split-col .colp strong {
+        color: var(--white);
+      }
+
+      /* Desktop-app download row: a caption + small OS-logo buttons. */
+      .app-dl {
+        margin-top: 14px;
+        text-align: center;
+      }
+      .app-dl .dl-cap {
+        font-size: 0.78rem;
+        opacity: 0.6;
+        margin-bottom: 6px;
+      }
+      .dl-os-btns {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        justify-content: center;
+      }
+      a.dlbtn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        text-decoration: none;
+        color: var(--default);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 6px;
+        padding: 6px 11px;
+        font-size: 0.84rem;
+        transition:
+          background 0.15s,
+          border-color 0.15s,
+          color 0.15s;
+      }
+      a.dlbtn:hover {
+        background: rgba(255, 255, 255, 0.12);
+        color: var(--white);
+        text-decoration: none;
+      }
+      a.dlbtn.match {
+        border-color: rgba(236, 131, 195, 0.55);
+      }
+      a.dlbtn svg {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+        opacity: 0.85;
+      }
+
+      /* Imported-mods block inside the Install pane (kept compact). */
+      .installed-block {
+        margin-top: 18px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      h3.subhead {
+        font-weight: normal;
+        letter-spacing: 0.04em;
+        color: var(--default);
+        opacity: 0.85;
+        font-size: 0.95rem;
+        margin-bottom: 10px;
+      }
     </style>
   </head>
   <body>
     <div class="bg"></div>
+
+    <!-- Top-right links (mirrors loader.html): GitHub / Tools / Feedback. -->
+    <div class="top-links">
+      <a
+        href="https://github.com/Kidev/TCOAALBrowserLoader"
+        target="_blank"
+        rel="noopener"
+        class="github-link"
+        aria-label="AGPLv3 licensed, hosted on GitHub Pages"
+      >
+        <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"
+          ></path>
+        </svg>
+        <span>AGPLv3 licensed, hosted on GitHub Pages</span>
+      </a>
+      <a
+        href="https://tools.tcoaal.app"
+        target="_blank"
+        rel="noopener"
+        class="tool-link"
+        aria-label="More tools and utilities for TCOAAL"
+      >
+        <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+          />
+        </svg>
+        <span>More tools and utilities for TCOAAL</span>
+      </a>
+      <a
+        href="#"
+        target="_blank"
+        rel="noopener"
+        class="feedback-link"
+        data-feedback-link
+        aria-label="Share feedback or report an issue"
+      >
+        <svg class="feedback-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M5 3h14a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-7.2l-4.3 3.4a1 1 0 0 1-1.62-.78V18H5a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm6.94 4.1c-1.62 0-2.86 1-2.86 2.55h1.86c0-.62.4-1 .98-1 .55 0 .94.34.94.84 0 .42-.2.7-.85 1.12-.78.49-1.13.99-1.1 1.93l.01.28h1.82c0-.55.13-.82.78-1.23.86-.55 1.36-1.17 1.36-2.16 0-1.4-1.18-2.33-2.94-2.33Zm-.05 6.95a1.08 1.08 0 1 0 .01 2.16 1.08 1.08 0 0 0-.01-2.16Z"
+          />
+        </svg>
+        <span>Share feedback or report an issue</span>
+      </a>
+    </div>
+    <script>
+      (function () {
+        // Resolve the feedback link to the "feedback." subdomain of the current
+        // host (mirrors loader.html); falls back to tcoaal.app off-domain.
+        var host = location.hostname || "";
+        var target =
+          /\./.test(host) && !/^\d+\.\d+\.\d+\.\d+$/.test(host)
+            ? host
+            : "tcoaal.app";
+        var url = "https://feedback." + target + "/";
+        var links = document.querySelectorAll("[data-feedback-link]");
+        for (var i = 0; i < links.length; i++) links[i].href = url;
+      })();
+    </script>
+
     <div class="wrap">
       <div class="tab-layout">
-        <nav class="tabs" role="tablist">
-          <button class="tab active" data-tab="modding">Modding</button>
-          <button class="tab" data-tab="install">Install</button>
-          <button class="tab" data-tab="installed">
-            Installed mods (<span id="installed-count">0</span>)
+        <!-- The pane block is centered in the page; the tab rail is anchored
+             to its left (absolutely), so the rail does not shift the pane off
+             center. Below the restack breakpoint the rail returns to the flow,
+             stacked above the panes. -->
+        <div class="tabpanes">
+          <nav class="tabs" role="tablist">
+            <button class="tab active" data-tab="modding">Modding</button>
+          <button class="tab" data-tab="install">
+            Install mods (<span class="ic-count">0</span>)
           </button>
           <button class="tab" data-tab="create">Create project</button>
-          <button class="tab" data-tab="pack">Pack project</button>
           <button class="tab" data-tab="build">Build mod</button>
           <a class="tab-back" href="loader.html">
             <svg
@@ -649,19 +983,58 @@
           </a>
         </nav>
 
-        <!-- Modding: overview + base-game state -->
+        <!-- Modding: overview + imported game versions + per-audience split -->
         <section class="tabpane" id="tab-modding">
           <div class="panel">
+            <h2 class="panel-title">Modding</h2>
             <p class="lede">
-              The full modding toolchain, right in your browser. Install
-              community mods, or create, pack and build your own, with the same
-              tools the desktop apps run over your already-imported game.
+              The full modding toolchain, right in your browser. Everything runs
+              locally on your imported game and nothing is uploaded.
             </p>
-            <div id="base-state" style="margin-top: 14px"></div>
+
+            <label style="margin-top: 14px">Imported game versions</label>
+            <div id="game-versions" class="chips"></div>
+            <input type="file" id="ver-dir" webkitdirectory hidden />
+            <input type="file" id="ver-zip" accept=".zip" hidden />
+
+            <hr class="sep" />
+
+            <div class="split">
+              <div class="split-col">
+                <h3 class="col-title">For players</h3>
+                <p class="colp">
+                  Install community mods, then turn them on or off in the in-game
+                  <strong>Mods</strong> menu. Saves stay separate per mod.
+                </p>
+                <div class="row center">
+                  <button class="action-btn small" data-goto="install">
+                    Install mods
+                  </button>
+                </div>
+                <div class="app-dl" id="dl-user"></div>
+              </div>
+              <div class="split-col">
+                <h3 class="col-title">For modders</h3>
+                <p class="colp">
+                  Recover an editable RPG Maker MV project, edit it in the
+                  editor, then build a shareable mod that carries only your
+                  changes.
+                </p>
+                <div class="row center">
+                  <button class="action-btn small" data-goto="create">
+                    Create project
+                  </button>
+                  <button class="action-btn small" data-goto="build">
+                    Build mod
+                  </button>
+                </div>
+                <div class="app-dl" id="dl-creator"></div>
+              </div>
+            </div>
           </div>
         </section>
 
-        <!-- Install: import a .tcoaalmod / packaged .zip into the in-browser game -->
+        <!-- Install mods: import a mod + manage the ones already imported -->
         <section class="tabpane" id="tab-install" hidden>
           <div class="panel">
             <h2 class="panel-title">Install a mod</h2>
@@ -695,14 +1068,13 @@
               </button>
             </div>
             <p class="meta" id="install-note" style="margin-top: 8px"></p>
-          </div>
-        </section>
 
-        <!-- Installed mods: imported custom mods, manage / remove -->
-        <section class="tabpane" id="tab-installed" hidden>
-          <div class="panel">
-            <h2 class="panel-title">Installed custom mods</h2>
-            <div id="installed-list"></div>
+            <div class="installed-block">
+              <h3 class="subhead">
+                Imported mods (<span class="ic-count">0</span>)
+              </h3>
+              <div id="installed-list"></div>
+            </div>
           </div>
         </section>
 
@@ -715,101 +1087,65 @@
               in the editor and start changing. Downloads as a
               <code>.zip</code>.
             </p>
-            <div class="source-row">
-              <span class="source-label" id="create-src-label"></span>
-              <button class="action-btn small" id="btn-create-other">
-                Change base version
-              </button>
-              <button class="action-btn small" id="btn-create-reset" hidden>
-                Use my imported game
-              </button>
-            </div>
-            <input type="file" id="create-dir" webkitdirectory hidden />
-            <input type="file" id="create-zip" accept=".zip" hidden />
+            <label>Select game version</label>
+            <div id="create-base" class="chips"></div>
             <div class="row center" style="margin-top: 14px">
-              <button class="action-btn primary" id="btn-create">
+              <button class="action-btn primary" id="btn-create" disabled>
                 Create project
               </button>
             </div>
             <div class="status" id="create-status" hidden></div>
-            <p class="hint">
-              Runs entirely in your browser. A few map-background images are
-              only generated by the desktop tools; everything else is recovered
-              here.
-            </p>
           </div>
         </section>
 
-        <!-- Pack project: re-encode an edited project into a playable www -->
-        <section class="tabpane" id="tab-pack" hidden>
-          <div class="panel">
-            <h2 class="panel-title">Pack an edited project</h2>
-            <p class="lede" style="margin-bottom: 6px">
-              Turn your edited project back into a playable game. Downloads as a
-              <code>.zip</code> you can load right here or hand to others to
-              play.
-            </p>
-            <div class="source-row">
-              <span class="source-label" id="pack-src-label"
-                >No project chosen yet.</span
-              >
-              <button class="action-btn small" id="btn-pack-choose">
-                Choose project
-              </button>
-            </div>
-            <input type="file" id="pack-dir" webkitdirectory hidden />
-            <input type="file" id="pack-zip" accept=".zip" hidden />
-            <div class="row center" style="margin-top: 14px">
-              <button class="action-btn primary" id="btn-pack" disabled>
-                Pack project
-              </button>
-            </div>
-            <div class="status" id="pack-status" hidden></div>
-          </div>
-        </section>
+        <!--
+          Pack project is intentionally NOT exposed in the browser: re-creating
+          a fully playable game from a project is only legitimate offline, in
+          the desktop apps (so it can't be used to hand a copy of the game to
+          someone who doesn't own it). The runtime packProject code is kept and
+          still used by the Tauri apps and the build/install pipeline.
+        -->
 
         <!-- Build mod: diff an edited project against base game(s) -> .tcoaalmod -->
         <section class="tabpane" id="tab-build" hidden>
           <div class="panel">
             <h2 class="panel-title">Build a shareable mod</h2>
             <p class="lede" style="margin-bottom: 6px">
-              Package your edits into a mod you can share. It contains only your
-              changes, so players use it with their own copy of the game.
+              Package your edits into a mod file you can share. It contains only your
+              changes and none of the game's content. That makes it legal and DMCA-safe to
+              distribute: no copyrighted game files are ever included.
             </p>
 
             <label>Edited project</label>
-            <div class="source-row">
-              <span class="source-label" id="build-proj-label"
-                >No project chosen yet.</span
-              >
-              <button class="action-btn small" id="btn-build-proj-choose">
-                Choose project
-              </button>
-            </div>
+            <div id="build-proj-slot" class="chips"></div>
             <input type="file" id="build-proj-dir" webkitdirectory hidden />
             <input type="file" id="build-proj-zip" accept=".zip" hidden />
 
-            <label>Game versions players can use it on</label>
+            <label>Select game versions player can use to play</label>
             <div id="build-bases" class="chips"></div>
-            <input type="file" id="build-base-dir" webkitdirectory hidden />
-            <input type="file" id="build-base-zip" accept=".zip" hidden />
 
             <div class="form-grid">
               <div>
                 <label>Name</label>
-                <input type="text" id="build-name" placeholder="My Mod" />
+                <input type="text" id="build-name" />
               </div>
               <div>
                 <label>Author</label>
-                <input type="text" id="build-author" placeholder="you" />
+                <input type="text" id="build-author" />
               </div>
               <div>
                 <label>Version</label>
-                <input type="text" id="build-version" placeholder="1.0.0" />
+                <input
+                  type="text"
+                  id="build-version"
+                  value="1.0.0"
+                  pattern="\d+\.\d+\.\d+"
+                  title="Use semantic versioning, e.g. 1.0.0"
+                />
               </div>
             </div>
             <label>Description (optional)</label>
-            <input type="text" id="build-desc" placeholder="" />
+            <input type="text" id="build-desc" maxlength="80" />
 
             <div class="row center" style="margin-top: 14px">
               <button class="action-btn primary" id="btn-build" disabled>
@@ -823,6 +1159,7 @@
             </p>
           </div>
         </section>
+        </div>
       </div>
 
       <!-- Source picker: one button opens this; folder / .zip / imported. -->
@@ -1091,34 +1428,51 @@
         return v ? "v" + v : null;
       }
 
-      async function renderBaseState() {
-        var ok = await hasBaseGame(_db);
-        var el = $("base-state");
-        if (ok) {
-          var v = _importedVersion || (await baseVersion(_db));
-          el.className = "base-status ok";
-          el.innerHTML =
-            '<span class="dot"></span>' +
-            '<span><span class="label">Imported game ready</span> ' +
-            '<span class="meta">' +
-            (v ? "(" + escapeHtml(verText(v)) + ")" : "") +
-            "</span></span>";
-        } else {
-          el.className = "base-status err";
-          el.innerHTML =
-            '<span class="dot"></span>' +
-            '<span><span class="label">No game imported</span> ' +
-            '<span class="meta">Import your game on the ' +
-            '<a href="loader.html" style="color: var(--purple)">loader</a> ' +
-            "first to start modding.</span></span>";
-        }
+      // The set of game versions available for installing mods: the imported
+      // game (first, not removable) plus any extra versions the user adds via
+      // "+", so a mod that targets a specific (often older) build can be
+      // installed against the right one. Session-scoped (kept in memory).
+      var _gameVersions = []; // [{ label, imported, files? }]
+
+      function renderGameVersions() {
+        var box = $("game-versions");
+        if (!box) return;
+        box.innerHTML = "";
+        _gameVersions.forEach(function (v, i) {
+          box.appendChild(
+            chipEl(
+              v.label,
+              v.imported
+                ? null
+                : function () {
+                    _gameVersions.splice(i, 1);
+                    renderGameVersions();
+                  },
+            ),
+          );
+        });
+        box.appendChild(addChip("Add a game version", addGameVersion));
+        // Create and Build pick from this same list; keep them in sync.
+        renderCreateVersions();
+        renderBuildState();
+      }
+
+      async function addGameVersion() {
+        var c = await openChooser({
+          title: "Add a game version",
+          sub: "Another copy of the game, for mods that need a specific version.",
+        });
+        if (c === "folder") $("ver-dir").click();
+        else if (c === "zip") $("ver-zip").click();
       }
 
       async function renderInstalled() {
         var reg = await getRegistry(_db);
         var ids = Object.keys(reg);
         var box = $("installed-list");
-        $("installed-count").textContent = String(ids.length);
+        document.querySelectorAll(".ic-count").forEach(function (el) {
+          el.textContent = String(ids.length);
+        });
         if (!ids.length) {
           box.innerHTML = '<p class="empty">No custom mods imported yet.</p>';
           return;
@@ -1318,16 +1672,34 @@
         if (await hasBaseGame(_db)) {
           var v = _importedVersion || (await baseVersion(_db));
           $("install-note").innerHTML =
-            "Your imported game" +
-            (v ? " (" + escapeHtml(verText(v)) + ")" : "") +
-            " is checked against the versions above on install. " +
-            "If it does not match, the install stops and tells you which version you need: " +
-            "import that one on the loader, or remove this mod.";
+            "Your game versions" +
+            (v ? " (imported: " + escapeHtml(verText(v)) + ")" : "") +
+            " are checked against the versions above on install. " +
+            "If none match, add the version this mod needs with the " +
+            '"+" on the Modding tab, then install again.';
         } else {
           $("install-note").innerHTML =
             '<span class="err">No game imported.</span> Import one of the required ' +
             'versions on the <a href="loader.html" style="color: var(--purple)">loader</a> first, then return here.';
         }
+      }
+
+      // Game versions to try as the base when installing a .tcoaalmod: the
+      // imported game first, then any extra versions added on the Modding tab.
+      async function collectInstallBases() {
+        var out = [];
+        for (var i = 0; i < _gameVersions.length; i++) {
+          var v = _gameVersions[i];
+          if (v.imported) {
+            out.push({ label: v.label, files: await readBaseFiles(_db) });
+          } else if (v.files) {
+            out.push({ label: v.label, files: toWwwRoot(v.files) });
+          }
+        }
+        if (!out.length) {
+          out.push({ label: "imported", files: await readBaseFiles(_db) });
+        }
+        return out;
       }
 
       async function doInstall() {
@@ -1348,8 +1720,29 @@
           var tag, meta, files, deletions;
 
           if (_selected.kind === "tcoaalmod") {
-            var baseFiles = await readBaseFiles(_db);
-            var res = await rt.applyTcoaalmod(baseFiles, _selected.bytes);
+            // Try each available game version (imported + any added on the
+            // Modding tab) until one matches a variant this mod was built for.
+            var bases = await collectInstallBases();
+            var res = null,
+              lastErr = null;
+            for (var bi = 0; bi < bases.length; bi++) {
+              try {
+                res = await rt.applyTcoaalmod(bases[bi].files, _selected.bytes);
+                break;
+              } catch (e) {
+                lastErr = e;
+              }
+            }
+            if (!res) {
+              throw new Error(
+                "None of your game versions match what this mod needs. " +
+                  'Add the required version with "+" on the Modding tab, then ' +
+                  "try again." +
+                  (lastErr && lastErr.message
+                    ? "\n\n" + lastErr.message
+                    : ""),
+              );
+            }
             tag = res.tag;
             files = res.files;
             deletions = res.deletions || [];
@@ -1491,6 +1884,21 @@
       // These call the same extract/pack/share libraries as the desktop apps,
       // bundled into ModRuntime and run over an in-memory file system.
 
+      // Each tab has a shareable URL hash (modding.html#create-project, etc.).
+      var TAB_HASHES = {
+        modding: "modding",
+        install: "install-mods",
+        create: "create-project",
+        build: "build-mod",
+      };
+      var TAB_BY_HASH = (function () {
+        var m = {};
+        Object.keys(TAB_HASHES).forEach(function (k) {
+          m[TAB_HASHES[k]] = k;
+        });
+        return m;
+      })();
+
       function showTab(name) {
         document.querySelectorAll(".tab").forEach(function (t) {
           t.classList.toggle("active", t.dataset.tab === name);
@@ -1500,6 +1908,23 @@
         });
       }
 
+      // Select a tab and reflect it in the URL hash (so the tab is shareable
+      // and the back/forward buttons move between tabs). The slugs are distinct
+      // from the pane element ids, so updating the hash never scroll-jumps.
+      function selectTab(name) {
+        var slug = TAB_HASHES[name] || "modding";
+        if (location.hash.replace(/^#/, "") !== slug) {
+          location.hash = slug; // triggers hashchange -> applyHashTab
+        } else {
+          showTab(name);
+        }
+      }
+
+      function applyHashTab() {
+        var slug = location.hash.replace(/^#/, "");
+        showTab(TAB_BY_HASH[slug] || "modding");
+      }
+
       function setStatusEl(id, html, cls) {
         var el = $(id);
         el.hidden = false;
@@ -1507,6 +1932,59 @@
         el.innerHTML = html;
       }
       var SPIN = '<span class="spinner"></span>';
+
+      // Shared chip / select-button widgets (used by Create / Pack / Build so
+      // each "source" slot reads the same: a "Select" button when empty, a
+      // "<label> X" chip once chosen).
+      var X_SVG =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="3" stroke-linecap="round" aria-hidden="true">' +
+        '<path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+      function chipEl(label, onRemove) {
+        var chip = document.createElement("span");
+        // Without a remove (x) the chip needs symmetric padding to look right.
+        chip.className = onRemove ? "chip" : "chip chip-static";
+        var t = document.createElement("span");
+        t.textContent = label;
+        chip.appendChild(t);
+        if (onRemove) {
+          var x = document.createElement("button");
+          x.className = "chip-x";
+          x.title = "Remove";
+          x.innerHTML = X_SVG;
+          x.onclick = onRemove;
+          chip.appendChild(x);
+        }
+        return chip;
+      }
+      function selectBtn(label, onClick) {
+        var b = document.createElement("button");
+        b.className = "action-btn small";
+        b.textContent = label;
+        b.onclick = onClick;
+        return b;
+      }
+      // Round "+" add affordance (matches the Build tab's base chips).
+      function addChip(title, onClick) {
+        var b = document.createElement("button");
+        b.className = "chip-add";
+        b.title = title || "Add";
+        b.textContent = "+";
+        b.onclick = onClick;
+        return b;
+      }
+      // Render a single-slot chip area: a select button when empty, else a
+      // labelled chip with a remove (x) that clears it.
+      function renderSlot(containerId, label, onClear, selectLabel, onSelect) {
+        var box = $(containerId);
+        box.innerHTML = "";
+        if (label != null) {
+          box.appendChild(chipEl(label, onClear));
+        } else {
+          box.appendChild(selectBtn(selectLabel, onSelect));
+        }
+      }
 
       function downloadBytes(bytes, filename, mime) {
         var blob = new Blob([bytes], {
@@ -1577,48 +2055,53 @@
         return Object.keys(map).length;
       }
 
-      // Label for the imported game: "v3.0.13 (base)" when the version is
-      // known, else a plain fallback.
-      function importedBaseLabel() {
-        var v = verText(_importedVersion);
-        return v ? v + " (base)" : "imported game (base)";
-      }
+      // Create project. The user picks which game version to recover the
+      // project from, out of the versions added on the Modding tab. The
+      // imported game is selected by default; selecting another extracts
+      // against that version instead.
+      var _createSelected = null; // a _gameVersions entry
 
-      // Create project
-      var _createSource = null; // { label, files } or null -> imported base
-
-      function renderCreateSource() {
-        var lbl = $("create-src-label");
-        if (_createSource) {
-          lbl.innerHTML =
-            "Base: <code>" +
-            escapeHtml(_createSource.label) +
-            "</code> (" +
-            fileCount(_createSource.files) +
-            " files)";
-          $("btn-create-other").hidden = true;
-          $("btn-create-reset").hidden = false;
-        } else {
-          lbl.innerHTML =
-            "Base: <code>" +
-            escapeHtml(verText(_importedVersion) || "imported game") +
-            "</code>";
-          $("btn-create-other").hidden = false;
-          $("btn-create-reset").hidden = true;
+      function renderCreateVersions() {
+        var box = $("create-base");
+        if (!box) return;
+        // Keep the selection valid; default to the imported version.
+        if (_gameVersions.indexOf(_createSelected) < 0) {
+          _createSelected =
+            _gameVersions.filter(function (v) {
+              return v.imported;
+            })[0] ||
+            _gameVersions[0] ||
+            null;
         }
+        box.innerHTML = "";
+        // Versions are managed on the Modding tab; here you only pick one.
+        _gameVersions.forEach(function (v) {
+          var chip = document.createElement("button");
+          chip.type = "button";
+          chip.className =
+            "chip chip-select" + (v === _createSelected ? " selected" : "");
+          chip.textContent = v.label;
+          chip.onclick = function () {
+            _createSelected = v;
+            renderCreateVersions();
+          };
+          box.appendChild(chip);
+        });
+        $("btn-create").disabled = !_createSelected;
       }
 
       async function doCreate() {
+        if (!_createSelected) return;
         try {
           $("btn-create").disabled = true;
           setStatusEl("create-status", SPIN + "Reading source files...");
-          var src = _createSource
-            ? toWwwRoot(_createSource.files)
-            : toWwwRoot(await readBaseFiles(_db));
+          var src = _createSelected.imported
+            ? toWwwRoot(await readBaseFiles(_db))
+            : toWwwRoot(_createSelected.files);
           if (!fileCount(src)) {
             setStatusEl(
               "create-status",
-              '<span class="err">No source files.</span> Import your game on the loader, or pick another base game.',
+              '<span class="err">No source files.</span> Import your game on the loader, or add another game version on the Modding tab.',
               "err",
             );
             return;
@@ -1651,19 +2134,26 @@
       var _packSource = null; // { label, files }
 
       function renderPackSource() {
-        var lbl = $("pack-src-label");
-        if (_packSource) {
-          lbl.innerHTML =
-            "Project: <code>" +
-            escapeHtml(_packSource.label) +
-            "</code> (" +
-            fileCount(_packSource.files) +
-            " files)";
-          $("btn-pack").disabled = false;
-        } else {
-          lbl.textContent = "No project chosen yet.";
-          $("btn-pack").disabled = true;
-        }
+        renderSlot(
+          "pack-slot",
+          _packSource ? "Project: " + _packSource.label : null,
+          function () {
+            _packSource = null;
+            renderPackSource();
+          },
+          "Select project",
+          choosePackProject,
+        );
+        $("btn-pack").disabled = !_packSource;
+      }
+
+      async function choosePackProject() {
+        var c = await openChooser({
+          title: "Choose your project",
+          sub: "The edited RPG Maker MV project to re-pack.",
+        });
+        if (c === "folder") $("pack-dir").click();
+        else if (c === "zip") $("pack-zip").click();
       }
 
       async function doPack() {
@@ -1693,80 +2183,99 @@
 
       // Build mod
       var _buildProject = null; // { label, files }
-      var _buildBases = []; // [{ label, files }]
+      var _buildSelected = []; // subset of _gameVersions the mod supports
 
-      function renderBuildState() {
-        var pl = $("build-proj-label");
-        if (_buildProject) {
-          pl.innerHTML =
-            "Project: <code>" +
-            escapeHtml(_buildProject.label) +
-            "</code> (" +
-            fileCount(_buildProject.files) +
-            " files)";
-        } else {
-          pl.textContent = "No project chosen yet.";
-        }
-        // Bases as inline chips, each with a small remove (x), then a "+" chip.
-        var box = $("build-bases");
-        box.innerHTML = "";
-        var X_SVG =
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-          'stroke-width="3" stroke-linecap="round" aria-hidden="true">' +
-          '<path d="M6 6l12 12M18 6L6 18"/></svg>';
-        _buildBases.forEach(function (b, i) {
-          var chip = document.createElement("span");
-          chip.className = "chip";
-          var text = document.createElement("span");
-          text.textContent = b.label;
-          var x = document.createElement("button");
-          x.className = "chip-x";
-          x.title = "Remove";
-          x.innerHTML = X_SVG;
-          x.onclick = function () {
-            _buildBases.splice(i, 1);
-            renderBuildState();
-          };
-          chip.appendChild(text);
-          chip.appendChild(x);
-          box.appendChild(chip);
-        });
-        var add = document.createElement("button");
-        add.className = "chip-add";
-        add.title = "Add a game version";
-        add.textContent = "+";
-        add.onclick = addBuildBase;
-        box.appendChild(add);
-        $("btn-build").disabled = !(_buildProject && _buildBases.length);
+      // Turn a folder/zip name into a human mod name: drop the extension and
+      // separators, collapse whitespace, Title Case (e.g. "my-cool_mod.zip" ->
+      // "My Cool Mod").
+      function prettyName(raw) {
+        return String(raw || "")
+          .replace(/\.[A-Za-z0-9]+$/, "")
+          .replace(/[._-]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .replace(/\b\w/g, function (c) {
+            return c.toUpperCase();
+          });
+      }
+      // Pre-fill the Name field from the project name, but only when the user
+      // hasn't typed one yet (don't clobber their input on a re-pick).
+      function prefillBuildName(raw) {
+        var el = $("build-name");
+        if (el && !el.value.trim()) el.value = prettyName(raw);
       }
 
-      // Add a base via the source picker (imported game / folder / .zip).
-      async function addBuildBase() {
-        var hasImported = _buildBases.some(function (b) {
-          return b.imported;
+      function renderBuildState() {
+        // Project: a "Select project" button, replaced by a "Project: name X"
+        // chip once chosen.
+        renderSlot(
+          "build-proj-slot",
+          _buildProject ? "Project: " + _buildProject.label : null,
+          function () {
+            _buildProject = null;
+            renderBuildState();
+          },
+          "Select project",
+          chooseBuildProject,
+        );
+        // Versions are managed on the Modding tab; here you toggle which ones
+        // the mod supports (multi-select, no add/remove here).
+        var box = $("build-bases");
+        box.innerHTML = "";
+        _buildSelected = _buildSelected.filter(function (v) {
+          return _gameVersions.indexOf(v) >= 0;
         });
+        _gameVersions.forEach(function (v) {
+          var chip = document.createElement("button");
+          chip.type = "button";
+          var on = _buildSelected.indexOf(v) >= 0;
+          chip.className = "chip chip-select" + (on ? " selected" : "");
+          chip.textContent = v.label;
+          chip.onclick = function () {
+            var idx = _buildSelected.indexOf(v);
+            if (idx >= 0) _buildSelected.splice(idx, 1);
+            else _buildSelected.push(v);
+            renderBuildState();
+          };
+          box.appendChild(chip);
+        });
+        $("btn-build").disabled = !(_buildProject && _buildSelected.length);
+      }
+
+      async function chooseBuildProject() {
         var c = await openChooser({
-          title: "Add a game version",
-          sub: "A version players can install your mod on. They need a matching copy of the game.",
-          imported: !hasImported,
+          title: "Choose your project",
+          sub: "The edited RPG Maker MV project to diff into a mod.",
         });
-        if (c === "imported") {
-          if (!(await hasBaseGame(_db))) {
-            setStatusEl(
-              "build-status",
-              '<span class="err">No game imported.</span> Import one on the loader first.',
-              "err",
-            );
-            return;
-          }
-          _buildBases.push({ label: importedBaseLabel(), imported: true });
-          renderBuildState();
-        } else if (c === "folder") $("build-base-dir").click();
-        else if (c === "zip") $("build-base-zip").click();
+        if (c === "folder") $("build-proj-dir").click();
+        else if (c === "zip") $("build-proj-zip").click();
       }
 
       async function doBuild() {
-        if (!_buildProject || !_buildBases.length) return;
+        if (!_buildProject) return;
+        // At least one game version must be selected to build a mod.
+        if (!_buildSelected.length) {
+          setStatusEl(
+            "build-status",
+            '<span class="err">Select at least one game version</span> the ' +
+              "mod can be played on (from the list above).",
+            "err",
+          );
+          return;
+        }
+        // Version must be semantic (x.y.z); default to 1.0.0 when left blank.
+        var version = $("build-version").value.trim() || "1.0.0";
+        if (!/^\d+\.\d+\.\d+$/.test(version)) {
+          setStatusEl(
+            "build-status",
+            '<span class="err">Version must be semantic versioning</span> ' +
+              "(major.minor.patch), e.g. <code>1.0.0</code>.",
+            "err",
+          );
+          $("build-version").focus();
+          return;
+        }
+        $("build-version").value = version;
         try {
           $("btn-build").disabled = true;
           setStatusEl(
@@ -1776,15 +2285,15 @@
           );
           var rt = await loadRuntime();
           var bases = [];
-          for (var i = 0; i < _buildBases.length; i++) {
-            var b = _buildBases[i];
-            var files = b.imported ? await readBaseFiles(_db) : b.files;
-            bases.push({ label: b.label, files: toWwwRoot(files) });
+          for (var i = 0; i < _buildSelected.length; i++) {
+            var v = _buildSelected[i];
+            var files = v.imported ? await readBaseFiles(_db) : v.files;
+            bases.push({ label: v.label, files: toWwwRoot(files) });
           }
           var bytes = await rt.buildShare(_buildProject.files, bases, {
             name: $("build-name").value,
             author: $("build-author").value,
-            version: $("build-version").value,
+            version: version,
             description: $("build-desc").value,
           });
           var fname =
@@ -1802,9 +2311,9 @@
             '<span class="ok">Built ' +
               escapeHtml(fname) +
               ".tcoaalmod (" +
-              _buildBases.length +
+              _buildSelected.length +
               " base variant" +
-              (_buildBases.length === 1 ? "" : "s") +
+              (_buildSelected.length === 1 ? "" : "s") +
               ").</span>\nShare it: players install it from the Install tab, or the desktop installer.",
             "ok",
           );
@@ -1818,6 +2327,198 @@
         } finally {
           renderBuildState();
         }
+      }
+
+      // Desktop apps: list the latest release's downloads, grouped per app and
+      // per OS, straight from GitHub. Network-only and best-effort - if it
+      // fails we fall back to a link to the releases page.
+      var GH_REPO = "Kidev/TCOAALBrowserLoader";
+      var GH_RELEASES = "https://github.com/" + GH_REPO + "/releases";
+
+      var OS_ICONS = {
+        windows:
+          '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+          '<path d="M3 5.5l7.5-1v7.2H3V5.5zm0 13l7.5 1v-7.1H3v6.1zm8.5 1.1L21 21v-8.3h-9.5v7zm0-15.2v7.1H21V3l-9.5 1.4z"/></svg>',
+        macos:
+          '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+          '<path d="M18.71 13.5c-.03-3.12 2.55-4.62 2.66-4.69-1.45-2.12-3.71-2.41-4.51-2.44-1.92-.19-3.74 1.13-4.71 1.13-.97 0-2.47-1.1-4.06-1.07-2.09.03-4.02 1.21-5.09 3.08-2.17 3.76-.55 9.32 1.56 12.38 1.03 1.5 2.26 3.18 3.87 3.12 1.55-.06 2.14-1 4.02-1 1.87 0 2.4 1 4.04.97 1.67-.03 2.73-1.53 3.75-3.03 1.18-1.74 1.67-3.42 1.69-3.51-.04-.01-3.25-1.25-3.28-4.95z"/>' +
+          '<path d="M15.66 5.82c.85-1.03 1.43-2.47 1.27-3.9-1.23.05-2.71.82-3.59 1.85-.79.91-1.48 2.37-1.29 3.77 1.37.11 2.76-.7 3.61-1.72z"/></svg>',
+        linux:
+          '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+          '<path d="M12 2c-2 0-3 1.8-3 4 0 1.5.4 2.3.4 3.4 0 1-1 1.8-1.8 3.4-.8 1.6-1.6 3-1.6 4.5 0 1.4 1 2.2 2 2.2.6 0 1-.3 1.4-.3.3 0 .6.7 2.6.7s2.3-.7 2.6-.7c.4 0 .8.3 1.4.3 1 0 2-.8 2-2.2 0-1.5-.8-2.9-1.6-4.5-.8-1.6-1.8-2.4-1.8-3.4 0-1.1.4-1.9.4-3.4 0-2.2-1-4-3-4z"/></svg>',
+      };
+      var OS_NAMES = {
+        windows: "Windows",
+        macos: "macOS",
+        linux: "Linux",
+      };
+      var KIND_LABELS = {
+        exe: "Setup (.exe)",
+        msi: ".msi",
+        dmg: ".dmg",
+        app: ".app",
+        appimage: ".AppImage",
+        deb: ".deb",
+        rpm: ".rpm",
+      };
+      // Best -> worst per OS, so we surface the friendliest installer first.
+      var KIND_PRIORITY = {
+        windows: ["exe", "msi"],
+        macos: ["dmg", "app"],
+        linux: ["appimage", "deb", "rpm"],
+      };
+
+      function currentOS() {
+        var p = (
+          navigator.userAgent +
+          " " +
+          (navigator.platform || "")
+        ).toLowerCase();
+        if (/win/.test(p)) return "windows";
+        if (/mac|iphone|ipad|ipod/.test(p)) return "macos";
+        if (/linux|android|x11/.test(p)) return "linux";
+        return null;
+      }
+
+      function classifyAsset(name) {
+        var l = name.toLowerCase();
+        var app = /creator/.test(l)
+          ? "creator"
+          : /installer|user/.test(l)
+            ? "user"
+            : null;
+        var os = null,
+          kind = null;
+        if (/\.exe$/.test(l)) {
+          os = "windows";
+          kind = "exe";
+        } else if (/\.msi$/.test(l)) {
+          os = "windows";
+          kind = "msi";
+        } else if (/\.dmg$/.test(l)) {
+          os = "macos";
+          kind = "dmg";
+        } else if (/\.app(\.tar\.gz|\.zip)?$/.test(l)) {
+          os = "macos";
+          kind = "app";
+        } else if (/\.appimage$/.test(l)) {
+          os = "linux";
+          kind = "appimage";
+        } else if (/\.deb$/.test(l)) {
+          os = "linux";
+          kind = "deb";
+        } else if (/\.rpm$/.test(l)) {
+          os = "linux";
+          kind = "rpm";
+        }
+        return { app: app, os: os, kind: kind };
+      }
+
+      // Render one app's downloads into a column slot: a caption + a small
+      // OS-logo button per available platform (the visitor's OS first/marked).
+      function renderAppDownloads(elId, label, version, slots, here) {
+        var el = $(elId);
+        if (!el) return;
+        var oses = ["windows", "macos", "linux"];
+        if (here) {
+          oses = [here].concat(
+            oses.filter(function (o) {
+              return o !== here;
+            }),
+          );
+        }
+        var btns = "";
+        oses.forEach(function (os) {
+          var a = slots[os];
+          if (!a) return;
+          btns +=
+            '<a class="dlbtn' +
+            (os === here ? " match" : "") +
+            '" href="' +
+            escapeHtml(a.url) +
+            '" title="Download for ' +
+            OS_NAMES[os] +
+            " (" +
+            (KIND_LABELS[a.kind] || a.kind) +
+            ')">' +
+            OS_ICONS[os] +
+            "<span>" +
+            OS_NAMES[os] +
+            "</span></a>";
+        });
+        if (!btns) {
+          el.innerHTML =
+            '<p class="dl-cap">' +
+            label +
+            ': <a href="' +
+            GH_RELEASES +
+            '">no build yet</a></p>';
+          return;
+        }
+        el.innerHTML =
+          '<p class="dl-cap">' +
+          label +
+          (version ? " " + escapeHtml(version) : "") +
+          ":</p>" +
+          '<div class="dl-os-btns">' +
+          btns +
+          "</div>";
+      }
+
+      async function loadDesktopApps() {
+        var here = currentOS();
+        var rel;
+        try {
+          var r = await fetch(
+            "https://api.github.com/repos/" + GH_REPO + "/releases/latest",
+            { headers: { Accept: "application/vnd.github+json" } },
+          );
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          rel = await r.json();
+        } catch (e) {
+          var msg =
+            '<p class="dl-cap">Desktop app: ' +
+            '<a href="' +
+            GH_RELEASES +
+            '">get it on GitHub</a></p>';
+          if ($("dl-user")) $("dl-user").innerHTML = msg;
+          if ($("dl-creator")) $("dl-creator").innerHTML = msg;
+          return;
+        }
+        var version = rel.tag_name || rel.name || "";
+        var picks = {
+          creator: { windows: null, macos: null, linux: null },
+          user: { windows: null, macos: null, linux: null },
+        };
+        (rel.assets || []).forEach(function (asset) {
+          var c = classifyAsset(asset.name || "");
+          if (!c.app || !c.os || !c.kind) return;
+          var slot = picks[c.app];
+          var cur = slot[c.os];
+          var rank = KIND_PRIORITY[c.os].indexOf(c.kind);
+          var curRank = cur ? KIND_PRIORITY[c.os].indexOf(cur.kind) : 99;
+          if (!cur || (rank >= 0 && rank < curRank)) {
+            slot[c.os] = {
+              url: asset.browser_download_url,
+              kind: c.kind,
+              name: asset.name,
+            };
+          }
+        });
+        renderAppDownloads(
+          "dl-user",
+          "Mod Installer app",
+          version,
+          picks.user,
+          here,
+        );
+        renderAppDownloads(
+          "dl-creator",
+          "Mod Creator app",
+          version,
+          picks.creator,
+          here,
+        );
       }
 
       // Source-picker modal. openChooser() resolves to "imported", "folder",
@@ -1862,93 +2563,55 @@
       function wireModdingTabs() {
         document.querySelectorAll(".tab").forEach(function (t) {
           t.onclick = function () {
-            showTab(t.dataset.tab);
+            selectTab(t.dataset.tab);
           };
         });
+        // Home-page shortcut buttons that jump to a feature tab.
+        document.querySelectorAll("[data-goto]").forEach(function (b) {
+          b.onclick = function () {
+            selectTab(b.dataset.goto);
+          };
+        });
+        window.addEventListener("hashchange", applyHashTab);
 
         // The source-picker modal (folder / .zip / imported), shared by Create,
         // Pack and Build so each feature exposes a single "choose" button.
         wireChooser();
 
-        // Create: imported game is the default base; one button picks another.
-        $("btn-create-other").onclick = async function () {
-          var c = await openChooser({
-            title: "Choose a base game",
-            sub: "The game www to recover an editable project from.",
+        // Home: extra game versions (folder / .zip) for installing mods that
+        // target a specific build. The "+" chip calls addGameVersion().
+        $("ver-dir").onchange = async function () {
+          if (!this.files.length) return;
+          var name =
+            (this.files[0].webkitRelativePath || "version").split("/")[0] ||
+            "version";
+          var files = await filesFromFileList(this.files);
+          var v = baseVersionFromFiles(files);
+          _gameVersions.push({ label: verText(v) || name, files: files });
+          this.value = "";
+          renderGameVersions();
+        };
+        $("ver-zip").onchange = async function () {
+          if (!this.files.length) return;
+          var files = await readZipFile(this.files[0]);
+          var v = baseVersionFromFiles(files);
+          _gameVersions.push({
+            label: verText(v) || this.files[0].name.replace(/\.zip$/i, ""),
+            files: files,
           });
-          if (c === "folder") $("create-dir").click();
-          else if (c === "zip") $("create-zip").click();
-        };
-        $("btn-create-reset").onclick = function () {
-          _createSource = null;
-          renderCreateSource();
-        };
-        $("create-dir").onchange = async function () {
-          if (!this.files.length) return;
-          var label =
-            (this.files[0].webkitRelativePath || "folder").split("/")[0] ||
-            "folder";
-          _createSource = {
-            label: label,
-            files: await filesFromFileList(this.files),
-          };
           this.value = "";
-          renderCreateSource();
+          renderGameVersions();
         };
-        $("create-zip").onchange = async function () {
-          if (!this.files.length) return;
-          _createSource = {
-            label: this.files[0].name,
-            files: await readZipFile(this.files[0]),
-          };
-          this.value = "";
-          renderCreateSource();
-        };
-        $("btn-create").onclick = doCreate;
-        renderCreateSource();
 
-        // Pack
-        $("btn-pack-choose").onclick = async function () {
-          var c = await openChooser({
-            title: "Choose your project",
-            sub: "The edited RPG Maker MV project to re-pack.",
-          });
-          if (c === "folder") $("pack-dir").click();
-          else if (c === "zip") $("pack-zip").click();
-        };
-        $("pack-dir").onchange = async function () {
-          if (!this.files.length) return;
-          var label =
-            (this.files[0].webkitRelativePath || "project").split("/")[0] ||
-            "project";
-          _packSource = {
-            label: label,
-            files: await filesFromFileList(this.files),
-          };
-          this.value = "";
-          renderPackSource();
-        };
-        $("pack-zip").onchange = async function () {
-          if (!this.files.length) return;
-          _packSource = {
-            label: this.files[0].name,
-            files: await readZipFile(this.files[0]),
-          };
-          this.value = "";
-          renderPackSource();
-        };
-        $("btn-pack").onclick = doPack;
-        renderPackSource();
+        // Create: pick which game version (from the Modding list) to extract.
+        // Adding a version reuses the shared "+" flow (ver-dir / ver-zip).
+        $("btn-create").onclick = doCreate;
+        renderCreateVersions();
+
+        // Pack project is desktop-only (see the note where its pane used to be);
+        // doPack / renderPackSource are kept but intentionally not wired here.
 
         // Build
-        $("btn-build-proj-choose").onclick = async function () {
-          var c = await openChooser({
-            title: "Choose your project",
-            sub: "The edited RPG Maker MV project to diff into a mod.",
-          });
-          if (c === "folder") $("build-proj-dir").click();
-          else if (c === "zip") $("build-proj-zip").click();
-        };
         $("build-proj-dir").onchange = async function () {
           if (!this.files.length) return;
           var label =
@@ -1959,71 +2622,27 @@
             files: await filesFromFileList(this.files),
           };
           this.value = "";
+          prefillBuildName(label);
           renderBuildState();
         };
         $("build-proj-zip").onchange = async function () {
           if (!this.files.length) return;
+          var fname = this.files[0].name;
           _buildProject = {
-            label: this.files[0].name,
+            label: fname,
             files: await readZipFile(this.files[0]),
           };
           this.value = "";
+          prefillBuildName(fname);
           renderBuildState();
         };
-        // The "+" chip (added by renderBuildState) calls addBuildBase().
-        $("build-base-dir").onchange = async function () {
-          if (!this.files.length) return;
-          var name =
-            (this.files[0].webkitRelativePath || "base").split("/")[0] ||
-            "base";
-          var files = await filesFromFileList(this.files);
-          var v = baseVersionFromFiles(files);
-          _buildBases.push({ label: verText(v) || name, files: files });
-          this.value = "";
-          renderBuildState();
-        };
-        $("build-base-zip").onchange = async function () {
-          if (!this.files.length) return;
-          var files = await readZipFile(this.files[0]);
-          var v = baseVersionFromFiles(files);
-          _buildBases.push({
-            label: verText(v) || this.files[0].name.replace(/\.zip$/i, ""),
-            files: files,
-          });
-          this.value = "";
-          renderBuildState();
-        };
+        // Build versions come from the Modding tab list (no add/remove here).
         $("btn-build").onclick = doBuild;
         renderBuildState();
       }
 
       // Measure every pane and pin the layout to the tallest, so the tab rail
       // and the content block never shift vertically between tabs.
-      function lockContentHeight() {
-        var layout = document.querySelector(".tab-layout");
-        if (!layout) return;
-        var panes = Array.prototype.slice.call(
-          document.querySelectorAll(".tabpane"),
-        );
-        var active = panes.filter(function (p) {
-          return !p.hidden;
-        })[0];
-        layout.style.minHeight = "";
-        panes.forEach(function (p) {
-          p.hidden = true;
-        });
-        var max = 0;
-        panes.forEach(function (p) {
-          p.hidden = false;
-          if (p.offsetHeight > max) max = p.offsetHeight;
-          p.hidden = true;
-        });
-        panes.forEach(function (p) {
-          p.hidden = p !== active;
-        });
-        if (max) layout.style.minHeight = max + "px";
-      }
-
       (async function init() {
         try {
           _db = await openDb();
@@ -2032,14 +2651,25 @@
             '<p class="err">Could not open the game database. Open this page from the same site as your game.</p>';
           return;
         }
-        // Read the imported game's version once (used across the tabs), and
-        // add it as the default Build base (removable).
-        if (await hasBaseGame(_db)) {
-          _importedVersion = await baseVersion(_db);
-          _buildBases.push({ label: importedBaseLabel(), imported: true });
+        // Modding requires an imported game; without one there is nothing to
+        // mod, so send the user to the loader to import first.
+        if (!(await hasBaseGame(_db))) {
+          location.replace("loader.html");
+          return;
         }
-        await renderBaseState();
+        // Read the imported game's version once (used across the tabs), and
+        // seed it as the imported version chip - the default Create selection
+        // and the default Build target.
+        _importedVersion = await baseVersion(_db);
+        _gameVersions.push({
+          label: verText(_importedVersion) || "imported game",
+          imported: true,
+        });
+        _createSelected = _gameVersions[0];
+        _buildSelected = [_gameVersions[0]];
+        renderGameVersions();
         await renderInstalled();
+        loadDesktopApps();
 
         var drop = $("drop");
         var input = $("file");
@@ -2070,15 +2700,9 @@
 
         wireModdingTabs();
 
-        // Reserve the height of the tallest tab so the rail and content block
-        // stay put when switching tabs (the block sits where "Build mod" needs
-        // it). Recomputed on resize.
-        requestAnimationFrame(lockContentHeight);
-        var rz;
-        window.addEventListener("resize", function () {
-          clearTimeout(rz);
-          rz = setTimeout(lockContentHeight, 150);
-        });
+        // Open the tab named in the URL hash (modding.html#create-project, ...),
+        // defaulting to the Modding home.
+        applyHashTab();
       })();
     </script>
   </body>

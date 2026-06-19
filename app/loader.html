@@ -78,7 +78,7 @@
     />
     <meta name="twitter:image:alt" content="TCOAAL Browser Player title art" />
 
-    <link rel="icon" id="favicon" href="favicon.ico" type="image/x-icon" />
+    <link rel="icon" id="favicon" href="/favicon.ico" type="image/x-icon" />
 
     <!-- Structured data: WebApplication for the loader itself -->
     <script type="application/ld+json">
@@ -725,16 +725,6 @@
           0 0 22px rgba(164, 224, 154, 0.65),
           inset 0 0 18px rgba(0, 0, 0, 0.35);
       }
-      .manage-actions .action-btn.export-saves {
-        width: 100%;
-        font-size: clamp(12px, 1.05vmin, 15px);
-        padding: clamp(6px, 0.7vw, 12px) clamp(10px, 1.2vw, 18px);
-        background: var(--bg-color-section);
-      }
-      .manage-actions .action-btn.export-saves:hover:not(:disabled) {
-        background: var(--bg-color-section-lighter);
-      }
-
       .health-panel {
         display: none;
         flex-direction: column;
@@ -1111,7 +1101,7 @@
       /* Mobile landscape (horizontal)
          Too short for the banner or a big top margin. The link bar already
          sits at the bottom (shared block above). The post-import view splits
-         into two columns: the PLAY / export-saves actions on the left, the
+         into two columns: the PLAY action on the left, the
          status / install info panel on the right: keeping the top-middle of
          the background (the title) visible above the panel. */
       @media (orientation: landscape) and (max-height: 600px) {
@@ -1456,14 +1446,6 @@
             <button class="action-btn play" id="btn-play" onclick="goToGame()">
               PLAY
             </button>
-            <button
-              class="action-btn export-saves"
-              id="btn-export-saves"
-              onclick="downloadSavesZip()"
-              style="display: none"
-            >
-              Export save files
-            </button>
           </div>
 
           <!--
@@ -1530,11 +1512,26 @@
                     Modding
                   </button>
                 </div>
+                <!--
+                  Center action depends on health: a healthy install offers
+                  "Export save files"; a broken/incomplete one (missing files)
+                  offers re-import so the user can fix it in place. Toggled by
+                  setManageFooter() from renderHealthcheck().
+                -->
                 <div class="hf-center">
+                  <button
+                    class="action-btn compact"
+                    id="btn-export-saves"
+                    onclick="downloadSavesZip()"
+                    style="display: none"
+                  >
+                    Export save files
+                  </button>
                   <button
                     class="action-btn compact"
                     id="btn-reimport"
                     onclick="loadGameFiles()"
+                    style="display: none"
                   >
                     Re-import folder
                   </button>
@@ -1542,6 +1539,7 @@
                     class="action-btn compact"
                     id="btn-reimport-zip"
                     onclick="loadGameZip()"
+                    style="display: none"
                   >
                     Re-import .zip
                   </button>
@@ -2097,9 +2095,8 @@
         } catch (e) {}
 
         setStatus("Ready! Launching game...", "ok");
-        const fav = document.getElementById("favicon");
-        fav.href = "icon/icon.png";
-        fav.type = "image/png";
+        // The game favicon (icon/icon.png) belongs to the playing game only;
+        // index.html sets it on boot. The loader keeps the app favicon.
         setTimeout(() => {
           window.location.href = "/index.html";
         }, 600);
@@ -2192,6 +2189,7 @@
           }
           $tog.style.display = "none";
           $list.classList.remove("visible");
+          setManageFooter(true);
           return;
         }
 
@@ -2209,6 +2207,7 @@
           }
           $tog.style.display = "none";
           $list.classList.remove("visible");
+          setManageFooter(true);
           return;
         }
         $hp.classList.add("warn");
@@ -2234,6 +2233,7 @@
         $list.textContent = health.missing.join("\n");
         $tog.style.display = "";
         $tog.textContent = "Show missing files (" + health.missing.length + ")";
+        setManageFooter(false);
       }
 
       function toggleMissingList() {
@@ -2260,7 +2260,7 @@
         // buttons here would later beat setImportButtonsDisabled's class
         // toggle, leaving a fresh-state error with no clickable buttons.
         if ($managePanel) $managePanel.classList.add("visible");
-        updateExportSavesButton();
+        // renderHealthcheck() sets the footer mode (export vs re-import).
         renderHealthcheck(health);
       }
 
@@ -2865,13 +2865,9 @@
         }
       }
 
-      // "Play": jump back to the game. SW/IDB are intact already.
+      // "Play": jump back to the game. SW/IDB are intact already. The game
+      // favicon is set by index.html; the loader keeps the app favicon.
       function goToGame() {
-        const fav = document.getElementById("favicon");
-        if (fav) {
-          fav.href = "icon/icon.png";
-          fav.type = "image/png";
-        }
         // Acknowledge any missing-files state so index.html's healthcheck
         // skips the redirect-back-to-loader. Cleared by clearAndReimport
         // (localStorage.clear()) and on a successful clean import.
@@ -2984,6 +2980,26 @@
         const $btn = document.getElementById("btn-export-saves");
         if (!$btn) return;
         $btn.style.display = collectSaveEntries().length > 0 ? "" : "none";
+      }
+
+      // The manage-panel footer center swaps between two roles by health:
+      //   healthy  -> "Export save files" (when any saves exist)
+      //   broken   -> "Re-import folder" / "Re-import .zip" (fix in place)
+      // Import is never removed for a user who needs it; it just isn't shown
+      // when the install is complete.
+      function setManageFooter(healthy) {
+        const $exp = document.getElementById("btn-export-saves");
+        const $ri = document.getElementById("btn-reimport");
+        const $riz = document.getElementById("btn-reimport-zip");
+        if (healthy) {
+          if ($ri) $ri.style.display = "none";
+          if ($riz) $riz.style.display = "none";
+          updateExportSavesButton();
+        } else {
+          if ($exp) $exp.style.display = "none";
+          if ($ri) $ri.style.display = "";
+          if ($riz) $riz.style.display = "";
+        }
       }
 
       function collectSaveEntries() {
@@ -3365,9 +3381,9 @@
         const $info = document.getElementById("info-fresh");
         if ($info) $info.style.display = "none";
         if ($managePanel) $managePanel.classList.add("visible");
-        updateExportSavesButton();
 
         const health = await runHealthcheck(db);
+        // renderHealthcheck() sets the footer mode (export vs re-import).
         renderHealthcheck(health);
       })();
     </script>
