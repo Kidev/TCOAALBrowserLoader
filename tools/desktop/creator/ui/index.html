@@ -17,7 +17,9 @@
         --black: #000000;
         --accent-light: #666666;
       }
-      * {
+      *,
+      *::before,
+      *::after {
         box-sizing: border-box;
         margin: 0;
         padding: 0;
@@ -42,7 +44,7 @@
         flex-direction: column;
         gap: 16px;
       }
-      h1 {
+      header h1 {
         font-weight: normal;
         letter-spacing: 0.06em;
         color: var(--white);
@@ -53,6 +55,42 @@
         font-size: 0.95rem;
         margin-top: 4px;
       }
+
+      /* Tab bar - one tab per feature, mirrors the browser Modding page. */
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .tab {
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--default);
+        opacity: 0.62;
+        font-family: "Georgia", serif;
+        font-size: 0.95rem;
+        letter-spacing: 0.03em;
+        padding: 9px 16px;
+        cursor: pointer;
+        transition: all 0.15s;
+        border-radius: 6px 6px 0 0;
+      }
+      .tab:hover {
+        opacity: 1;
+        color: var(--white);
+      }
+      .tab.active {
+        opacity: 1;
+        color: var(--purple);
+        border-bottom-color: var(--purple);
+        background: rgba(236, 131, 195, 0.08);
+      }
+      .tabpane[hidden] {
+        display: none;
+      }
+
       .panel {
         background: rgba(20, 20, 20, 0.9);
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -64,6 +102,12 @@
         letter-spacing: 0.08em;
         text-transform: uppercase;
         font-size: 0.9rem;
+        margin-bottom: 12px;
+      }
+      .lede {
+        opacity: 0.85;
+        line-height: 1.5;
+        font-size: 0.92rem;
         margin-bottom: 12px;
       }
       label {
@@ -81,6 +125,10 @@
         border: 1px solid rgba(255, 255, 255, 0.14);
         border-radius: 5px;
         padding: 8px 10px;
+      }
+      input[type="text"]:focus {
+        outline: none;
+        border-color: rgba(236, 131, 195, 0.6);
       }
       .field {
         display: flex;
@@ -109,6 +157,10 @@
       .btn.primary {
         background: var(--purple);
         color: #1a0f16;
+      }
+      .btn.primary:hover {
+        filter: brightness(1.08);
+        background: var(--purple);
       }
       .btn:disabled {
         opacity: 0.4;
@@ -142,6 +194,9 @@
         cursor: pointer;
         font-family: inherit;
       }
+      .base-item button:hover {
+        color: var(--white);
+      }
       #log {
         background: #0c0c0c;
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -160,102 +215,250 @@
       .err {
         color: var(--red);
       }
+      details.vmajor {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      details.vmajor > summary {
+        cursor: pointer;
+        font-weight: bold;
+        color: var(--white);
+        list-style: revert;
+      }
+      .vitem {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 4px;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+        font-size: 0.9rem;
+      }
+      .vitem .vmeta {
+        opacity: 0.65;
+        font-size: 0.82rem;
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <div>
+      <header>
         <h1>TCOAAL Mod Creator</h1>
         <div class="sub">
           Create a project from your game, edit it in RPG Maker MV, test it in
           the browser, then share it as a copyright-safe .tcoaalmod diff.
         </div>
-      </div>
+      </header>
 
-      <div class="panel">
-        <div class="panel-title">1. Create project from a game</div>
-        <label>Game folder (contains www/)</label>
-        <div class="field">
-          <input type="text" id="ex-www" placeholder="path to your game folder" />
-          <button class="btn" onclick="pick('ex-www')">Browse</button>
-        </div>
-        <label>Output project folder</label>
-        <div class="field">
-          <input type="text" id="ex-out" placeholder="where to write the project" />
-          <button class="btn" onclick="pick('ex-out')">Browse</button>
-        </div>
-        <div class="row">
-          <button class="btn primary" id="btn-extract" onclick="doExtract()">
-            Create project
-          </button>
-        </div>
-      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="create">Create</button>
+        <button class="tab" data-tab="play">Play</button>
+        <button class="tab" data-tab="pack">Pack</button>
+        <button class="tab" data-tab="build">Build mod</button>
+        <button class="tab" data-tab="steam">Steam versions</button>
+      </nav>
 
-      <div class="panel">
-        <div class="panel-title">2. Test in browser (dev loop)</div>
-        <label>Project folder</label>
-        <div class="field">
-          <input type="text" id="play-project" placeholder="project folder to run" />
-          <button class="btn" onclick="pick('play-project')">Browse</button>
+      <!-- Create project from a game -->
+      <section class="tabpane" id="tab-create">
+        <div class="panel">
+          <div class="panel-title">Create project from a game</div>
+          <div class="lede">
+            Decrypt a game folder into an editable RPG Maker MV project.
+          </div>
+          <label>Game folder (contains www/)</label>
+          <div class="field">
+            <input
+              type="text"
+              id="ex-www"
+              placeholder="path to your game folder"
+            />
+            <button class="btn" onclick="pick('ex-www')">Browse</button>
+          </div>
+          <label>Output project folder</label>
+          <div class="field">
+            <input
+              type="text"
+              id="ex-out"
+              placeholder="where to write the project"
+            />
+            <button class="btn" onclick="pick('ex-out')">Browse</button>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="btn-extract" onclick="doExtract()">
+              Create project
+            </button>
+          </div>
         </div>
-        <div class="row">
-          <button class="btn primary" id="btn-play" onclick="doPlay()">
-            Run in browser
-          </button>
-          <button class="btn" id="btn-stop" onclick="doStop()">Stop</button>
-        </div>
-      </div>
+      </section>
 
-      <div class="panel">
-        <div class="panel-title">3. Pack project (re-encode for the game)</div>
-        <label>Project folder</label>
-        <div class="field">
-          <input type="text" id="pk-project" placeholder="edited project folder" />
-          <button class="btn" onclick="pick('pk-project')">Browse</button>
+      <!-- Test in browser -->
+      <section class="tabpane" id="tab-play" hidden>
+        <div class="panel">
+          <div class="panel-title">Test in browser (dev loop)</div>
+          <div class="lede">
+            Run the project in true browser mode and open it in your browser.
+          </div>
+          <label>Project folder</label>
+          <div class="field">
+            <input
+              type="text"
+              id="play-project"
+              placeholder="project folder to run"
+            />
+            <button class="btn" onclick="pick('play-project')">Browse</button>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="btn-play" onclick="doPlay()">
+              Run in browser
+            </button>
+            <button class="btn" id="btn-stop" onclick="doStop()">Stop</button>
+          </div>
         </div>
-        <label>Output www folder</label>
-        <div class="field">
-          <input type="text" id="pk-out" placeholder="where to write the packed www" />
-          <button class="btn" onclick="pick('pk-out')">Browse</button>
-        </div>
-        <div class="row">
-          <button class="btn primary" id="btn-pack" onclick="doPack()">
-            Pack project
-          </button>
-        </div>
-      </div>
+      </section>
 
-      <div class="panel">
-        <div class="panel-title">4. Share (build .tcoaalmod)</div>
-        <label>Edited project folder</label>
-        <div class="field">
-          <input type="text" id="sh-project" placeholder="the project to share" />
-          <button class="btn" onclick="pick('sh-project')">Browse</button>
+      <!-- Pack project -->
+      <section class="tabpane" id="tab-pack" hidden>
+        <div class="panel">
+          <div class="panel-title">Pack project (re-encode for the game)</div>
+          <div class="lede">
+            Re-encode the edited project back into a playable www folder.
+          </div>
+          <label>Project folder</label>
+          <div class="field">
+            <input
+              type="text"
+              id="pk-project"
+              placeholder="edited project folder"
+            />
+            <button class="btn" onclick="pick('pk-project')">Browse</button>
+          </div>
+          <label>Output www folder</label>
+          <div class="field">
+            <input
+              type="text"
+              id="pk-out"
+              placeholder="where to write the packed www"
+            />
+            <button class="btn" onclick="pick('pk-out')">Browse</button>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="btn-pack" onclick="doPack()">
+              Pack project
+            </button>
+          </div>
         </div>
-        <label>Base game versions to support (add one or more)</label>
-        <div class="row">
-          <button class="btn" onclick="addBase()">Add base game folder</button>
+      </section>
+
+      <!-- Share / build .tcoaalmod -->
+      <section class="tabpane" id="tab-build" hidden>
+        <div class="panel">
+          <div class="panel-title">Share (build .tcoaalmod)</div>
+          <div class="lede">
+            Diff the edited project against one or more base game versions to
+            produce a copyright-safe, shareable .tcoaalmod.
+          </div>
+          <label>Edited project folder</label>
+          <div class="field">
+            <input
+              type="text"
+              id="sh-project"
+              placeholder="the project to share"
+            />
+            <button class="btn" onclick="pick('sh-project')">Browse</button>
+          </div>
+          <label>Base game versions to support (add one or more)</label>
+          <div class="row">
+            <button class="btn" onclick="addBase()">Add base game folder</button>
+          </div>
+          <div class="bases" id="bases"></div>
+          <label>Name</label>
+          <input type="text" id="sh-name" placeholder="My Mod" />
+          <label>Author</label>
+          <input type="text" id="sh-author" placeholder="you" />
+          <label>Version</label>
+          <input type="text" id="sh-version" placeholder="1.0.0" />
+          <label>Description</label>
+          <input type="text" id="sh-desc" placeholder="(optional)" />
+          <label>Output file</label>
+          <div class="field">
+            <input type="text" id="sh-out" placeholder="mymod.tcoaalmod" />
+            <button class="btn" onclick="pickSave('sh-out')">Choose</button>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="btn-share" onclick="doShare()">
+              Build shareable mod
+            </button>
+          </div>
         </div>
-        <div class="bases" id="bases"></div>
-        <label>Name</label>
-        <input type="text" id="sh-name" placeholder="My Mod" />
-        <label>Author</label>
-        <input type="text" id="sh-author" placeholder="you" />
-        <label>Version</label>
-        <input type="text" id="sh-version" placeholder="1.0.0" />
-        <label>Description</label>
-        <input type="text" id="sh-desc" placeholder="(optional)" />
-        <label>Output file</label>
-        <div class="field">
-          <input type="text" id="sh-out" placeholder="mymod.tcoaalmod" />
-          <button class="btn" onclick="pickSave('sh-out')">Choose</button>
+      </section>
+
+      <!-- Steam version downloader -->
+      <section class="tabpane" id="tab-steam" hidden>
+        <div class="panel">
+          <div class="panel-title">Download game versions from Steam</div>
+          <div class="lede">
+            Detect your Steam install and download a specific TCOAAL version's
+            depot. Each downloaded version is archived permanently for this app,
+            safe from later Steam updates, and can be added as a base in the
+            Build mod tab.
+          </div>
+          <div id="steam-state" class="sub">Checking for Steam...</div>
         </div>
-        <div class="row">
-          <button class="btn primary" id="btn-share" onclick="doShare()">
-            Build shareable mod
-          </button>
+
+        <div class="panel">
+          <div class="panel-title">Available versions</div>
+          <div class="row" style="margin-top: 0; margin-bottom: 8px">
+            <button class="btn" onclick="checkMissing()">
+              Check for missing versions
+            </button>
+            <span class="sub" id="steam-cat-note"
+              >Offline list. Click to pull the latest from the repo.</span
+            >
+          </div>
+          <div id="steam-catalog"><span class="sub">Loading catalog...</span></div>
+          <label>Or download by manifest id (read it from steamdb.info)</label>
+          <div class="field">
+            <input
+              type="text"
+              id="steam-manifest"
+              placeholder="e.g. 7415012965776985886"
+            />
+            <button class="btn" onclick="steamDownloadManual()">Download</button>
+          </div>
         </div>
-      </div>
+
+        <div class="panel" id="steam-dl-panel" hidden>
+          <div class="panel-title">Downloading <span id="steam-dl-name"></span></div>
+          <p class="sub">
+            1. The Steam console was opened. Paste this command there and press
+            Enter:
+          </p>
+          <div class="field">
+            <input type="text" id="steam-cmd" readonly />
+            <button class="btn" onclick="steamCopyCmd()">Copy</button>
+          </div>
+          <p class="sub" id="steam-copy-note"></p>
+          <p class="sub">
+            2. Steam shows no progress. When it finishes, archive the download:
+          </p>
+          <div class="row">
+            <button class="btn primary" id="btn-steam-wait" onclick="steamArchive(true)">
+              Wait and archive
+            </button>
+            <button class="btn" onclick="steamArchive(false)">
+              Archive now (already finished)
+            </button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Archived versions</div>
+          <div id="steam-archived"></div>
+        </div>
+      </section>
 
       <div class="panel">
         <div class="panel-title">Output</div>
@@ -271,6 +474,33 @@
       function $(id) {
         return document.getElementById(id);
       }
+
+      function showTab(name) {
+        document.querySelectorAll(".tab").forEach(function (t) {
+          t.classList.toggle("active", t.dataset.tab === name);
+        });
+        document.querySelectorAll(".tabpane").forEach(function (p) {
+          p.hidden = p.id !== "tab-" + name;
+        });
+        if (name === "steam") loadSteam();
+      }
+      function escapeHtml(s) {
+        return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+          return {
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          }[c];
+        });
+      }
+      document.querySelectorAll(".tab").forEach(function (t) {
+        t.onclick = function () {
+          showTab(t.dataset.tab);
+        };
+      });
+
       function log(text, cls) {
         var el = $("log");
         el.className = cls || "";
@@ -279,7 +509,10 @@
       }
       function appendResult(res) {
         var out = (res.stdout || "") + (res.stderr ? "\n" + res.stderr : "");
-        log(out.trim() || (res.success ? "Done." : "Failed."), res.success ? "ok" : "err");
+        log(
+          out.trim() || (res.success ? "Done." : "Failed."),
+          res.success ? "ok" : "err",
+        );
       }
 
       async function pick(id) {
@@ -385,9 +618,11 @@
       }
 
       async function doShare() {
-        if (!$("sh-project").value) return log("Pick the project to share.", "err");
+        if (!$("sh-project").value)
+          return log("Pick the project to share.", "err");
         if (!bases.length) return log("Add at least one base game folder.", "err");
-        if (!$("sh-out").value) return log("Choose an output .tcoaalmod file.", "err");
+        if (!$("sh-out").value)
+          return log("Choose an output .tcoaalmod file.", "err");
         busy("btn-share", true);
         log("Building shareable mod... extracting each base, this can take a while.");
         try {
@@ -406,6 +641,367 @@
           log(String(e), "err");
         }
         busy("btn-share", false);
+      }
+
+      // Steam version downloader
+      var _steamLoaded = false;
+      var _steamSel = null; // { manifest, name, version, buildid, date }
+      var _steamInfo = null; // result of steam_detect (installed manifest/build)
+
+      async function loadSteam() {
+        if (_steamLoaded) return;
+        _steamLoaded = true;
+        try {
+          var info = await invoke("steam_detect");
+          _steamInfo = info;
+          if (!info) {
+            $("steam-state").innerHTML =
+              '<span class="err">Steam was not found on this computer.</span> Install Steam (and own the game) to download versions.';
+          } else {
+            $("steam-state").innerHTML = steamStateHtml(info);
+          }
+        } catch (e) {
+          $("steam-state").innerHTML =
+            '<span class="err">' + escapeHtml(String(e)) + "</span>";
+        }
+        await renderCatalog();
+        await renderArchived();
+      }
+
+      // Two catalog sources. The app works fully offline from the bundled list
+      // (+ the locally installed version, whose manifest is known for free).
+      // The repo's latest list is pulled ONLY when the user asks ("Check for
+      // missing versions"), e.g. after not playing for a while.
+      var REMOTE_CATALOG =
+        "https://raw.githubusercontent.com/Kidev/TCOAALBrowserLoader/main/tools/tcoaal-versions.json";
+      async function bundledCatalog() {
+        try {
+          return await invoke("steam_catalog");
+        } catch (e) {
+          return null;
+        }
+      }
+      async function remoteCatalog() {
+        try {
+          var ctrl = new AbortController();
+          var t = setTimeout(function () {
+            ctrl.abort();
+          }, 8000);
+          var r = await fetch(REMOTE_CATALOG, {
+            cache: "no-store",
+            signal: ctrl.signal,
+          });
+          clearTimeout(t);
+          if (r.ok) {
+            var j = await r.json();
+            if (j && j.majors) return j;
+          }
+        } catch (e) {}
+        return null;
+      }
+      async function checkMissing() {
+        $("steam-cat-note").textContent = "Pulling the latest list from the repo...";
+        var remote = await remoteCatalog();
+        if (!remote) {
+          $("steam-cat-note").innerHTML =
+            '<span class="err">Could not reach the repo. Still showing the offline list.</span>';
+          return;
+        }
+        await renderCatalog(remote);
+        $("steam-cat-note").innerHTML =
+          '<span class="ok">Up to date with the repo (plus your installed version).</span>';
+      }
+
+      function catalogMaxBuild(cat) {
+        var max = 0;
+        (cat.majors || []).forEach(function (mj) {
+          (mj.versions || []).forEach(function (v) {
+            var b = Number(v.buildid) || 0;
+            if (b > max) max = b;
+          });
+        });
+        return max;
+      }
+
+      function isOutdated(info) {
+        return !!(
+          info &&
+          info.installed_buildid &&
+          info.latest_buildid &&
+          Number(info.installed_buildid) < Number(info.latest_buildid)
+        );
+      }
+
+      function steamStateHtml(info) {
+        var parts = [
+          '<span class="ok">Steam found</span> at ' + escapeHtml(info.root) + ".",
+        ];
+        if (info.installed_manifest) {
+          parts.push(
+            " Installed build " + escapeHtml(info.installed_buildid || "?") + ".",
+          );
+        }
+        if (info.latest_buildid) {
+          parts.push(
+            isOutdated(info)
+              ? ' <span class="err">A newer version is available (build ' +
+                  escapeHtml(info.latest_buildid) +
+                  ") - update via Steam, or download it below.</span>"
+              : ' <span class="sub">Latest available build ' +
+                  escapeHtml(info.latest_buildid) +
+                  ".</span>",
+          );
+        }
+        return parts.join("");
+      }
+
+      // Fold the local Steam facts into the catalog view. Both the installed and
+      // the latest-available manifests are known for free (appmanifest +
+      // appinfo cache), so they are usable even before the shared catalog lists
+      // them. A higher build id than the catalog = a new release.
+      function withLocalVersions(cat) {
+        var info = _steamInfo;
+        if (!info) return { cat: cat, newRelease: false, outdated: false };
+        var maxB = catalogMaxBuild(cat);
+        var extra = [];
+
+        function fold(manifest, buildid, baseName, flag) {
+          if (!manifest) return;
+          var seen = false;
+          (cat.majors || []).forEach(function (mj) {
+            (mj.versions || []).forEach(function (v) {
+              if (v.manifest === manifest) {
+                v[flag] = true;
+                seen = true;
+              }
+            });
+          });
+          if (seen) return;
+          var b = Number(buildid) || 0;
+          var isNew = flag === "_latest" && !!(b && maxB && b > maxB);
+          var e = {
+            name: baseName,
+            version: "",
+            date: "",
+            buildid: buildid || "",
+            manifest: manifest,
+          };
+          e[flag] = true;
+          e._new = isNew;
+          extra.push(e);
+        }
+
+        // Latest first (so it sorts to the top of the synthetic group).
+        fold(info.latest_manifest, info.latest_buildid, "Latest available", "_latest");
+        if (info.installed_manifest !== info.latest_manifest) {
+          fold(
+            info.installed_manifest,
+            info.installed_buildid,
+            "Currently installed",
+            "_installed",
+          );
+        }
+
+        var newRelease = extra.some(function (e) {
+          return e._new;
+        });
+        var outdated = isOutdated(info);
+        if (!extra.length) return { cat: cat, newRelease: newRelease, outdated: outdated };
+        var merged = {
+          majors: [
+            { major: "steam", label: "From your Steam client", versions: extra },
+          ].concat(cat.majors || []),
+        };
+        return { cat: merged, newRelease: newRelease, outdated: outdated };
+      }
+
+      async function renderCatalog(catOverride) {
+        var box = $("steam-catalog");
+        var cat = catOverride || (await bundledCatalog());
+        if (!cat || !cat.majors) cat = { majors: [] };
+        var merged = withLocalVersions(cat);
+        cat = merged.cat;
+        if (!cat.majors.length) {
+          box.innerHTML =
+            '<span class="sub">No catalog available. Use the manifest id field below.</span>';
+          return;
+        }
+        box.innerHTML = "";
+        cat.majors.forEach(function (mj, mi) {
+          var det = document.createElement("details");
+          det.className = "vmajor";
+          if (mi === 0) det.open = true;
+          var sum = document.createElement("summary");
+          sum.textContent =
+            (mj.major || "?") + (mj.label ? " - " + mj.label : "");
+          det.appendChild(sum);
+          (mj.versions || []).forEach(function (v) {
+            var row = document.createElement("div");
+            row.className = "vitem";
+            var left = document.createElement("div");
+            left.innerHTML =
+              escapeHtml(v.name || v.version || "version") +
+              (v._latest ? ' <span class="ok">(latest)</span>' : "") +
+              (v._installed ? ' <span class="ok">(installed)</span>' : "") +
+              (v._new ? ' <span class="ok">new</span>' : "") +
+              '<div class="vmeta">' +
+              (v.version ? "v" + escapeHtml(v.version) + " " : "") +
+              (v.date ? escapeHtml(v.date) + " " : "") +
+              (v.buildid ? "build " + escapeHtml(v.buildid) + " " : "") +
+              (v.manifest
+                ? "manifest " + escapeHtml(v.manifest)
+                : '<span class="err">manifest unknown</span>') +
+              "</div>";
+            var btn = document.createElement("button");
+            btn.className = "btn primary";
+            btn.textContent = "Download";
+            btn.disabled = !v.manifest;
+            btn.onclick = function () {
+              steamStart({
+                manifest: v.manifest,
+                name: v.name || v.version || "",
+                version: v.version || "",
+                buildid: v.buildid || "",
+                date: v.date || "",
+              });
+            };
+            row.appendChild(left);
+            row.appendChild(btn);
+            det.appendChild(row);
+          });
+          box.appendChild(det);
+        });
+        if (merged.outdated) {
+          var w = document.createElement("p");
+          w.className = "sub";
+          w.style.marginTop = "8px";
+          w.innerHTML =
+            '<span class="err">Your installed game is outdated.</span> The latest available version is shown above (build ' +
+            escapeHtml((_steamInfo && _steamInfo.latest_buildid) || "?") +
+            ") - update it in Steam, or download it here to archive it.";
+          box.appendChild(w);
+        }
+        if (merged.newRelease) {
+          var note = document.createElement("p");
+          note.className = "sub";
+          note.style.marginTop = "8px";
+          note.innerHTML =
+            "Your Steam shows a version newer than the shared catalog - it works here already. To share it with everyone, run <code>node tools/update-game-manifest-ids.js</code> and commit.";
+          box.appendChild(note);
+        }
+      }
+
+      function steamDownloadManual() {
+        var m = $("steam-manifest").value.trim();
+        if (!m) return log("Enter a manifest id.", "err");
+        steamStart({ manifest: m, name: m, version: "", buildid: "", date: "" });
+      }
+
+      async function steamStart(sel) {
+        _steamSel = sel;
+        try {
+          var res = await invoke("steam_start", { manifest: sel.manifest });
+          $("steam-dl-name").textContent = sel.name ? "- " + sel.name : "";
+          $("steam-cmd").value = res.command;
+          $("steam-dl-panel").hidden = false;
+          $("steam-copy-note").textContent = "";
+          steamCopyCmd();
+          log(
+            "Steam console opened. Paste the command shown in the Steam tab and press Enter.",
+            "ok",
+          );
+        } catch (e) {
+          log(String(e), "err");
+        }
+      }
+
+      async function steamCopyCmd() {
+        try {
+          await navigator.clipboard.writeText($("steam-cmd").value);
+          $("steam-copy-note").innerHTML =
+            '<span class="ok">Command copied to clipboard.</span>';
+        } catch (e) {
+          var el = $("steam-cmd");
+          el.focus();
+          el.select();
+          $("steam-copy-note").textContent =
+            "Select the command above and copy it (Ctrl+C).";
+        }
+      }
+
+      async function steamArchive(wait) {
+        if (!_steamSel) return;
+        $("btn-steam-wait").disabled = true;
+        log(
+          wait
+            ? "Waiting for the Steam download to finish, then archiving..."
+            : "Archiving the downloaded version...",
+        );
+        try {
+          var v = await invoke("steam_finish", {
+            manifest: _steamSel.manifest,
+            name: _steamSel.name,
+            version: _steamSel.version,
+            buildid: _steamSel.buildid,
+            date: _steamSel.date,
+            wait: !!wait,
+          });
+          log("Archived version: " + v.name + " (" + v.path + ").", "ok");
+          $("steam-dl-panel").hidden = true;
+          await renderArchived();
+        } catch (e) {
+          log(String(e), "err");
+        }
+        $("btn-steam-wait").disabled = false;
+      }
+
+      async function renderArchived() {
+        var box = $("steam-archived");
+        var list = [];
+        try {
+          list = await invoke("steam_archived");
+        } catch (e) {}
+        if (!list.length) {
+          box.innerHTML = '<span class="sub">No versions archived yet.</span>';
+          return;
+        }
+        box.innerHTML = "";
+        list.forEach(function (v) {
+          var row = document.createElement("div");
+          row.className = "base-item";
+          var span = document.createElement("span");
+          span.innerHTML =
+            escapeHtml(v.name) +
+            '<div class="vmeta">manifest ' +
+            escapeHtml(v.manifest) +
+            "</div>";
+          var actions = document.createElement("span");
+          var useBtn = document.createElement("button");
+          useBtn.textContent = "use in Build mod";
+          useBtn.style.color = "var(--green)";
+          useBtn.onclick = function () {
+            if (bases.indexOf(v.path) < 0) bases.push(v.path);
+            renderBases();
+            showTab("build");
+            log('Added base "' + v.name + '" to Build mod.', "ok");
+          };
+          var rm = document.createElement("button");
+          rm.textContent = "remove";
+          rm.onclick = async function () {
+            try {
+              await invoke("steam_remove_archived", { key: v.key });
+              await renderArchived();
+            } catch (e) {
+              log(String(e), "err");
+            }
+          };
+          actions.appendChild(useBtn);
+          actions.appendChild(document.createTextNode("  "));
+          actions.appendChild(rm);
+          row.appendChild(span);
+          row.appendChild(actions);
+          box.appendChild(row);
+        });
       }
     </script>
   </body>

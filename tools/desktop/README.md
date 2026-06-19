@@ -13,6 +13,54 @@ CLI uses.
   in place and uninstall it (restore), one mod at a time
   (`share-project.js --apply` / `--rollback`).
 
+Both apps share a tabbed UI (one tab per feature, matching the browser
+`app/custom-mods.html` Modding page) and a **Steam versions** tab (see below).
+
+## Steam version downloader
+
+The Steam logic lives in `core/src/lib.rs` (std-only) and both apps expose it as
+`steam_*` Tauri commands. It detects the Steam install per-OS, opens the Steam
+client console and puts `download_depot 2378900 2378901 <manifest>` on the
+clipboard for the user to paste (TCOAAL is paid, so the download must use the
+owning account's logged-in client - anonymous SteamCMD can't), then waits for
+`<steam>/steamapps/content/app_2378900/depot_2378901/` to stop changing and
+**moves it into shared app storage** (`tcoaal-mods/versions/<key>/`) so a later
+Steam update can't overwrite it.
+
+Historical depot manifest IDs are not in any public Steam Web API (that is
+SteamDB's archived data), so the version list lives in
+**`tools/tcoaal-versions.json`**, maintained by **`tools/update-game-manifest-ids.js`**
+(harvests versions you downloaded via the apps + your local Steam, and takes
+manual `--add --manifest <id> ...` entries read off steamdb).
+
+The apps work **fully offline** at launch from the bundled catalog (the
+`tools/*.json` resource glob) **plus two local Steam facts**: the **installed**
+version (manifest + build id from `appmanifest_2378900.acf`) and the **latest
+available** version (parsed from the Steam client's binary appinfo cache,
+`appcache/appinfo.vdf` - the same data `app_info_print 2378900` prints:
+`depots.2378901.manifests.public.gid` + `branches.public.buildid`). So the newest
+version is known for free even when not installed, an install older than the
+latest is flagged **outdated** (with a one-click download of the latest), and a
+build id higher than the catalog is surfaced as a brand-new release usable
+immediately (and contributable via the generator). The appinfo parser
+(`read_public_manifest` in Rust, `readPublicManifest` in the generator) is fully
+bounds-checked and best-effort - any malformed shape yields nothing and the app
+falls back to the installed manifest + catalog (covered by a gated unit test
+built from the real `app_info_print` output). A **"Check for missing versions"**
+button is the only network
+path: on demand it pulls the repo's latest list
+(`raw.githubusercontent.com/.../tools/tcoaal-versions.json`, which sends
+`Access-Control-Allow-Origin: *`, so a plain webview `fetch` works - no Rust HTTP
+dependency) and reconciles it with the installed version - useful after not
+playing for a while. So one commit of an updated catalog reaches every app for
+free, but nothing is fetched unless asked. The creator embeds each archived
+version's `steam.json`
+(appid/depot/manifest) into the `.tcoaalmod` variant it builds, so the installer
+(`mod_info` -> `share-project.js --info`) can offer the player a one-click
+download of a supported version even without the catalog. Archived versions are
+selectable as build bases (creator) or as the install target (user), and are
+shared between the two apps.
+
 ## Layout
 
 ```

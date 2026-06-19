@@ -13,7 +13,11 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager, State};
-use tcoaal_desktop_core::{node_binary, resolve_resource_dir, run_tool, tool_path, ToolResult};
+use tcoaal_desktop_core::{
+    list_archived, load_catalog, node_binary, remove_archived, resolve_resource_dir, run_tool,
+    shared_data_dir, steam_finish_download, steam_start_download, tool_path, find_steam,
+    ArchivedVersion, DownloadStart, SteamInfo, ToolResult,
+};
 
 /// Holds the background `play.js` dev server child so it can be stopped.
 #[derive(Default)]
@@ -127,6 +131,52 @@ fn stop_play(state: State<PlayState>) -> Result<(), String> {
     Ok(())
 }
 
+// Steam version downloader (shared logic lives in the core crate)
+
+#[tauri::command]
+fn steam_detect() -> Option<SteamInfo> {
+    find_steam()
+}
+
+#[tauri::command]
+fn steam_catalog(app: AppHandle) -> Result<serde_json::Value, String> {
+    let dir = resource_dir(&app)?;
+    Ok(load_catalog(&dir))
+}
+
+#[tauri::command]
+fn steam_archived() -> Vec<ArchivedVersion> {
+    list_archived(&shared_data_dir())
+}
+
+#[tauri::command]
+fn steam_remove_archived(key: String) -> Result<(), String> {
+    remove_archived(&shared_data_dir(), &key)
+}
+
+#[tauri::command]
+fn steam_start(manifest: String) -> Result<DownloadStart, String> {
+    steam_start_download(&manifest)
+}
+
+// Async + spawn_blocking: wait=true can block for many minutes while Steam
+// downloads, so it must not run on the main thread.
+#[tauri::command]
+async fn steam_finish(
+    manifest: String,
+    name: String,
+    version: String,
+    buildid: String,
+    date: String,
+    wait: bool,
+) -> Result<ArchivedVersion, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        steam_finish_download(&manifest, &name, &version, &buildid, &date, wait)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -137,7 +187,13 @@ fn main() {
             pack_project,
             share_build,
             start_play,
-            stop_play
+            stop_play,
+            steam_detect,
+            steam_catalog,
+            steam_archived,
+            steam_remove_archived,
+            steam_start,
+            steam_finish
         ])
         .on_window_event(|window, event| {
             // Make sure the background dev server dies with the app.

@@ -50,6 +50,15 @@ function writeMem(absPath, bytes) {
   vol.writeFileSync(absPath, Buffer.from(bytes));
 }
 
+// share-project's build() makes a working dir under os.tmpdir(); in the memfs
+// volume that path (e.g. "/tmp") does not exist until we create it.
+function ensureTmpDir() {
+  const os = require("os");
+  try {
+    vol.mkdirSync(os.tmpdir(), { recursive: true });
+  } catch (e) {}
+}
+
 /** base36 content tag used as the imported mod's id (e.g. "wafda24joj"). Same
  *  content -> same tag, so saves (keyed by the mod id) survive uninstall + a
  *  later re-import. */
@@ -164,4 +173,138 @@ function readZip(bytes) {
   return out;
 }
 
-module.exports = { applyTcoaalmod, inspect, readZip, contentTag };
+// Creator-side tools in the browser (mirror the desktop creator app).
+//
+// extract-project / pack-project / share-project are the same importable
+// libraries the CLI and the desktop app run; here they run over memfs. We
+// always pass "--not-playable": the playable launcher bundles app/js/libs +
+// playerbundle files that don't exist in the in-memory volume, and it does not
+// change the baked data (so the share fingerprint still matches a desktop
+// build, which is why applyTcoaalmod can force the same flag). Image features
+// that need @napi-rs/canvas (parallax composites, image deltas) are skipped.
+
+const EXTRACT_ARGS = ["--not-playable"];
+
+/** Mount a { relPath: bytes } map under an absolute memfs base dir. */
+function mountFiles(baseAbs, files) {
+  for (const rel of Object.keys(files)) writeMem(baseAbs + "/" + rel, files[rel]);
+}
+
+/** Walk a memfs directory tree into a ZIP Uint8Array (reuses share.zipWrite). */
+function zipDir(dir) {
+  const path = require("path");
+  const entries = walk(dir).map((rel) => ({
+    name: rel.split(path.sep).join("/"),
+    data: Buffer.from(vol.readFileSync(path.join(dir, rel))),
+  }));
+  const outPath = "/__zipout.zip";
+  share.zipWrite(entries, outPath);
+  const bytes = new Uint8Array(vol.readFileSync(outPath));
+  vol.unlinkSync(outPath);
+  return bytes;
+}
+
+/** A safe directory-name from an arbitrary label (used to name base folders so
+ *  share-project's basename-derived variant label stays meaningful). */
+function safeName(s) {
+  return (String(s || "base").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "")) || "base";
+}
+
+/**
+ * Create an editable RPG Maker MV project from a base game's www (the desktop
+ * "Create project"). `srcFiles` is the www in shipped form, keyed by relative
+ * path (e.g. the imported base read straight out of IndexedDB).
+ *
+ * @returns {Promise<Uint8Array>} a ZIP of the project tree, ready to download.
+ */
+async function createProject(srcFiles, opts) {
+  ensureStdio();
+  vol.reset();
+  try {
+    mountFiles("/src/www", srcFiles);
+    const extractProject = require("./extract-project.js");
+    const args = EXTRACT_ARGS.slice();
+    if (opts && opts.noBake) args.push("--no-bake");
+    const eo = extractProject.parseArgs(args);
+    eo.www = "/src/www";
+    eo.out = "/project";
+    eo.force = true;
+    await extractProject.run(eo);
+    return zipDir("/project");
+  } finally {
+    vol.reset();
+  }
+}
+
+/**
+ * Re-pack an edited project back into a playable, TCOAAL-shaped www (the desktop
+ * "Pack project"). `projectFiles` is keyed by project-relative path (may or may
+ * not include the leading "www/").
+ *
+ * @returns {Promise<Uint8Array>} a ZIP of the packed www, ready to download.
+ */
+async function packProject(projectFiles) {
+  ensureStdio();
+  vol.reset();
+  try {
+    mountFiles("/project", projectFiles);
+    share.packProject("/project", "/packed");
+    return zipDir("/packed");
+  } finally {
+    vol.reset();
+  }
+}
+
+/**
+ * Build a shareable, copyright-safe .tcoaalmod diff from an edited project and
+ * one or more base games (the desktop "Build mod").
+ *
+ * @param {Object<string,Uint8Array>} projectFiles  the edited project tree.
+ * @param {Array<{label:string, files:Object<string,Uint8Array>}>} bases  one or
+ *        more base game www's (shipped form), each becoming a supported variant.
+ * @param {{name,author,version,description}} meta
+ * @returns {Promise<Uint8Array>} the .tcoaalmod (ZIP) bytes, ready to download.
+ */
+async function buildShare(projectFiles, bases, meta) {
+  ensureStdio();
+  vol.reset();
+  ensureTmpDir();
+  try {
+    mountFiles("/project", projectFiles);
+    const baseDirs = [];
+    const used = new Set();
+    (bases || []).forEach((b, i) => {
+      let name = safeName(b.label || "base" + i);
+      while (used.has(name)) name = name + "_" + i;
+      used.add(name);
+      mountFiles("/bases/" + name + "/www", b.files);
+      baseDirs.push("/bases/" + name);
+    });
+    if (!baseDirs.length) throw new Error("At least one base game is required.");
+    meta = meta || {};
+    await share.build({
+      project: "/project",
+      out: "/mod.tcoaalmod",
+      bases: baseDirs,
+      extractArgs: EXTRACT_ARGS.slice(),
+      force: true,
+      name: meta.name || "",
+      author: meta.author || "",
+      version: meta.version || "",
+      description: meta.description || "",
+    });
+    return new Uint8Array(vol.readFileSync("/mod.tcoaalmod"));
+  } finally {
+    vol.reset();
+  }
+}
+
+module.exports = {
+  applyTcoaalmod,
+  inspect,
+  readZip,
+  contentTag,
+  createProject,
+  packProject,
+  buildShare,
+};

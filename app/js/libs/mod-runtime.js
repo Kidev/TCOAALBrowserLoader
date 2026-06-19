@@ -14624,6 +14624,7 @@ var ModRuntime = (() => {
           else if (value <= 255)
             writer.u16((248 << 8) + value);
         }
+        // Streaming encoding
         writeStartStr() {
           this.writer.u8(127);
         }
@@ -15332,6 +15333,7 @@ var ModRuntime = (() => {
           this.reader.reset(uint8);
           return this.readAny();
         }
+        // Any value reading
         val() {
           return this.readAny();
         }
@@ -15385,6 +15387,7 @@ var ModRuntime = (() => {
               throw 1;
           }
         }
+        // Unsigned int reading
         readUint(minor) {
           if (minor < 25) {
             return minor === 24 ? this.reader.u8() : minor;
@@ -15397,6 +15400,7 @@ var ModRuntime = (() => {
             }
           }
         }
+        // Negative int reading
         readNint(minor) {
           if (minor < 25) {
             return minor === 24 ? -this.reader.u8() - 1 : -minor - 1;
@@ -15409,6 +15413,7 @@ var ModRuntime = (() => {
             }
           }
         }
+        // Binary reading
         readBin(minor) {
           const reader = this.reader;
           if (minor <= 23)
@@ -15455,6 +15460,7 @@ var ModRuntime = (() => {
             throw 3;
           return this.readBin(minor);
         }
+        // String reading
         readAsStr() {
           const reader = this.reader;
           const octet = reader.u8();
@@ -15514,6 +15520,7 @@ var ModRuntime = (() => {
             throw 5;
           return this.readStr(minor);
         }
+        // Array reading
         readArr(minor) {
           const length = this.readMinorLen(minor);
           if (length >= 0)
@@ -15533,6 +15540,7 @@ var ModRuntime = (() => {
           this.reader.x++;
           return arr;
         }
+        // Object reading
         readObj(minor) {
           if (minor < 28) {
             let length = minor;
@@ -15599,6 +15607,7 @@ var ModRuntime = (() => {
           this.reader.skip(length);
           return key;
         }
+        // Tag reading
         readTag(minor) {
           if (minor <= 23)
             return this.readTagRaw(minor);
@@ -15618,6 +15627,7 @@ var ModRuntime = (() => {
         readTagRaw(tag) {
           return new JsonPackExtension_1.JsonPackExtension(tag, this.readAny());
         }
+        // Token reading
         readTkn(minor) {
           switch (minor) {
             case 244 & 31:
@@ -15659,6 +15669,7 @@ var ModRuntime = (() => {
       var CborDecoderBase_1 = require_CborDecoderBase();
       var JsonPackValue_1 = require_JsonPackValue();
       var CborDecoder = class extends CborDecoderBase_1.CborDecoderBase {
+        // Map reading
         readAsMap() {
           const octet = this.reader.u8();
           const major = octet >> 5;
@@ -15698,6 +15709,7 @@ var ModRuntime = (() => {
           this.reader.x++;
           return map;
         }
+        // Value skipping
         skipN(n) {
           for (let i = 0; i < n; i++)
             this.skipAny();
@@ -15751,6 +15763,7 @@ var ModRuntime = (() => {
               throw 1;
           }
         }
+        // Integer skipping
         skipUNint(minor) {
           if (minor <= 23)
             return;
@@ -15767,6 +15780,7 @@ var ModRuntime = (() => {
               throw 1;
           }
         }
+        // Binary skipping
         skipBin(minor) {
           const length = this.skipMinorLen(minor);
           if (length >= 0)
@@ -15787,6 +15801,7 @@ var ModRuntime = (() => {
             throw 3;
           this.skipBin(minor);
         }
+        // String skipping
         skipStr(minor) {
           const length = this.skipMinorLen(minor);
           if (length >= 0)
@@ -15807,6 +15822,7 @@ var ModRuntime = (() => {
             throw 5;
           this.skipStr(minor);
         }
+        // Array skipping
         skipArr(minor) {
           const length = this.skipMinorLen(minor);
           if (length >= 0)
@@ -15817,6 +15833,7 @@ var ModRuntime = (() => {
             this.reader.x++;
           }
         }
+        // Object skipping
         skipObj(minor) {
           const length = this.readMinorLen(minor);
           if (length >= 0)
@@ -15831,12 +15848,14 @@ var ModRuntime = (() => {
             this.reader.x++;
           }
         }
+        // Tag skipping
         skipTag(minor) {
           const length = this.skipMinorLen(minor);
           if (length < 0)
             throw 1;
           this.skipAny();
         }
+        // Token skipping
         skipTkn(minor) {
           switch (minor) {
             case 248 & 31:
@@ -15856,6 +15875,7 @@ var ModRuntime = (() => {
             return;
           throw 1;
         }
+        // Validation
         /**
          * Throws if at given offset in a buffer there is an invalid CBOR value, or
          * if the value does not span the exact length specified in `size`. I.e.
@@ -15878,6 +15898,7 @@ var ModRuntime = (() => {
           if (end - start !== size)
             throw 8;
         }
+        // One level reading, any value
         decodeLevel(value) {
           this.reader.reset(value);
           return this.readLevel();
@@ -15924,6 +15945,7 @@ var ModRuntime = (() => {
           const end = reader.x;
           return new JsonPackValue_1.JsonPackValue(reader.uint8.subarray(start, end));
         }
+        // One level reading, object
         readObjLevel(minor) {
           const length = this.readMinorLen(minor);
           if (length >= 0)
@@ -15952,6 +15974,7 @@ var ModRuntime = (() => {
           this.reader.x++;
           return obj;
         }
+        // One level reading, array
         readArrLevel(minor) {
           const length = this.readMinorLen(minor);
           if (length >= 0)
@@ -15971,6 +15994,7 @@ var ModRuntime = (() => {
           this.reader.x++;
           return arr;
         }
+        // Shallow reading
         readHdr(expectedMajor) {
           const octet = this.reader.u8();
           const major = octet >> 5;
@@ -16470,6 +16494,7 @@ var ModRuntime = (() => {
         writeObjKeySeparator() {
           this.writer.u8(58);
         }
+        // Streaming encoding
         writeStartStr() {
           throw new Error("Method not implemented.");
         }
@@ -18926,9 +18951,11 @@ var ModRuntime = (() => {
           const [{ bigint = false }, callback] = (0, options_1.getStatfsOptsAndCb)(a, b);
           this.wrapAsync(this._statfs, [(0, util_3.pathToFilename)(path), bigint], callback);
         }
+        // Tree View
         toTree(opts = { separator: path_1.sep }) {
           return (0, fs_print_1.toTreeSync)(this, opts);
         }
+        // Snapshots
         toSnapshot(path = "/") {
           return fsSnapshot.toSnapshotSync({ fs: this, path });
         }
@@ -73837,6 +73864,13 @@ Options:
         vol.mkdirSync(path.dirname(absPath), { recursive: true });
         vol.writeFileSync(absPath, import_buffer.Buffer.from(bytes));
       }
+      function ensureTmpDir() {
+        const os = require_browser13();
+        try {
+          vol.mkdirSync(os.tmpdir(), { recursive: true });
+        } catch (e) {
+        }
+      }
       function contentTag(files) {
         const h = crypto.createHash("sha256");
         for (const rel of Object.keys(files).sort()) {
@@ -73915,7 +73949,96 @@ Options:
         for (const [k, v] of m) out[k] = new Uint8Array(v);
         return out;
       }
-      module2.exports = { applyTcoaalmod, inspect, readZip, contentTag };
+      var EXTRACT_ARGS = ["--not-playable"];
+      function mountFiles(baseAbs, files) {
+        for (const rel of Object.keys(files)) writeMem(baseAbs + "/" + rel, files[rel]);
+      }
+      function zipDir(dir) {
+        const path = require_path_browserify();
+        const entries = walk(dir).map((rel) => ({
+          name: rel.split(path.sep).join("/"),
+          data: import_buffer.Buffer.from(vol.readFileSync(path.join(dir, rel)))
+        }));
+        const outPath = "/__zipout.zip";
+        share.zipWrite(entries, outPath);
+        const bytes = new Uint8Array(vol.readFileSync(outPath));
+        vol.unlinkSync(outPath);
+        return bytes;
+      }
+      function safeName(s) {
+        return String(s || "base").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "base";
+      }
+      async function createProject(srcFiles, opts) {
+        ensureStdio();
+        vol.reset();
+        try {
+          mountFiles("/src/www", srcFiles);
+          const extractProject = require_extract_project();
+          const args = EXTRACT_ARGS.slice();
+          if (opts && opts.noBake) args.push("--no-bake");
+          const eo = extractProject.parseArgs(args);
+          eo.www = "/src/www";
+          eo.out = "/project";
+          eo.force = true;
+          await extractProject.run(eo);
+          return zipDir("/project");
+        } finally {
+          vol.reset();
+        }
+      }
+      async function packProject(projectFiles) {
+        ensureStdio();
+        vol.reset();
+        try {
+          mountFiles("/project", projectFiles);
+          share.packProject("/project", "/packed");
+          return zipDir("/packed");
+        } finally {
+          vol.reset();
+        }
+      }
+      async function buildShare(projectFiles, bases, meta) {
+        ensureStdio();
+        vol.reset();
+        ensureTmpDir();
+        try {
+          mountFiles("/project", projectFiles);
+          const baseDirs = [];
+          const used = /* @__PURE__ */ new Set();
+          (bases || []).forEach((b, i) => {
+            let name = safeName(b.label || "base" + i);
+            while (used.has(name)) name = name + "_" + i;
+            used.add(name);
+            mountFiles("/bases/" + name + "/www", b.files);
+            baseDirs.push("/bases/" + name);
+          });
+          if (!baseDirs.length) throw new Error("At least one base game is required.");
+          meta = meta || {};
+          await share.build({
+            project: "/project",
+            out: "/mod.tcoaalmod",
+            bases: baseDirs,
+            extractArgs: EXTRACT_ARGS.slice(),
+            force: true,
+            name: meta.name || "",
+            author: meta.author || "",
+            version: meta.version || "",
+            description: meta.description || ""
+          });
+          return new Uint8Array(vol.readFileSync("/mod.tcoaalmod"));
+        } finally {
+          vol.reset();
+        }
+      }
+      module2.exports = {
+        applyTcoaalmod,
+        inspect,
+        readZip,
+        contentTag,
+        createProject,
+        packProject,
+        buildShare
+      };
     }
   });
   return require_mod_runtime();

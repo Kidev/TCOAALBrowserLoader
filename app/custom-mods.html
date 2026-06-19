@@ -63,9 +63,9 @@
         background:
           linear-gradient(
             to bottom,
-            rgba(0, 0, 0, 0.35) 0%,
-            rgba(0, 0, 0, 0.6) 60%,
-            rgba(0, 0, 0, 0.82) 100%
+            rgba(0, 0, 0, 0.18) 0%,
+            rgba(0, 0, 0, 0.4) 60%,
+            rgba(0, 0, 0, 0.66) 100%
           ),
           url("img/bg.webp") top center / cover no-repeat,
           var(--black);
@@ -298,55 +298,314 @@
           transform: rotate(360deg);
         }
       }
+
+      /* Tab bar - one tab per modding feature, mirrored by the desktop apps. */
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .tab {
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--default);
+        opacity: 0.62;
+        font-family: "Georgia", serif;
+        font-size: clamp(13px, 1.6vmin, 16px);
+        letter-spacing: 0.03em;
+        padding: 9px 16px;
+        cursor: pointer;
+        transition: all 0.15s;
+        border-radius: 6px 6px 0 0;
+      }
+      .tab:hover {
+        opacity: 1;
+        color: var(--white);
+      }
+      .tab.active {
+        opacity: 1;
+        color: var(--purple);
+        border-bottom-color: var(--purple);
+        background: rgba(236, 131, 195, 0.08);
+      }
+      .tabpane {
+        display: flex;
+        flex-direction: column;
+        gap: clamp(12px, 1.8vmin, 18px);
+      }
+      .tabpane[hidden] {
+        display: none;
+      }
+
+      label {
+        display: block;
+        font-size: 0.82rem;
+        opacity: 0.7;
+        margin: 12px 0 4px;
+      }
+      label:first-child {
+        margin-top: 0;
+      }
+      input[type="text"] {
+        width: 100%;
+        font-family: inherit;
+        font-size: 0.95rem;
+        color: var(--white);
+        background: #161616;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 5px;
+        padding: 8px 10px;
+      }
+      input[type="text"]:focus {
+        outline: none;
+        border-color: rgba(236, 131, 195, 0.6);
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+        font-size: 0.9rem;
+        opacity: 0.85;
+      }
+      .source-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .source-label {
+        font-size: 0.9rem;
+        opacity: 0.8;
+      }
+      .source-label code {
+        color: var(--green);
+      }
+      .base-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        background: rgba(42, 42, 42, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-top: 6px;
+        font-size: 0.9rem;
+      }
+      .base-item button {
+        background: none;
+        border: none;
+        color: var(--red);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 0.85rem;
+      }
+      .base-item button:hover {
+        color: var(--white);
+      }
+      .hint {
+        font-size: 0.85rem;
+        opacity: 0.6;
+        line-height: 1.5;
+        margin-top: 8px;
+      }
     </style>
   </head>
   <body>
     <div class="bg"></div>
     <div class="wrap">
       <header>
-        <h1>Custom mods</h1>
-        <a class="back" href="loader.html">&lt;- Back to loader</a>
+        <h1>Modding</h1>
+        <a class="back" href="loader.html">Back to loader</a>
       </header>
 
       <div class="panel">
         <p class="lede">
-          Import a community mod into your in-browser copy of the game. A mod is
-          a diff: it carries only the author's changes, none of the game's
-          content, so your imported base game is required. Imported mods then
-          appear in the in-game <strong>Mods</strong> menu, where you can enable,
-          disable or uninstall them.
+          The full modding toolchain, in your browser. Install community mods,
+          or create / pack / build your own - the same tools the desktop apps
+          run, over your already-imported game.
         </p>
         <div id="base-state" style="margin-top: 10px"></div>
       </div>
 
-      <div class="panel">
-        <h2 class="panel-title">Import a mod</h2>
-        <div class="drop" id="drop">
-          <p><strong>Drop a mod file here</strong> or click to choose</p>
-          <p class="meta">
-            Supported: <code>.tcoaalmod</code> (diff mods) and packaged mod
-            <code>.zip</code> archives.
-          </p>
-          <input
-            type="file"
-            id="file"
-            accept=".tcoaalmod,.zip,application/zip"
-            hidden
-          />
-        </div>
-        <div class="status" id="analysis" hidden></div>
-        <div class="row" id="install-row" hidden style="margin-top: 14px">
-          <button class="action-btn primary" id="btn-install" disabled>
-            Install into my game
-          </button>
-          <span class="meta" id="install-note"></span>
-        </div>
-      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="install">Install</button>
+        <button class="tab" data-tab="create">Create project</button>
+        <button class="tab" data-tab="pack">Pack project</button>
+        <button class="tab" data-tab="build">Build mod</button>
+      </nav>
 
-      <div class="panel">
-        <h2 class="panel-title">Installed custom mods</h2>
-        <div id="installed-list"></div>
-      </div>
+      <!-- Install: import a .tcoaalmod / packaged .zip into the in-browser game -->
+      <section class="tabpane" id="tab-install">
+        <div class="panel">
+          <h2 class="panel-title">Import a mod</h2>
+          <p class="lede" style="margin-bottom: 12px">
+            A mod is a diff: it carries only the author's changes, none of the
+            game's content, so your imported base game is required. Imported mods
+            appear in the in-game <strong>Mods</strong> menu, where you can
+            enable, disable or uninstall them.
+          </p>
+          <div class="drop" id="drop">
+            <p><strong>Drop a mod file here</strong> or click to choose</p>
+            <p class="meta">
+              Supported: <code>.tcoaalmod</code> (diff mods) and packaged mod
+              <code>.zip</code> archives.
+            </p>
+            <input
+              type="file"
+              id="file"
+              accept=".tcoaalmod,.zip,application/zip"
+              hidden
+            />
+          </div>
+          <div class="status" id="analysis" hidden></div>
+          <div class="row" id="install-row" hidden style="margin-top: 14px">
+            <button class="action-btn primary" id="btn-install" disabled>
+              Install into my game
+            </button>
+            <span class="meta" id="install-note"></span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2 class="panel-title">Installed custom mods</h2>
+          <div id="installed-list"></div>
+        </div>
+      </section>
+
+      <!-- Create project: decrypt a game into an editable RPG Maker MV project -->
+      <section class="tabpane" id="tab-create" hidden>
+        <div class="panel">
+          <h2 class="panel-title">Create an editable project</h2>
+          <p class="lede" style="margin-bottom: 6px">
+            Recover an editable RPG Maker MV project from a game's
+            <code>www</code> - decrypted data, named assets and baked dialogue,
+            ready to open in the editor. Downloads as a <code>.zip</code>.
+          </p>
+          <div class="source-row">
+            <span class="source-label" id="create-src-label"></span>
+            <button class="action-btn" id="btn-create-dir">Choose folder</button>
+            <button class="action-btn" id="btn-create-zip">Choose .zip</button>
+            <button class="action-btn" id="btn-create-reset" hidden>
+              Use imported base
+            </button>
+          </div>
+          <input type="file" id="create-dir" webkitdirectory hidden />
+          <input type="file" id="create-zip" accept=".zip" hidden />
+          <label class="check"
+            ><input type="checkbox" id="create-nobake" /> Keep dialogue
+            placeholders (<code>--no-bake</code>) instead of baking readable
+            text</label
+          >
+          <div class="row" style="margin-top: 14px">
+            <button class="action-btn primary" id="btn-create">
+              Create project
+            </button>
+          </div>
+          <div class="status" id="create-status" hidden></div>
+          <p class="hint">
+            Runs entirely in your browser. Image compositing (parallax map
+            backgrounds) needs a native canvas and is skipped here - data,
+            assets and text are recovered fully.
+          </p>
+        </div>
+      </section>
+
+      <!-- Pack project: re-encode an edited project into a playable www -->
+      <section class="tabpane" id="tab-pack" hidden>
+        <div class="panel">
+          <h2 class="panel-title">Pack an edited project</h2>
+          <p class="lede" style="margin-bottom: 6px">
+            Re-encode an edited project back into a TCOAAL-shaped
+            <code>www</code> (re-hashed names, re-encrypted assets, un-baked
+            dialogue). Downloads as a <code>.zip</code> you can re-import on the
+            loader or run with <code>node server.js</code>.
+          </p>
+          <div class="source-row">
+            <span class="source-label" id="pack-src-label"
+              >No project chosen.</span
+            >
+            <button class="action-btn" id="btn-pack-dir">Choose folder</button>
+            <button class="action-btn" id="btn-pack-zip">Choose .zip</button>
+          </div>
+          <input type="file" id="pack-dir" webkitdirectory hidden />
+          <input type="file" id="pack-zip" accept=".zip" hidden />
+          <div class="row" style="margin-top: 14px">
+            <button class="action-btn primary" id="btn-pack" disabled>
+              Pack project
+            </button>
+          </div>
+          <div class="status" id="pack-status" hidden></div>
+        </div>
+      </section>
+
+      <!-- Build mod: diff an edited project against base game(s) -> .tcoaalmod -->
+      <section class="tabpane" id="tab-build" hidden>
+        <div class="panel">
+          <h2 class="panel-title">Build a shareable mod</h2>
+          <p class="lede" style="margin-bottom: 6px">
+            Diff your edited project against one or more base game versions to
+            produce a copyright-safe <code>.tcoaalmod</code> - it ships only your
+            changes, never the game's content. Players supply their own game.
+          </p>
+
+          <label>Edited project</label>
+          <div class="source-row">
+            <span class="source-label" id="build-proj-label"
+              >No project chosen.</span
+            >
+            <button class="action-btn" id="btn-build-proj-dir">
+              Choose folder
+            </button>
+            <button class="action-btn" id="btn-build-proj-zip">
+              Choose .zip
+            </button>
+          </div>
+          <input type="file" id="build-proj-dir" webkitdirectory hidden />
+          <input type="file" id="build-proj-zip" accept=".zip" hidden />
+
+          <label>Base game versions to support (add one or more)</label>
+          <div class="source-row">
+            <button class="action-btn" id="btn-build-base-imported">
+              Add imported base
+            </button>
+            <button class="action-btn" id="btn-build-base-dir">
+              Add base folder
+            </button>
+            <button class="action-btn" id="btn-build-base-zip">
+              Add base .zip
+            </button>
+          </div>
+          <input type="file" id="build-base-dir" webkitdirectory hidden />
+          <input type="file" id="build-base-zip" accept=".zip" hidden />
+          <div id="build-bases"></div>
+
+          <label>Name</label>
+          <input type="text" id="build-name" placeholder="My Mod" />
+          <label>Author</label>
+          <input type="text" id="build-author" placeholder="you" />
+          <label>Version</label>
+          <input type="text" id="build-version" placeholder="1.0.0" />
+          <label>Description (optional)</label>
+          <input type="text" id="build-desc" placeholder="" />
+
+          <div class="row" style="margin-top: 14px">
+            <button class="action-btn primary" id="btn-build" disabled>
+              Build shareable mod
+            </button>
+          </div>
+          <div class="status" id="build-status" hidden></div>
+          <p class="hint">
+            Each base is re-extracted and diffed in your browser; this can take a
+            while for large games. The result downloads as
+            <code>.tcoaalmod</code>.
+          </p>
+        </div>
+      </section>
     </div>
 
     <script>
@@ -899,6 +1158,414 @@
         await renderInstalled();
       }
 
+      // Tabs + creator-side tools (Create project / Pack project / Build mod).
+      // These call the same extract/pack/share libraries as the desktop apps,
+      // bundled into ModRuntime and run over an in-memory file system.
+
+      function showTab(name) {
+        document.querySelectorAll(".tab").forEach(function (t) {
+          t.classList.toggle("active", t.dataset.tab === name);
+        });
+        document.querySelectorAll(".tabpane").forEach(function (p) {
+          p.hidden = p.id !== "tab-" + name;
+        });
+      }
+
+      function setStatusEl(id, html, cls) {
+        var el = $(id);
+        el.hidden = false;
+        el.className = "status" + (cls ? " " + cls : "");
+        el.innerHTML = html;
+      }
+      var SPIN = '<span class="spinner"></span>';
+
+      function downloadBytes(bytes, filename, mime) {
+        var blob = new Blob([bytes], {
+          type: mime || "application/octet-stream",
+        });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () {
+          URL.revokeObjectURL(url);
+        }, 4000);
+      }
+
+      // A webkitdirectory FileList -> { relPath: Uint8Array }, dropping the
+      // top-level picked-folder segment (webkitRelativePath = "<picked>/a/b").
+      async function filesFromFileList(fileList) {
+        var out = {};
+        for (var i = 0; i < fileList.length; i++) {
+          var f = fileList[i];
+          var rp = f.webkitRelativePath || "";
+          var rel = rp ? rp.split("/").slice(1).join("/") : f.name;
+          if (!rel) rel = f.name;
+          out[rel] = new Uint8Array(await f.arrayBuffer());
+        }
+        return out;
+      }
+
+      // Drop a single shared top-level directory if every entry is under it.
+      function stripCommonTop(map) {
+        var keys = Object.keys(map);
+        if (!keys.length) return map;
+        var first = keys[0].split("/")[0];
+        var common = keys.every(function (k) {
+          return k.indexOf("/") >= 0 && k.split("/")[0] === first;
+        });
+        if (!common) return map;
+        var out = {};
+        keys.forEach(function (k) {
+          out[k.slice(first.length + 1)] = map[k];
+        });
+        return out;
+      }
+
+      // Reduce a game folder to its www root (so extract/diff see data/ at top).
+      function toWwwRoot(map) {
+        var hasWww = Object.keys(map).some(function (k) {
+          return k.indexOf("www/") === 0;
+        });
+        if (!hasWww) return map;
+        var out = {};
+        Object.keys(map).forEach(function (k) {
+          if (k.indexOf("www/") === 0) out[k.slice(4)] = map[k];
+        });
+        return out;
+      }
+
+      async function readZipFile(file) {
+        var bytes = new Uint8Array(await file.arrayBuffer());
+        var rt = await loadRuntime();
+        return stripCommonTop(rt.readZip(bytes));
+      }
+
+      function fileCount(map) {
+        return Object.keys(map).length;
+      }
+
+      // Create project
+      var _createSource = null; // { label, files } or null -> imported base
+
+      function renderCreateSource() {
+        var lbl = $("create-src-label");
+        if (_createSource) {
+          lbl.innerHTML =
+            "Source: <code>" +
+            escapeHtml(_createSource.label) +
+            "</code> (" +
+            fileCount(_createSource.files) +
+            " files)";
+          $("btn-create-reset").hidden = false;
+        } else {
+          lbl.innerHTML = "Source: <code>imported base game</code>";
+          $("btn-create-reset").hidden = true;
+        }
+      }
+
+      async function doCreate() {
+        try {
+          $("btn-create").disabled = true;
+          setStatusEl("create-status", SPIN + "Reading source files...");
+          var src = _createSource
+            ? toWwwRoot(_createSource.files)
+            : toWwwRoot(await readBaseFiles(_db));
+          if (!fileCount(src)) {
+            setStatusEl(
+              "create-status",
+              '<span class="err">No source files. Import a base game on the loader, or choose a folder / .zip.</span>',
+              "err",
+            );
+            return;
+          }
+          setStatusEl(
+            "create-status",
+            SPIN + "Extracting project - this can take a moment...",
+          );
+          var rt = await loadRuntime();
+          var bytes = await rt.createProject(src, {
+            noBake: $("create-nobake").checked,
+          });
+          downloadBytes(bytes, "tcoaal-project.zip", "application/zip");
+          setStatusEl(
+            "create-status",
+            '<span class="ok">[OK] Project created.</span>\nDownloaded <code>tcoaal-project.zip</code> - unzip and open <code>Game.rpgproject</code> in RPG Maker MV.',
+            "ok",
+          );
+        } catch (e) {
+          setStatusEl(
+            "create-status",
+            '<span class="err">Create failed:</span>\n' +
+              escapeHtml(e.message || String(e)),
+            "err",
+          );
+        } finally {
+          $("btn-create").disabled = false;
+        }
+      }
+
+      // Pack project
+      var _packSource = null; // { label, files }
+
+      function renderPackSource() {
+        var lbl = $("pack-src-label");
+        if (_packSource) {
+          lbl.innerHTML =
+            "Project: <code>" +
+            escapeHtml(_packSource.label) +
+            "</code> (" +
+            fileCount(_packSource.files) +
+            " files)";
+          $("btn-pack").disabled = false;
+        } else {
+          lbl.textContent = "No project chosen.";
+          $("btn-pack").disabled = true;
+        }
+      }
+
+      async function doPack() {
+        if (!_packSource) return;
+        try {
+          $("btn-pack").disabled = true;
+          setStatusEl("pack-status", SPIN + "Packing project...");
+          var rt = await loadRuntime();
+          var bytes = await rt.packProject(_packSource.files);
+          downloadBytes(bytes, "tcoaal-www.zip", "application/zip");
+          setStatusEl(
+            "pack-status",
+            '<span class="ok">[OK] Packed.</span>\nDownloaded <code>tcoaal-www.zip</code> - re-import it on the loader, or run it with <code>node server.js</code>.',
+            "ok",
+          );
+        } catch (e) {
+          setStatusEl(
+            "pack-status",
+            '<span class="err">Pack failed:</span>\n' +
+              escapeHtml(e.message || String(e)),
+            "err",
+          );
+        } finally {
+          $("btn-pack").disabled = false;
+        }
+      }
+
+      // Build mod
+      var _buildProject = null; // { label, files }
+      var _buildBases = []; // [{ label, files }]
+
+      function renderBuildState() {
+        var pl = $("build-proj-label");
+        if (_buildProject) {
+          pl.innerHTML =
+            "Project: <code>" +
+            escapeHtml(_buildProject.label) +
+            "</code> (" +
+            fileCount(_buildProject.files) +
+            " files)";
+        } else {
+          pl.textContent = "No project chosen.";
+        }
+        var box = $("build-bases");
+        box.innerHTML = "";
+        _buildBases.forEach(function (b, i) {
+          var row = document.createElement("div");
+          row.className = "base-item";
+          var span = document.createElement("span");
+          span.innerHTML =
+            escapeHtml(b.label) +
+            ' <span class="meta">(' +
+            fileCount(b.files) +
+            " files)</span>";
+          var btn = document.createElement("button");
+          btn.textContent = "remove";
+          btn.onclick = function () {
+            _buildBases.splice(i, 1);
+            renderBuildState();
+          };
+          row.appendChild(span);
+          row.appendChild(btn);
+          box.appendChild(row);
+        });
+        $("btn-build").disabled = !(_buildProject && _buildBases.length);
+      }
+
+      async function doBuild() {
+        if (!_buildProject || !_buildBases.length) return;
+        try {
+          $("btn-build").disabled = true;
+          setStatusEl(
+            "build-status",
+            SPIN +
+              "Building - extracting and diffing each base, this can take a while...",
+          );
+          var rt = await loadRuntime();
+          var bases = _buildBases.map(function (b) {
+            return { label: b.label, files: toWwwRoot(b.files) };
+          });
+          var bytes = await rt.buildShare(_buildProject.files, bases, {
+            name: $("build-name").value,
+            author: $("build-author").value,
+            version: $("build-version").value,
+            description: $("build-desc").value,
+          });
+          var fname =
+            ($("build-name").value || "mymod")
+              .toLowerCase()
+              .replace(/[^a-z0-9._-]+/g, "-")
+              .replace(/^-+|-+$/g, "") || "mymod";
+          downloadBytes(bytes, fname + ".tcoaalmod", "application/octet-stream");
+          setStatusEl(
+            "build-status",
+            '<span class="ok">[OK] Built ' +
+              escapeHtml(fname) +
+              ".tcoaalmod (" +
+              _buildBases.length +
+              " base variant" +
+              (_buildBases.length === 1 ? "" : "s") +
+              ").</span>\nShare it - players install it from this Install tab (or the desktop installer).",
+            "ok",
+          );
+        } catch (e) {
+          setStatusEl(
+            "build-status",
+            '<span class="err">Build failed:</span>\n' +
+              escapeHtml(e.message || String(e)),
+            "err",
+          );
+        } finally {
+          renderBuildState();
+        }
+      }
+
+      function wireModdingTabs() {
+        document.querySelectorAll(".tab").forEach(function (t) {
+          t.onclick = function () {
+            showTab(t.dataset.tab);
+          };
+        });
+
+        // Create
+        $("btn-create-dir").onclick = function () {
+          $("create-dir").click();
+        };
+        $("btn-create-zip").onclick = function () {
+          $("create-zip").click();
+        };
+        $("btn-create-reset").onclick = function () {
+          _createSource = null;
+          renderCreateSource();
+        };
+        $("create-dir").onchange = async function () {
+          if (!this.files.length) return;
+          var label =
+            (this.files[0].webkitRelativePath || "folder").split("/")[0] ||
+            "folder";
+          _createSource = { label: label, files: await filesFromFileList(this.files) };
+          renderCreateSource();
+        };
+        $("create-zip").onchange = async function () {
+          if (!this.files.length) return;
+          _createSource = {
+            label: this.files[0].name,
+            files: await readZipFile(this.files[0]),
+          };
+          renderCreateSource();
+        };
+        $("btn-create").onclick = doCreate;
+        renderCreateSource();
+
+        // Pack
+        $("btn-pack-dir").onclick = function () {
+          $("pack-dir").click();
+        };
+        $("btn-pack-zip").onclick = function () {
+          $("pack-zip").click();
+        };
+        $("pack-dir").onchange = async function () {
+          if (!this.files.length) return;
+          var label =
+            (this.files[0].webkitRelativePath || "project").split("/")[0] ||
+            "project";
+          _packSource = { label: label, files: await filesFromFileList(this.files) };
+          renderPackSource();
+        };
+        $("pack-zip").onchange = async function () {
+          if (!this.files.length) return;
+          _packSource = {
+            label: this.files[0].name,
+            files: await readZipFile(this.files[0]),
+          };
+          renderPackSource();
+        };
+        $("btn-pack").onclick = doPack;
+        renderPackSource();
+
+        // Build
+        $("btn-build-proj-dir").onclick = function () {
+          $("build-proj-dir").click();
+        };
+        $("btn-build-proj-zip").onclick = function () {
+          $("build-proj-zip").click();
+        };
+        $("build-proj-dir").onchange = async function () {
+          if (!this.files.length) return;
+          var label =
+            (this.files[0].webkitRelativePath || "project").split("/")[0] ||
+            "project";
+          _buildProject = { label: label, files: await filesFromFileList(this.files) };
+          renderBuildState();
+        };
+        $("build-proj-zip").onchange = async function () {
+          if (!this.files.length) return;
+          _buildProject = {
+            label: this.files[0].name,
+            files: await readZipFile(this.files[0]),
+          };
+          renderBuildState();
+        };
+        $("btn-build-base-imported").onclick = async function () {
+          var files = await readBaseFiles(_db);
+          if (!fileCount(files)) {
+            setStatusEl(
+              "build-status",
+              '<span class="err">No imported base game found. Import one on the loader first.</span>',
+              "err",
+            );
+            return;
+          }
+          _buildBases.push({ label: "imported base", files: files });
+          renderBuildState();
+        };
+        $("btn-build-base-dir").onclick = function () {
+          $("build-base-dir").click();
+        };
+        $("btn-build-base-zip").onclick = function () {
+          $("build-base-zip").click();
+        };
+        $("build-base-dir").onchange = async function () {
+          if (!this.files.length) return;
+          var label =
+            (this.files[0].webkitRelativePath || "base").split("/")[0] || "base";
+          _buildBases.push({ label: label, files: await filesFromFileList(this.files) });
+          this.value = "";
+          renderBuildState();
+        };
+        $("build-base-zip").onchange = async function () {
+          if (!this.files.length) return;
+          _buildBases.push({
+            label: this.files[0].name,
+            files: await readZipFile(this.files[0]),
+          });
+          this.value = "";
+          renderBuildState();
+        };
+        $("btn-build").onclick = doBuild;
+        renderBuildState();
+      }
+
       (async function init() {
         try {
           _db = await openDb();
@@ -936,6 +1603,8 @@
           }
         });
         $("btn-install").onclick = doInstall;
+
+        wireModdingTabs();
       })();
     </script>
   </body>

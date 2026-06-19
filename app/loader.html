@@ -873,6 +873,19 @@
       .action-btn.accent:hover {
         background: rgba(236, 131, 195, 0.3);
       }
+      /* Modding entry point: a brighter, filled green so it stands out from the
+         neutral re-import / danger buttons in the health footer. */
+      .action-btn.accent-green {
+        background: rgba(134, 211, 122, 0.28);
+        border: 1px solid rgba(134, 211, 122, 0.7);
+        color: var(--green);
+        font-weight: bold;
+      }
+      .action-btn.accent-green:hover {
+        background: rgba(134, 211, 122, 0.45);
+        border-color: var(--green);
+        color: var(--white);
+      }
 
       .action-btn.compact {
         font-size: clamp(12px, 1vmin, 14px);
@@ -1509,12 +1522,12 @@
               <div class="health-footer">
                 <div class="hf-left">
                   <button
-                    class="action-btn compact accent"
+                    class="action-btn compact accent-green"
                     id="btn-custom-mods"
                     onclick="location.href='custom-mods.html'"
-                    title="Import, inspect and manage community mods"
+                    title="Create, build, import and manage mods"
                   >
-                    Custom mods
+                    Modding
                   </button>
                 </div>
                 <div class="hf-center">

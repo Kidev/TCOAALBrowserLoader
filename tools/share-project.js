@@ -301,6 +301,33 @@ function resolveWww(input) {
   return input;
 }
 
+/** Read a steam.json (written by the desktop Steam downloader) next to a base
+ *  game, returning { appid, depot, manifest, name, buildid, date } or null. */
+function readSteamMeta(baseInput, baseWww) {
+  const candidates = [
+    path.join(baseInput, "steam.json"),
+    path.join(path.dirname(baseWww), "steam.json"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const o = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (o && o.manifest) {
+          return {
+            appid: String(o.appid || ""),
+            depot: String(o.depot || ""),
+            manifest: String(o.manifest),
+            name: String(o.name || o.version || ""),
+            buildid: String(o.buildid || ""),
+            date: String(o.date || ""),
+          };
+        }
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
 function sha256hex(buf) {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
@@ -360,8 +387,14 @@ async function build(opts) {
       if (!files.length) {
         fail(`Base "${label}" is identical to the edited project (no changes).`);
       }
+      // If this base was archived by the Steam downloader, it carries a
+      // steam.json (appid/depot/manifest/name). Embed it so the installer can
+      // offer the player the exact supported version to download.
+      const steam = readSteamMeta(baseInput, baseWww);
+      const baseMeta = { ...fp, label, extractArgs: opts.extractArgs };
+      if (steam) baseMeta.steam = steam;
       variants.push({
-        base: { ...fp, label, extractArgs: opts.extractArgs },
+        base: baseMeta,
         files,
         stats,
       });
@@ -803,6 +836,9 @@ function parseArgs(argv) {
     if (a === "--apply") {
       opts.mode = "apply";
       opts.modFile = argv[++i];
+    } else if (a === "--info") {
+      opts.mode = "info";
+      opts.modFile = argv[++i];
     } else if (a === "--rollback") {
       opts.mode = "rollback";
       opts.target = argv[++i];
@@ -859,11 +895,36 @@ function printHelp() {
   );
 }
 
+/** Summarize a .tcoaalmod's manifest + per-variant supported versions (incl.
+ *  any embedded Steam manifest), without needing a base game. Used by the
+ *  installer to offer the player the right version to download. */
+function modInfo(modFile) {
+  const zip = zipRead(fs.readFileSync(modFile));
+  const m = readManifest(zip);
+  return {
+    format: m.format,
+    name: m.name,
+    author: m.author || "",
+    version: m.version || "",
+    description: m.description || "",
+    created: m.created || "",
+    variants: (m.variants || []).map((v) => ({
+      label: v.base.label,
+      hash: v.base.hash,
+      fileCount: v.base.fileCount,
+      steam: v.base.steam || null,
+    })),
+  };
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.mode === "apply") {
     if (!opts.base) fail("--apply requires --base <gameFolder>.");
     await apply(opts);
+  } else if (opts.mode === "info") {
+    if (!opts.modFile) fail("--info requires a <mod.tcoaalmod>.");
+    process.stdout.write(JSON.stringify(modInfo(opts.modFile)) + "\n");
   } else if (opts.mode === "rollback") {
     if (!opts.target) fail("--rollback requires a <gameFolder>.");
     rollback(opts);
@@ -882,6 +943,7 @@ module.exports = {
   build,
   apply,
   rollback,
+  modInfo,
   extractBaseline,
   packProject,
   diffProjects,
