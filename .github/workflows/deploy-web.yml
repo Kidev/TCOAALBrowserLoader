@@ -25,7 +25,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7.0.0
       - name: Setup site
         env:
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
