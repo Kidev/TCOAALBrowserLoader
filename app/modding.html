@@ -1401,10 +1401,9 @@
               </div>
               <div class="status" id="build-status" hidden></div>
               <p class="hint">
-                Building packs your project to verify your edits, then diffs it
-                against the selected game versions into a mod file carrying only
-                your changes. Only that copyright-safe mod file downloads, never
-                a copy of the game. This can take a while for large games.
+                Building packs your project to verify your edits, then compares it
+                against the selected game versions to create a mod file carrying only
+                your changes. This can take a while.
               </p>
             </div>
           </section>
@@ -2785,7 +2784,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
 
           // Step 2 - Build: diff the project against each base into the mod.
           onBuildProgress(
-            "Diffing against each game version, this can take a while...",
+            "Comparing against each game version, this can take a while...",
           );
           var bases = [];
           for (var i = 0; i < _buildSelected.length; i++) {

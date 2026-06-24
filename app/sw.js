@@ -49,7 +49,7 @@ const STORE_NAME = "assets";
 // their old installation: e.g. a fix to the fetch handler or a new IDB
 // schema. Pure additive features (new message types the page can feature-
 // detect) do not need a bump.
-const SW_VERSION = 12;
+const SW_VERSION = 13;
 
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
@@ -837,6 +837,60 @@ function mergeLangData(base, mod) {
 }
 
 /**
+ * Resolve one translatable dict field (labelLUT / linesLUT / sysMenus /
+ * sysLabel) for the "overhaul + its translation" case, where the original
+ * game's translation backs the lines the mod translation doesn't cover.
+ *
+ * A self-contained overhaul (e.g. Side Dishes) ships a FULL CLD: every original
+ * game line is present in English under its original key, alongside the mod's
+ * own added/changed lines. A plain layered merge would therefore let the
+ * overhaul's English reassert itself over the base-game translation for lines
+ * the overhaul never actually touched. So resolve per key, highest priority
+ * first:
+ *   1. mod translation (modTrans) - the mod author's text (new + chosen base).
+ *   2. overhaul, but ONLY where it changed the base line (overhaul != baseEng):
+ *      the mod rewrote that line, so its English stays (until modTrans covers).
+ *   3. base-game translation (baseTrans) - the original line, this language.
+ *   4. overhaul-only / base English - untranslated fallback.
+ * An overhaul line equal to the base line is treated as "unchanged" so the
+ * base translation applies; a changed or brand-new overhaul line is not
+ * mistranslated by the original line's translation.
+ */
+function resolveTranslatedLUT(baseEng, baseTrans, overhaul, modTrans) {
+  baseEng = baseEng || {};
+  baseTrans = baseTrans || {};
+  overhaul = overhaul || {};
+  modTrans = modTrans || {};
+  const out = {};
+  const keys = new Set();
+  for (const src of [baseEng, baseTrans, overhaul, modTrans]) {
+    for (const k in src) keys.add(k);
+  }
+  for (const k of keys) {
+    if (k in modTrans) {
+      out[k] = modTrans[k];
+      continue;
+    }
+    const inOverhaul = k in overhaul;
+    const inBase = k in baseEng;
+    if (
+      inOverhaul &&
+      inBase &&
+      JSON.stringify(overhaul[k]) !== JSON.stringify(baseEng[k])
+    ) {
+      out[k] = overhaul[k]; // overhaul rewrote this base line -> keep its text
+    } else if (k in baseTrans) {
+      out[k] = baseTrans[k]; // unchanged base line -> base-game translation
+    } else if (inOverhaul) {
+      out[k] = overhaul[k]; // overhaul-only line, no translation available
+    } else if (inBase) {
+      out[k] = baseEng[k];
+    }
+  }
+  return out;
+}
+
+/**
  * Attempt to load and parse the base game CLD from IDB.
  * Tries pre-extracted cache first, then encrypted CLD.
  */
@@ -866,6 +920,25 @@ async function loadBaseCLD(db) {
   }
 
   return null;
+}
+
+/**
+ * Given the active translation id, derive the matching base-game translation
+ * id used as a fallback when the active translation targets an overhaul mod.
+ *
+ * Translation ids are "translation_<MOD>_<lang>" (MOD is a mods.json key with
+ * no underscore; <lang> is a dash-slug like "portuguese-brazil"). A translation
+ * for an overhaul (MOD != "BASE") usually only covers the mod's own added text,
+ * leaving the original game lines untranslated. The base game's own translation
+ * for the SAME language ("translation_BASE_<lang>") supplies those, so it is
+ * layered UNDER the overhaul (and under the mod translation). Returns null when
+ * the active lang is itself a base translation or not a translation id.
+ */
+function baseFallbackLangId(activeLang) {
+  if (!activeLang) return null;
+  const m = /^translation_([^_]+)_(.+)$/.exec(activeLang);
+  if (!m || m[1] === "BASE") return null;
+  return "translation_BASE_" + m[2];
 }
 
 /**
@@ -1646,9 +1719,16 @@ async function serveFromIDB(logicalPath, request) {
   await ensureActiveLangLoaded(db);
 
   // 0a. Language data: serve the CLD as plain JSON.
-  //     Layered merge, lowest first: base CLD -> overhaul mod lang data ->
+  //     Layered merge, lowest first: base CLD -> base-game translation (the
+  //     fallback for an overhaul translation) -> overhaul mod lang data ->
   //     active-language (translation) lang data. The translation thus wins
   //     over the overhaul's own text, which wins over the base game.
+  //     When the active translation targets an overhaul, the base game's
+  //     translation for the same language sits just above the (English) base
+  //     CLD so the original game lines the mod translation doesn't cover fall
+  //     back to that language instead of English. It sits BELOW the overhaul so
+  //     any base line the overhaul rewrote is not mistranslated by the original
+  //     line's translation.
   //     When neither overlay supplies lang data: serve the base CLD directly.
   if (logicalPath === "lang-data.json") {
     const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" };
@@ -1659,9 +1739,21 @@ async function serveFromIDB(logicalPath, request) {
     const langData = _activeLang
       ? await loadModLangData(db, _activeLang)
       : null;
+    const baseFallbackId = baseFallbackLangId(_activeLang);
+    const baseTransData = baseFallbackId
+      ? await loadModLangData(db, baseFallbackId)
+      : null;
 
-    if (overhaulData || langData) {
-      let result = await loadBaseCLD(db);
+    if (overhaulData || langData || baseTransData) {
+      const baseCLD = await loadBaseCLD(db);
+      // Structural merge first (lowest -> highest): base -> base translation ->
+      // overhaul -> mod translation. This settles every non-text field (scalars,
+      // required-field defaults, imgFiles/imageLUT) with the usual mod-wins
+      // priority. The translatable text dicts it produces are corrected below.
+      let result = baseCLD;
+      if (baseTransData) {
+        result = result ? mergeLangData(result, baseTransData) : baseTransData;
+      }
       // Overhaul mods (TCOAAR etc.) ship complete language data; plugin mods
       // may override only specific entries. Either way merge over the base so
       // required CLD fields are always present.
@@ -1670,6 +1762,37 @@ async function serveFromIDB(logicalPath, request) {
       }
       if (langData) {
         result = result ? mergeLangData(result, langData) : langData;
+      }
+      // When a base-game translation backs an overhaul translation, recompute
+      // the text dicts diff-aware: a self-contained overhaul ships the original
+      // game's English under its original keys, which the plain merge above let
+      // override the base translation. resolveTranslatedLUT keeps the overhaul's
+      // text only for lines it actually changed, so untouched original lines
+      // fall back to the base-game translation instead of English.
+      if (result && baseTransData) {
+        for (const f of ["labelLUT", "linesLUT", "sysMenus", "sysLabel"]) {
+          result[f] = resolveTranslatedLUT(
+            baseCLD && baseCLD[f],
+            baseTransData && baseTransData[f],
+            overhaulData && overhaulData[f],
+            langData && langData[f],
+          );
+        }
+      }
+      // Font belongs to the chosen language: an overhaul that hardcodes its own
+      // fontFace/fontFile/fontSize in its CLD would otherwise clobber the
+      // base-translation font (e.g. a Cyrillic/CJK face the original game lacks)
+      // when the mod translation itself ships none. Reassert the translation
+      // chain's font scalars last (mod translation wins over base translation).
+      if (result && (baseTransData || langData)) {
+        for (const src of [baseTransData, langData]) {
+          if (!src) continue;
+          for (const s of ["fontFace", "fontFile", "fontSize"]) {
+            if (src[s] !== undefined && src[s] !== null && src[s] !== "") {
+              result[s] = src[s];
+            }
+          }
+        }
       }
       if (result) {
         return new Response(JSON.stringify(result), {
@@ -1737,12 +1860,21 @@ async function serveFromIDB(logicalPath, request) {
     return fetch(request);
   }
 
-  // M. Overlay priority. Two overlays sit above the base game, highest first:
+  // M. Overlay priority. Overlays sit above the base game, highest first:
   //      1. the active language (translation): "mod:<translation>:..."
   //      2. the active overhaul mod             : "mod:<modId>:..."
+  //      3. the base-game translation fallback  : "mod:translation_BASE_<lang>:"
   //    A translation thus wins over the overhaul it sits on, which wins over
-  //    the base game. tryModOverlay mirrors the base game lookup chain.
-  for (const overlayId of [_activeLang, _activeMod]) {
+  //    the base game. When the active translation targets an overhaul, the base
+  //    game's translation for the same language fills assets (translated
+  //    parallaxes, its language font) for the original game content the overhaul
+  //    leaves untouched -- below the overhaul so the overhaul's own assets win.
+  //    tryModOverlay mirrors the base game lookup chain.
+  for (const overlayId of [
+    _activeLang,
+    _activeMod,
+    baseFallbackLangId(_activeLang),
+  ]) {
     if (!overlayId) continue;
     const overlayResp = await tryModOverlay(db, overlayId, logicalPath);
     if (overlayResp) return overlayResp;

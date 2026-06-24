@@ -1870,9 +1870,84 @@
     next();
   }
 
+  /**
+   * The base-game translation that backs an overhaul translation: ids are
+   * "translation_<MOD>_<lang>" (MOD has no underscore, <lang> is a dash-slug).
+   * A translation that targets an overhaul (MOD != "BASE") usually only covers
+   * the mod's own text, so the base game's own translation for the SAME language
+   * ("translation_BASE_<lang>") is layered underneath by the SW to translate the
+   * original game lines. Returns null for a base translation or non-translation.
+   * Mirrors baseFallbackLangId() in sw.js.
+   */
+  function baseFallbackLangId(langId) {
+    if (!langId) return null;
+    var m = /^translation_([^_]+)_(.+)$/.exec(langId);
+    if (!m || m[1] === "BASE") return null;
+    return "translation_BASE_" + m[2];
+  }
+
+  /**
+   * Ensure the base-game translation that backs the given overhaul translation
+   * is installed (so the SW's fallback layer has data). No-op when the language
+   * has no base fallback, the entry is unavailable, it's already current, or
+   * we're offline. Invokes done() either way.
+   */
+  function ensureBaseFallbackInstalled(langId, done) {
+    done = done || function () {};
+    var baseId = baseFallbackLangId(langId);
+    if (!baseId) {
+      done();
+      return;
+    }
+    var entry = _modsData && _modsData[baseId];
+    if (!entry || !entry.files || entry.files.length === 0) {
+      done();
+      return;
+    }
+    checkModInstalled(baseId, function (installed, meta) {
+      var curVer = entry.version || "";
+      var versionOk = !curVer || !meta || meta.version === curVer;
+      // .csv/.txt formats are parsed locally into the cached CLD; a bumped
+      // LANG_PARSE_VERSION means the file is current but the cache is stale.
+      var canReparse = /\.(csv|txt)$/i.test(entry.langFile || "");
+      var parseStale =
+        canReparse &&
+        (!meta || (meta.langParseVersion || 0) < LANG_PARSE_VERSION);
+      if (installed && versionOk && !parseStale) {
+        done();
+        return;
+      }
+      if (installed && versionOk && parseStale) {
+        reextractModLangData(baseId, function () {
+          done();
+        });
+        return;
+      }
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        done();
+        return;
+      }
+      installMod(
+        baseId,
+        entry.path,
+        function () {},
+        function () {
+          done();
+        },
+        function () {
+          done();
+        },
+      );
+    });
+  }
+
   /** Sync the active context's translations (base game + already-active mod). */
   function ensureContextTranslations() {
     ensureTranslationsFor(getActiveContextMod());
+    // When an overhaul translation is active, also pull the matching base-game
+    // translation so the SW can translate the original game lines it leaves
+    // uncovered (instead of falling back to English).
+    ensureBaseFallbackInstalled(_activeLang);
   }
 
   // Re-attempt the sync when connectivity returns (e.g. first launch was
@@ -6547,9 +6622,14 @@
       }
       var self = this;
       function apply() {
-        setActiveLang(L.isEnglish ? null : L.key, function () {
-          AudioManager.stopAll();
-          location.reload();
+        // Pull the matching base-game translation first (when this is an
+        // overhaul translation) so the SW can translate the original game lines
+        // it doesn't cover from the moment the page reloads, not a sync later.
+        ensureBaseFallbackInstalled(L.isEnglish ? null : L.key, function () {
+          setActiveLang(L.isEnglish ? null : L.key, function () {
+            AudioManager.stopAll();
+            location.reload();
+          });
         });
       }
       if (L.isEnglish) {
