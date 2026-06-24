@@ -475,9 +475,6 @@
         outline: none;
         border-color: rgba(236, 131, 195, 0.6);
       }
-      .dl-match {
-        margin: 0 0 8px;
-      }
       .dl-picked {
         margin: 0 0 10px;
         font-size: 0.9rem;
@@ -1415,10 +1412,9 @@
             <div class="panel">
               <h2 class="panel-title">Download a game version</h2>
               <p class="lede" style="margin-bottom: 14px">
-                Own the game on Steam but need its files? This walks you through
-                pulling a specific build with Steam's built-in console, then
-                importing it. Nothing is uploaded or hosted here, it just drives
-                your own Steam, the same way the desktop app does.
+                Use Steam to download older versions of the game, to play mods
+                that require them. Nothing is uploaded or hosted here, it just
+                drives your own Steam.
               </p>
 
               <!-- Step tabs (single line): inactive steps collapse to just their
@@ -1453,7 +1449,6 @@
 
                 <!-- Step 1: pick a version (the catalog scrolls inside the body). -->
                 <div class="step-panel" data-panel="1">
-                  <p class="meta dl-match" id="dl-match" hidden></p>
                   <div id="dl-catalog">
                     <p class="meta">
                       <span class="spinner"></span>Loading versions...
@@ -3391,16 +3386,16 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         return (_dlCat && _dlCat.depot) || DL_DEFAULT_DEPOT;
       }
 
-      // Does this catalog entry match the game the user already imported? The
+      // Does this catalog entry match any game the user already imported? Each
       // imported version is a plain "3.0.13"; catalog entries carry the same in
-      // `version`. Used to mark it in the list and steer the default choice.
+      // `version`. The user can hold several (the IDB base plus folder/.zip
+      // adds), so we test against the whole set. Used to mark rows and steer the
+      // default choice.
       function dlIsImported(v) {
-        return !!(
-          _importedVersion &&
-          v &&
-          v.version &&
-          v.version === _importedVersion
-        );
+        if (!v || !v.version) return false;
+        return _gameVersions.some(function (g) {
+          return g.version && g.version === v.version;
+        });
       }
 
       function renderDlCatalog() {
@@ -3410,25 +3405,14 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           box.innerHTML = '<p class="meta">No versions available.</p>';
           return;
         }
-        // If the imported game matches a listed build, call it out up top so the
-        // user knows which row reproduces the files they already have.
+        // Detect whether the imported game matches a listed build, so the group
+        // holding that row opens by default (and the row is marked below).
         var matched = false;
         majors.forEach(function (mj) {
           (mj.versions || []).forEach(function (v) {
             if (dlIsImported(v)) matched = true;
           });
         });
-        var matchEl = $("dl-match");
-        if (matched) {
-          matchEl.innerHTML =
-            "You imported <b>" +
-            escapeHtml(verText(_importedVersion)) +
-            "</b>, it's marked below. Re-download it for a clean copy, or pick another build.";
-          matchEl.hidden = false;
-        } else {
-          matchEl.hidden = true;
-        }
-
         box.innerHTML = "";
         majors.forEach(function (mj, mi) {
           var det = document.createElement("details");
@@ -3447,7 +3431,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             left.innerHTML =
               escapeHtml(v.name || v.version || "version") +
               (dlIsImported(v)
-                ? '<span class="badge">your imported version</span>'
+                ? '<span class="badge">imported</span>'
                 : "") +
               (v.date
                 ? '<div class="vmeta">' + escapeHtml(v.date) + "</div>"
@@ -3551,7 +3535,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           "Downloading <b>" +
           escapeHtml(v.name || v.version || "version") +
           "</b>" +
-          (dlIsImported(v) ? " (the version you imported)" : "") +
+          (dlIsImported(v) ? " (already imported)" : "") +
           ".";
         $("dl-cmd").value =
           "download_depot " + dlAppid() + " " + dlDepot() + " " + v.manifest;
@@ -3621,7 +3605,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             var files = await filesFromFileList(this.files);
             var v = baseVersionFromFiles(files);
             var label = verText(v) || top;
-            _gameVersions.push({ label: label, files: files });
+            _gameVersions.push({ label: label, version: v, files: files });
             renderGameVersions();
             note.innerHTML =
               "Added <b>" +
@@ -3713,7 +3697,11 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             "version";
           var files = await filesFromFileList(this.files);
           var v = baseVersionFromFiles(files);
-          _gameVersions.push({ label: verText(v) || name, files: files });
+          _gameVersions.push({
+            label: verText(v) || name,
+            version: v,
+            files: files,
+          });
           this.value = "";
           renderGameVersions();
         };
@@ -3723,6 +3711,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           var v = baseVersionFromFiles(files);
           _gameVersions.push({
             label: verText(v) || this.files[0].name.replace(/\.zip$/i, ""),
+            version: v,
             files: files,
           });
           this.value = "";
@@ -3786,6 +3775,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         _importedVersion = await baseVersion(_db);
         _gameVersions.push({
           label: verText(_importedVersion) || "imported game",
+          version: _importedVersion,
           imported: true,
         });
         _createSelected = _gameVersions[0];

@@ -659,6 +659,38 @@
     return list;
   }
 
+  // Synthetic Window_ModList row key for the trailing "Add custom mod..."
+  // action (leaves the game for the modding.html importer).
+  var ADD_CUSTOM_MOD_KEY = "__add_custom__";
+
+  // Ordered row models for Window_ModList: every plugin mod first, then the
+  // overhaul mods, with the synthetic "Add custom mod..." action appended at
+  // the very end of the overhaul group. The two groups get a divider drawn
+  // between them (Window_ModList.drawItem), mirroring the framed split the
+  // active overhaul/translation already gets in its own pin window above the
+  // list. The active overhaul/translation is hoisted into that pin, so it is
+  // filtered out of the list here.
+  function buildModListRows() {
+    var am = getActiveMod();
+    var all = getModList().filter(function (m) {
+      return !(am && m.key === am && !isPluginType(m.type));
+    });
+    var plugins = [];
+    var overhauls = [];
+    for (var i = 0; i < all.length; i++) {
+      if (isPluginType(all[i].type)) plugins.push(all[i]);
+      else overhauls.push(all[i]);
+    }
+    var rows = plugins.concat(overhauls);
+    rows.push({
+      key: ADD_CUSTOM_MOD_KEY,
+      isAddCustom: true,
+      type: MOD_TYPE_OVERHAUL,
+      name: "Add custom mod...",
+    });
+    return rows;
+  }
+
   // Credits scene additions
   //
   // The Credits screen is GALV_RollCredits' Scene_Credits, fed by data/
@@ -5449,6 +5481,16 @@
         return;
       }
 
+      if (mod.isAddCustom) {
+        // Leaving for modding.html quits the running game, so confirm first.
+        this._showConfirm(
+          "Leave the game and open the modding page?",
+          "addCustom",
+          mod,
+        );
+        return;
+      }
+
       var status = _modStatus[mod.key];
       var installed = status && status.installed;
 
@@ -5613,6 +5655,11 @@
               self._listWindow.activate();
             },
           );
+          break;
+
+        case "addCustom":
+          AudioManager.stopAll();
+          window.location.href = "modding.html";
           break;
 
         case "enableOverhaul":
@@ -6171,10 +6218,7 @@
       // keep it from appearing twice. Plugin-type mods stay in the list
       // regardless of their active state since multiple plugins can be
       // active at once and they're not represented by the pin.
-      var am = getActiveMod();
-      this._mods = getModList().filter(function (m) {
-        return !(am && m.key === am && !isPluginType(m.type));
-      });
+      this._mods = buildModListRows();
       this._iconBitmaps = {};
       // When the pin is shown above us, the scene passes 4 so a list row
       // ends up the same height as the pin row (boxH-helpH split into
@@ -6208,11 +6252,8 @@
     // up without restarting the game. Mirrors the filter in initialize (the
     // active overhaul/translation lives in the pin, not the list).
     Window_ModList.prototype.rebuild = function () {
-      var am = getActiveMod();
       var prevLen = this._mods ? this._mods.length : 0;
-      this._mods = getModList().filter(function (m) {
-        return !(am && m.key === am && !isPluginType(m.type));
-      });
+      this._mods = buildModListRows();
       this._iconBitmaps = {};
       this._loadIcons();
       if (this.index() >= this._mods.length) {
@@ -6281,6 +6322,14 @@
     Window_ModList.prototype.drawItem = function (index) {
       var mod = this._mods[index];
       if (!mod) return;
+
+      // Trailing "Add custom mod..." action: not a real mod, drawn with its
+      // own minimal renderer and handled specially in onModOk.
+      if (mod.isAddCustom) {
+        this._drawAddCustomRow(index);
+        return;
+      }
+
       var rect = this.itemRectForText(index);
 
       var isActive = isPluginType(mod.type)
@@ -6327,6 +6376,34 @@
       drawModRow(this, mod, rect, isActive, this._iconBitmaps, {
         showTypeTag: true,
       });
+    };
+
+    // Minimal renderer for the synthetic "Add custom mod..." row. Two lines
+    // (action label + hint), accent-coloured, left-aligned and centred in the
+    // row so it reads as a call to action rather than an installed mod.
+    Window_ModList.prototype._drawAddCustomRow = function (index) {
+      var rect = this.itemRectForText(index);
+      var lineH = this.lineHeight();
+      var top = rect.y + Math.floor((rect.height - lineH * 1.5) / 2);
+
+      // Title in the game's off-white (same as a mod title), subtitle in the
+      // light grey used for a mod's description line.
+      this.contents.fontSize = this.standardFontSize();
+      this.resetTextColor();
+      this.drawText("+  Add custom mod...", rect.x, top, rect.width, "left");
+
+      this.contents.fontSize = 16;
+      this.contents.textColor = "#cccccc";
+      this.drawText(
+        "Import a .tcoaalmod or .zip mod",
+        rect.x,
+        top + lineH,
+        rect.width,
+        "left",
+      );
+
+      this.contents.fontSize = this.standardFontSize();
+      this.resetTextColor();
     };
 
     Window_ModList.prototype.playOkSound = function () {
