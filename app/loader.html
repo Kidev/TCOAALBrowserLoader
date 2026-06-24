@@ -5765,10 +5765,31 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         return _workerReady;
       }
 
+      // Collect the unique underlying ArrayBuffers of every Uint8Array value in a
+      // file map, into `into` (deduped via `seen`). Used to build a postMessage
+      // transfer list so the worker *moves* the bytes instead of structured-
+      // cloning a full second copy (which, for the whole project + every base
+      // game at once, exhausts memory: "Data cannot be cloned, out of memory").
+      // Only pass buffers the caller is done with on this thread - transfer
+      // detaches them here.
+      function collectBuffers(map, into, seen) {
+        if (!map) return;
+        Object.keys(map).forEach(function (k) {
+          var v = map[k];
+          var buf = v && v.buffer;
+          if (buf instanceof ArrayBuffer && !seen.has(buf)) {
+            seen.add(buf);
+            into.push(buf);
+          }
+        });
+      }
+
       // Run a heavy ModRuntime method, preferring the worker. onProgress(text)
       // receives each phase line. Falls back to the main thread only when the
       // worker infrastructure is unavailable - never to mask a real op error.
-      async function runHeavy(method, args, onProgress) {
+      // `transferList` (optional) is an array of ArrayBuffers to hand off to the
+      // worker by reference (moved, not copied) - they become detached here.
+      async function runHeavy(method, args, onProgress, transferList) {
         var ok = await startWorker();
         if (ok && _worker) {
           _workerProgress = onProgress || null;
@@ -5776,7 +5797,10 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           try {
             return await new Promise(function (resolve, reject) {
               _workerPending[id] = { resolve: resolve, reject: reject };
-              _worker.postMessage({ id: id, method: method, args: args || [] });
+              var msg = { id: id, method: method, args: args || [] };
+              if (transferList && transferList.length)
+                _worker.postMessage(msg, transferList);
+              else _worker.postMessage(msg);
             });
           } finally {
             _workerProgress = null;
@@ -7300,16 +7324,25 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           return;
         }
         $("build-version").value = version;
+        // Whether the worker path detached _buildProject.files (see below): the
+        // project tree is handed to the worker by transfer, so it can't be reused
+        // for a second build and the chip must be cleared afterwards.
+        var consumedProject = false;
         try {
           $("btn-build").disabled = true;
           var onBuildProgress = showProgress("build-status", "Preparing...");
+          // The worker moves (transfers) the project + base bytes instead of
+          // structured-cloning them; cloning the whole project plus every base
+          // game at once is what runs the browser out of memory at the diff step.
+          var useWorker = await startWorker();
 
           // Step 0 - If the upload is an already-packed/shipped www instead of an
           // editable project, extract it back to a project first (and skip the
           // pack step below - there is nothing to re-pack). This lets a modder
           // build straight from a packed game/mod folder.
           var projectFiles = _buildProject.files;
-          if (!looksLikeProject(projectFiles)) {
+          var projectIsUpload = looksLikeProject(projectFiles);
+          if (!projectIsUpload) {
             onBuildProgress(
               "This looks like a packed game/mod - extracting it to a project first...",
             );
@@ -7319,6 +7352,8 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
               onBuildProgress,
             );
             var rtLite = await loadRuntime();
+            // Freshly produced here, so safe to transfer (does not alias the
+            // user's _buildProject upload).
             projectFiles = rtLite.readZip(projZip);
           } else {
             // Step 1 - Pack (validation only): re-pack the edited project into a
@@ -7326,6 +7361,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             // here, before anything ships). The packed www is NEVER downloaded -
             // that would hand out a full copy of the game (illegal). It stays an
             // internal intermediate; only the copyright-safe .tcoaalmod ships.
+            // No transfer here: projectFiles must survive for the diff below.
             onBuildProgress("Packing your project into a playable copy...");
             await runHeavy("packProject", [projectFiles], onBuildProgress);
           }
@@ -7334,11 +7370,43 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           onBuildProgress(
             "Comparing against each game version, this can take a while...",
           );
+          // Transfer list: the project tree, plus every base read *fresh* from
+          // IDB just for this build (so transferring/detaching it never corrupts
+          // the persistent version chips). A base served only from an in-memory,
+          // un-persisted entry is left out of the transfer list (cloned instead)
+          // so that entry stays usable.
+          var transferList = useWorker ? [] : null;
+          var transferSeen = useWorker ? new Set() : null;
+          if (transferList) {
+            collectBuffers(projectFiles, transferList, transferSeen);
+            // _buildProject.files === projectFiles only on the upload path; the
+            // packed path reassigned projectFiles to a fresh tree above.
+            if (projectIsUpload) consumedProject = true;
+          }
           var bases = [];
           for (var i = 0; i < _buildSelected.length; i++) {
             var v = _buildSelected[i];
-            var files = await gameVerFiles(v);
-            bases.push({ label: v.label, files: toWwwRoot(files) });
+            var files, shared;
+            if (v.imported) {
+              files = await readBaseFiles(_db);
+              shared = false;
+            } else if (v.id) {
+              var fromIdb = await readGameVerFiles(_db, v.id);
+              if (fromIdb && Object.keys(fromIdb).length) {
+                files = fromIdb;
+                shared = false;
+              } else {
+                files = v.files || {}; // un-persisted in-memory entry
+                shared = true;
+              }
+            } else {
+              files = v.files || {};
+              shared = true;
+            }
+            files = toWwwRoot(files);
+            bases.push({ label: v.label, files: files });
+            if (transferList && !shared)
+              collectBuffers(files, transferList, transferSeen);
           }
           var bytes = await runHeavy(
             "buildShare",
@@ -7353,6 +7421,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
               },
             ],
             onBuildProgress,
+            transferList,
           );
           var fname =
             ($("build-name").value || "mymod")
@@ -7385,6 +7454,10 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             "err",
           );
         } finally {
+          // The project tree was transferred to the worker (its buffers are now
+          // detached), so it can't back another build - drop it so the user
+          // re-picks rather than silently building from empty/detached data.
+          if (consumedProject) _buildProject = null;
           renderBuildState();
         }
       }
