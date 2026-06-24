@@ -114,8 +114,8 @@
           "buildid": "17942031"
         },
         {
-          "name": "Cry About It! Update",
-          "version": "3.0.0",
+          "name": "Cry About It! Update (hotfix)",
+          "version": "3.0.0.1",
           "date": "2025-04-01",
           "patchnote": "17935743",
           "manifest": "8998777955119680966",
@@ -123,12 +123,13 @@
         },
         {
           "name": "Cry About It! Update (initial build)",
-          "version": "",
+          "version": "3.0.0.0",
           "date": "2025-04-01",
           "patchnote": "17931421",
           "manifest": "4310878353924993813",
           "buildid": "17931421"
         }
+
       ]
     },
     {
@@ -152,6 +153,14 @@
           "buildid": "14849539"
         },
         {
+          "name": "Minor Patch v2.0.12",
+          "version": "2.0.12",
+          "date": "2024-06-01",
+          "patchnote": "23784539",
+          "manifest": "6810137990878625684",
+          "buildid": "23784539"
+        },
+        {
           "name": "Hot Fix v2.0.11",
           "version": "2.0.11",
           "date": "2024-03-03",
@@ -168,7 +177,7 @@
           "buildid": "13566207"
         },
         {
-          "name": "Progress Report #1",
+          "name": "Minor Patch v2.0.9",
           "version": "2.0.9",
           "date": "2024-01-02",
           "patchnote": "13073959",
@@ -208,7 +217,7 @@
           "buildid": "12504316"
         },
         {
-          "name": "Minor Patch v2.0.4 _ Demo Issues",
+          "name": "Minor Patch v2.0.4 (Demo Issues)",
           "version": "2.0.4",
           "date": "2023-10-17",
           "patchnote": "12460006",
@@ -250,7 +259,7 @@
           "version": "1.0.0",
           "date": "2023-10-13",
           "patchnote": "12430282",
-          "manifest": "",
+          "manifest": "1662178977616863424",
           "buildid": "12430282"
         }
       ]

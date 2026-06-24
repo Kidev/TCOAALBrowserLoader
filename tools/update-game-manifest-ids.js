@@ -20,7 +20,7 @@
  *
  * The intended workflow: run this locally, commit the updated JSON, and every
  * app pulls it from the repo's latest commit (raw.githubusercontent.com) for
- * free - so one commit benefits everyone.
+ * free, so one commit benefits everyone.
  *
  * Sources it merges into the catalog (all optional, additive):
  *   - --add ... one entry typed by hand, e.g. a manifest you read off
@@ -43,6 +43,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const https = require("https");
 
 const APPID = "2378900";
 const DEPOT = "2378901";
@@ -65,6 +66,8 @@ function parseArgs(argv) {
     steamDir: null,
     archiveDir: null,
     add: null,
+    remote: false,
+    seed: null,
   };
   let addMode = false;
   const add = {
@@ -85,6 +88,8 @@ function parseArgs(argv) {
     else if (a === "--print") opts.print = true;
     else if (a === "--no-archive") opts.fromArchive = false;
     else if (a === "--no-steam") opts.fromSteam = false;
+    else if (a === "--remote") opts.remote = true;
+    else if (a === "--seed") opts.seed = argv[++i];
     else if (a === "--steam") opts.steamDir = argv[++i];
     else if (a === "--archive") opts.archiveDir = argv[++i];
     else if (a === "--major") add.major = argv[++i];
@@ -122,6 +127,11 @@ function printHelp() {
       "  --add --manifest <id> [--name <s>] [--version <s>] [--major <x.x>]\n" +
       "        [--label <s>] [--date <YYYY-MM-DD>] [--patchnote <code>] [--buildid <n>]\n\n" +
       "Sources (on by default, additive):\n" +
+      "  --remote            pull the maintained catalog from GitHub and merge it\n" +
+      "                      in (best-effort: a failed fetch warns and falls back\n" +
+      "                      to the seed/local catalog so an offline run still works)\n" +
+      "  --seed <file>       base catalog to start from (e.g. the app-bundled copy)\n" +
+      "                      used as the offline fallback when --remote can't connect\n" +
       "  --no-archive        do not harvest the desktop apps' downloaded versions\n" +
       "  --no-steam          do not read the locally installed Steam manifest\n" +
       "  --steam <dir>       Steam root override\n" +
@@ -407,6 +417,41 @@ function loadCatalog(file) {
   };
 }
 
+/** GET a URL and JSON.parse the body. Follows a single redirect. Rejects on any
+ *  network/HTTP/JSON error. Used by --remote to pull the maintained catalog. */
+function fetchRemote(url, _redirects) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      { headers: { "User-Agent": "tcoaal-desktop", Accept: "application/json" } },
+      (res) => {
+        const code = res.statusCode || 0;
+        if (code >= 300 && code < 400 && res.headers.location) {
+          res.resume();
+          if ((_redirects || 0) >= 3) return reject(new Error("too many redirects"));
+          return resolve(fetchRemote(res.headers.location, (_redirects || 0) + 1));
+        }
+        if (code !== 200) {
+          res.resume();
+          return reject(new Error("HTTP " + code));
+        }
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(new Error("invalid JSON from remote: " + e.message));
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(15000, () => req.destroy(new Error("request timed out")));
+  });
+}
+
 function inferMajor(version, name) {
   const v = String(version || "").match(/^(\d+)\./);
   if (v) return v[1] + ".x";
@@ -526,15 +571,20 @@ function rebuild(catalog, entries, labels) {
 
 // run
 
-function run(opts) {
-  const catalog = loadCatalog(opts.out);
+async function run(opts) {
+  // Base catalog: --seed (the app-bundled copy) if given, else the output file.
+  // It is both the starting point and the offline fallback for --remote.
+  const catalog = loadCatalog(opts.seed || opts.out);
   const { entries, labels } = flatten(catalog);
 
+  // Each incoming entry carries a `_weak` flag. Weak sources (GitHub catalog is
+  // *not* weak: it is the curated source of truth; Steam/archive harvests *are*
+  // weak) only fill empty fields and never clobber curated names/versions.
   const incoming = [];
-  let addEntry = null;
   if (opts.add) {
     const a = opts.add;
-    addEntry = {
+    incoming.push({
+      _weak: false,
       major: a.major || inferMajor(a.version, a.name),
       name: a.name || "",
       version: a.version || "",
@@ -542,28 +592,42 @@ function run(opts) {
       patchnote: a.patchnote || "",
       manifest: String(a.manifest),
       buildid: a.buildid || "",
-    };
-    incoming.push(addEntry);
+    });
     if (a.label && a.major) labels[a.major] = a.label;
+  }
+  if (opts.remote) {
+    try {
+      const remote = await fetchRemote(REMOTE_URL);
+      if (!remote || typeof remote !== "object" || !Array.isArray(remote.majors)) {
+        throw new Error("remote catalog has no majors[]");
+      }
+      const rf = flatten(remote);
+      Object.assign(labels, rf.labels);
+      for (const v of rf.entries) incoming.push({ ...v, _weak: false });
+    } catch (e) {
+      // Best-effort: keep the seed/local catalog and tell the caller on stderr.
+      console.error(
+        "warning: could not pull the catalog from GitHub (" +
+          e.message +
+          "); used the bundled catalog + local sources instead.",
+      );
+    }
   }
   if (opts.fromArchive) {
     for (const v of harvestArchive(opts.archiveDir)) {
-      incoming.push({ ...v, major: inferMajor(v.version, v.name), patchnote: "" });
+      incoming.push({ ...v, _weak: true, major: inferMajor(v.version, v.name), patchnote: "" });
     }
   }
   if (opts.fromSteam) {
     for (const v of harvestSteam(opts.steamDir)) {
-      incoming.push({ ...v, major: inferMajor(v.version, v.name), patchnote: "" });
+      incoming.push({ ...v, _weak: true, major: inferMajor(v.version, v.name), patchnote: "" });
     }
   }
 
   let added = 0;
   let updated = 0;
   for (const inc of incoming) {
-    // --add is authoritative; harvested sources (archive/steam) are weak so they
-    // only fill gaps and never overwrite curated names/versions.
-    const weak = inc !== addEntry;
-    if (upsert(entries, inc, weak)) added++;
+    if (upsert(entries, inc, inc._weak !== false)) added++;
     else updated++;
   }
 
@@ -588,5 +652,8 @@ function run(opts) {
 module.exports = { run, parseArgs, harvestArchive, harvestSteam, readPublicManifest };
 
 if (require.main === module) {
-  run(parseArgs(process.argv.slice(2)));
+  run(parseArgs(process.argv.slice(2))).catch((e) => {
+    console.error(e && e.message ? e.message : String(e));
+    process.exit(1);
+  });
 }

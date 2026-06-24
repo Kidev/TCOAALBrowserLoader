@@ -5,16 +5,18 @@ They do not reimplement anything: each bundles a Node runtime plus the `tools/`
 scripts and `app/js/libs/`, and shells out to Node to run the same scripts the
 CLI uses.
 
-- **creator** (`TCOAAL Mod Creator`) - create a project from a game folder
+- **creator** (`TCOAAL Mod Creator`): create a project from a game folder
   (`extract-project.js`), run it in the browser during development
   (`play.js`), re-pack it (`pack-project.js`), and build a shareable
   `.tcoaalmod` diff for one or more base game versions (`share-project.js`).
-- **user** (`TCOAAL Mod Installer`) - install a `.tcoaalmod` onto a game folder
+- **user** (`TCOAAL Mod Installer`): install a `.tcoaalmod` onto a game folder
   in place and uninstall it (restore), one mod at a time
   (`share-project.js --apply` / `--rollback`).
 
 Both apps share a tabbed UI (one tab per feature, matching the browser
-`app/modding.html` Modding page) and a **Steam versions** tab (see below).
+`app/modding.html` Modding page) and a **Steam versions** tab (see below). Each
+tab is exactly **one panel** (with internal sections where needed); there is no
+shared output console: every action reports inline next to its own button.
 
 ## Steam version downloader
 
@@ -22,10 +24,16 @@ The Steam logic lives in `core/src/lib.rs` (std-only) and both apps expose it as
 `steam_*` Tauri commands. It detects the Steam install per-OS, opens the Steam
 client console and puts `download_depot 2378900 2378901 <manifest>` on the
 clipboard for the user to paste (TCOAAL is paid, so the download must use the
-owning account's logged-in client - anonymous SteamCMD can't), then waits for
-`<steam>/steamapps/content/app_2378900/depot_2378901/` to stop changing and
-**moves it into shared app storage** (`tcoaal-mods/versions/<key>/`) so a later
-Steam update can't overwrite it.
+owning account's logged-in client; `download_depot` is a Steam *console*
+command; there is no steam:// URL to run it and anonymous SteamCMD can't fetch a
+paid depot). Clicking **Download** opens the console, copies the command, and
+**immediately starts waiting**: the user only pastes + Enter, and the version is
+archived automatically when the download stops changing (no extra click). The
+watcher scans the depot folder under **every** detected Steam root
+(`<root>[/ubuntu12_32]/steamapps/content/app_2378900/depot_2378901/`, covering
+native/flatpak/snap/symlinked-runtime installs) and **moves it into shared app
+storage** (`tcoaal-mods/versions/<key>/`) so a later Steam update can't overwrite
+it.
 
 Historical depot manifest IDs are not in any public Steam Web API (that is
 SteamDB's archived data), so the version list lives in
@@ -33,27 +41,37 @@ SteamDB's archived data), so the version list lives in
 (harvests versions you downloaded via the apps + your local Steam, and takes
 manual `--add --manifest <id> ...` entries read off steamdb).
 
-The apps work **fully offline** at launch from the bundled catalog (the
+The catalog has three layers, freshest first: (1) a **manual refresh**: the
+**Refresh from GitHub** button in the Steam tab runs `steam_refresh` ->
+`refresh_catalog` -> `update-game-manifest-ids.js --remote --seed <bundled> --out
+<cache>`, which pulls the maintained `tcoaal-versions.json` from
+`raw.githubusercontent.com` and merges the installed game + archived versions into
+it; (2) the **installed game**: that same merge folds in your local Steam facts;
+(3) the **build-time bundled** copy (offline default). The merged result is cached
+at `<shared-data>/tcoaal-versions.json` (shared by both apps) and `load_catalog`
+prefers it over the bundled copy, so one refresh benefits the next launch and a
+failed GitHub fetch falls back to the bundled seed (best-effort, the warning is
+surfaced to the UI as a non-fatal note).
+
+The apps also work **fully offline** at launch from the bundled catalog (the
 `tools/*.json` resource glob) **plus two local Steam facts**: the **installed**
 version (manifest + build id from `appmanifest_2378900.acf`) and the **latest
 available** version (parsed from the Steam client's binary appinfo cache,
-`appcache/appinfo.vdf` - the same data `app_info_print 2378900` prints:
+`appcache/appinfo.vdf`: the same data `app_info_print 2378900` prints:
 `depots.2378901.manifests.public.gid` + `branches.public.buildid`). So the newest
 version is known for free even when not installed, an install older than the
-latest is flagged **outdated** (with a one-click download of the latest), and a
-build id higher than the catalog is surfaced as a brand-new release usable
-immediately (and contributable via the generator). The appinfo parser
-(`read_public_manifest` in Rust, `readPublicManifest` in the generator) is fully
-bounds-checked and best-effort - any malformed shape yields nothing and the app
-falls back to the installed manifest + catalog (covered by a gated unit test
-built from the real `app_info_print` output). A **"Check for missing versions"**
-button is the only network
-path: on demand it pulls the repo's latest list
-(`raw.githubusercontent.com/.../tools/tcoaal-versions.json`, which sends
-`Access-Control-Allow-Origin: *`, so a plain webview `fetch` works - no Rust HTTP
-dependency) and reconciles it with the installed version - useful after not
-playing for a while. So one commit of an updated catalog reaches every app for
-free, but nothing is fetched unless asked. The creator embeds each archived
+latest is flagged **outdated** (and the latest is offered for download), and a
+build id higher than the catalog is surfaced (folded into the list as the latest
+version) usable immediately (and contributable via the generator). The appinfo
+parser (`read_public_manifest` in Rust, `readPublicManifest` in the generator) is
+fully bounds-checked and best-effort: any malformed shape yields nothing and the
+app falls back to the installed manifest + catalog (covered by a gated unit test
+built from the real `app_info_print` output). The UI is **fully offline**: it
+shows the bundled catalog plus the local Steam facts and lists each version by
+**name + date only** (manifest/build ids are kept out of the user-facing list).
+The only in-app network call is the user-initiated **Refresh from GitHub**; the
+bundled catalog is otherwise refreshed at deploy time by committing an updated
+`tools/tcoaal-versions.json`. The creator embeds each archived
 version's `steam.json`
 (appid/depot/manifest) into the `.tcoaalmod` variant it builds, so the installer
 (`mod_info` -> `share-project.js --info`) can offer the player a one-click

@@ -277,15 +277,32 @@ async function setMapBackground(map, parallaxDir) {
 const _compositeCache = new Map();
 async function compositeLayers(parallaxDir, ground, par) {
   const cv = canvas();
-  if (!cv) return null;
   const key = ground + " " + par;
   if (_compositeCache.has(key)) return _compositeCache.get(key);
 
   const groundPath = path.join(parallaxDir, ground + ".png");
   const parPath = path.join(parallaxDir, par + ".png");
-  if (!fs.existsSync(groundPath) || !fs.existsSync(parPath)) {
-    _compositeCache.set(key, null);
-    return null;
+  const haveGround = fs.existsSync(groundPath);
+  const havePar = fs.existsSync(parPath);
+
+  // No canvas backend (e.g. desktop/browser bundles without @napi-rs/canvas) or
+  // a missing source layer: we cannot draw the real two-layer composite, but
+  // parallaxName still points at the deterministic `bg_<g>_<p>.png` name (chosen
+  // canvas-independently for share-project fingerprint stability). Leaving that
+  // file absent makes the editor draw a blank map (the regression), so copy a
+  // single existing layer (ground preferred) to the composite name: the editor
+  // then shows the floor art like a single-layer map, and the runtime still
+  // draws the true ground+par overlay from the note, not this slot.
+  if (!cv || !haveGround || !havePar) {
+    const src = haveGround ? groundPath : havePar ? parPath : null;
+    if (!src) {
+      _compositeCache.set(key, null);
+      return null;
+    }
+    const name = `bg_${ground}_${par}`;
+    fs.copyFileSync(src, path.join(parallaxDir, name + ".png"));
+    _compositeCache.set(key, name);
+    return name;
   }
 
   const { createCanvas, loadImage } = cv;

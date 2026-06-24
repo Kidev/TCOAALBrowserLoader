@@ -113,7 +113,7 @@ pub fn run_tool(resource_dir: &Path, script: &str, args: &[String]) -> ToolResul
 // Historical manifest IDs are not in any public Steam Web API (that is SteamDB's
 // archived data), so the version catalog ships as a bundled, refreshable JSON
 // (tools/tcoaal-versions.json) and a mod's own variants embed the manifest they
-// were built against - so the installer can offer the exact version to fetch.
+// were built against, so the installer can offer the exact version to fetch.
 // ===========================================================================
 
 use std::collections::BTreeMap;
@@ -131,14 +131,14 @@ pub const TCOAAL_DEPOT: &str = "2378901";
 pub struct SteamInfo {
     /// The main Steam root (holds steamapps/, steamapps/content/, ...).
     pub root: String,
-    /// All library folders (from libraryfolders.vdf) - where games may live.
+    /// All library folders (from libraryfolders.vdf): where games may live.
     pub libraries: Vec<String>,
     /// Currently installed TCOAAL build id, if an appmanifest was found.
     pub installed_buildid: Option<String>,
     /// Currently installed TCOAAL depot manifest id, if found.
     pub installed_manifest: Option<String>,
     /// Latest available public depot manifest id (from the Steam client's
-    /// appinfo cache - i.e. the newest version, even if not installed).
+    /// appinfo cache, i.e. the newest version, even if not installed).
     pub latest_manifest: Option<String>,
     /// Latest available public build id (from the appinfo cache).
     pub latest_buildid: Option<String>,
@@ -178,7 +178,7 @@ fn steam_root_candidates() -> Vec<PathBuf> {
 }
 
 /// Read every "path" entry out of steamapps/libraryfolders.vdf (best-effort
-/// text parse - the file is Valve KeyValues).
+/// text parse: the file is Valve KeyValues).
 fn parse_library_folders(root: &Path) -> Vec<PathBuf> {
     let vdf = root.join("steamapps").join("libraryfolders.vdf");
     let mut libs = vec![root.to_path_buf()];
@@ -240,7 +240,7 @@ pub fn find_steam() -> Option<SteamInfo> {
 
 // appinfo.vdf (binary) parsing
 //
-// The Steam client caches PICS appinfo in <root>/appcache/appinfo.vdf - the same
+// The Steam client caches PICS appinfo in <root>/appcache/appinfo.vdf: the same
 // data `app_info_print <appid>` prints. We read the *latest available* public
 // depot manifest + build id from it (depots.<depot>.manifests.public.gid and
 // depots.branches.public.buildid), so the app knows the newest version even when
@@ -471,6 +471,31 @@ pub fn depot_content_dirs(steam_root: &Path, appid: &str, depot: &str) -> Vec<Pa
 /// The console command the user pastes into the Steam client console.
 pub fn download_command(appid: &str, depot: &str, manifest: &str) -> String {
     format!("download_depot {appid} {depot} {manifest}")
+}
+
+/// Every existing Steam root (each candidate that actually has a steamapps/ dir).
+/// `download_depot` always writes under the *main* root, but installs vary
+/// (native, flatpak, snap, symlinked runtime), so we collect them all.
+fn existing_steam_roots() -> Vec<PathBuf> {
+    steam_root_candidates()
+        .into_iter()
+        .filter(|p| p.join("steamapps").is_dir())
+        .collect()
+}
+
+/// Every depot content folder to watch for a `download_depot`, across all
+/// detected Steam roots (deduped, most-likely first). The downloaded folder is
+/// the game root (contains www/, Game.exe, ...).
+pub fn all_depot_content_dirs() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for root in existing_steam_roots() {
+        for d in depot_content_dirs(&root, TCOAAL_APPID, TCOAAL_DEPOT) {
+            if !out.contains(&d) {
+                out.push(d);
+            }
+        }
+    }
+    out
 }
 
 /// Open the Steam client console (steam://open/console) via the OS handler.
@@ -719,14 +744,78 @@ pub fn shared_data_dir() -> PathBuf {
     base.join("tcoaal-mods")
 }
 
-/// Load the bundled version catalog (tools/tcoaal-versions.json) as raw JSON.
-/// Returns `null` if it is missing or unreadable.
-pub fn load_catalog(resource_dir: &Path) -> serde_json::Value {
-    let p = tool_path(resource_dir, "tcoaal-versions.json");
-    match fs::read(&p) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
-        Err(_) => serde_json::Value::Null,
+/// Where the refreshed/merged catalog is cached (shared by both apps). A manual
+/// "refresh" (GitHub pull) or an installed-game merge writes here; it overrides
+/// the copy bundled with the app at build time.
+pub fn cached_catalog_path() -> PathBuf {
+    shared_data_dir().join("tcoaal-versions.json")
+}
+
+fn read_catalog_file(p: &Path) -> Option<serde_json::Value> {
+    let bytes = fs::read(p).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    // Only accept a well-formed catalog (has a majors[] array).
+    if v.get("majors").map(|m| m.is_array()).unwrap_or(false) {
+        Some(v)
+    } else {
+        None
     }
+}
+
+/// Load the version catalog as raw JSON. Prefers the refreshed cache in the
+/// shared data dir (GitHub pull + installed-game merge); falls back to the copy
+/// bundled with the app (tools/tcoaal-versions.json). Returns `null` if neither
+/// is usable.
+pub fn load_catalog(resource_dir: &Path) -> serde_json::Value {
+    if let Some(v) = read_catalog_file(&cached_catalog_path()) {
+        return v;
+    }
+    read_catalog_file(&tool_path(resource_dir, "tcoaal-versions.json"))
+        .unwrap_or(serde_json::Value::Null)
+}
+
+/// Result of a catalog refresh: the merged catalog plus any non-fatal note
+/// (e.g. "GitHub was unreachable, used the bundled copy") for the UI to show.
+#[derive(Serialize, Clone)]
+pub struct CatalogRefresh {
+    pub catalog: serde_json::Value,
+    pub note: String,
+}
+
+/// Refresh the catalog and write it to the shared cache, then return it. Runs
+/// the existing `update-game-manifest-ids.js` maintenance tool so the merge
+/// logic lives in one place:
+///   - `remote=true` pulls the maintained catalog from GitHub (best-effort);
+///   - the locally installed game + previously archived versions are always
+///     merged in (so the list updates from what the user actually has).
+/// The app-bundled copy is passed as the offline seed/fallback.
+pub fn refresh_catalog(resource_dir: &Path, remote: bool) -> Result<CatalogRefresh, String> {
+    let cache = cached_catalog_path();
+    if let Some(parent) = cache.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let seed = tool_path(resource_dir, "tcoaal-versions.json");
+    let mut args: Vec<String> = vec![
+        "--out".into(),
+        cache.to_string_lossy().into_owned(),
+        "--seed".into(),
+        seed.to_string_lossy().into_owned(),
+    ];
+    if remote {
+        args.push("--remote".into());
+    }
+    let res = run_tool(resource_dir, "update-game-manifest-ids.js", &args);
+    if !res.success {
+        return Err(if res.stderr.trim().is_empty() {
+            "Could not refresh the version catalog.".into()
+        } else {
+            res.stderr.trim().to_string()
+        });
+    }
+    Ok(CatalogRefresh {
+        catalog: load_catalog(resource_dir),
+        note: res.stderr.trim().to_string(),
+    })
 }
 
 // High-level orchestration (the Tauri commands in both apps are thin wrappers
@@ -763,9 +852,8 @@ pub fn steam_start_download(manifest: &str) -> Result<DownloadStart, String> {
             .into());
     }
     let steam = find_steam().ok_or_else(|| "Steam was not found on this computer.".to_string())?;
-    let root = PathBuf::from(&steam.root);
-    let dirs = depot_content_dirs(&root, TCOAAL_APPID, TCOAAL_DEPOT);
-    let content = first_populated(&dirs).unwrap_or_else(|| dirs[0].clone());
+    let dirs = all_depot_content_dirs();
+    let content = first_populated(&dirs).unwrap_or_else(|| dirs.first().cloned().unwrap_or_default());
     open_steam_console().map_err(|e| format!("Could not open the Steam console: {e}"))?;
     Ok(DownloadStart {
         command: download_command(TCOAAL_APPID, TCOAAL_DEPOT, manifest.trim()),
@@ -793,9 +881,8 @@ pub fn steam_finish_download(
     date: &str,
     wait: bool,
 ) -> Result<ArchivedVersion, String> {
-    let steam = find_steam().ok_or_else(|| "Steam was not found on this computer.".to_string())?;
-    let root = PathBuf::from(&steam.root);
-    let dirs = depot_content_dirs(&root, TCOAAL_APPID, TCOAAL_DEPOT);
+    find_steam().ok_or_else(|| "Steam was not found on this computer.".to_string())?;
+    let dirs = all_depot_content_dirs();
 
     let content = if wait {
         // Steam reports no progress; wait until a candidate folder is stable for

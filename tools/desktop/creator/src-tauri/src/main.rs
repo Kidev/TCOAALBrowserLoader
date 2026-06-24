@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //
-// TCOAAL Mod Creator - thin Tauri GUI over the repo's tools/:
+// TCOAAL Mod Creator: thin Tauri GUI over the repo's tools/:
 //   extract-project.js  -> create an editable project from a game folder
 //   play.js             -> run the project in true browser mode (dev loop)
 //   pack-project.js     -> re-pack the edited project to a playable www
@@ -14,9 +14,9 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager, State};
 use tcoaal_desktop_core::{
-    list_archived, load_catalog, node_binary, remove_archived, resolve_resource_dir, run_tool,
-    shared_data_dir, steam_finish_download, steam_start_download, tool_path, find_steam,
-    ArchivedVersion, DownloadStart, SteamInfo, ToolResult,
+    find_steam, list_archived, load_catalog, node_binary, refresh_catalog, remove_archived,
+    resolve_resource_dir, run_tool, shared_data_dir, steam_finish_download, steam_start_download,
+    tool_path, ArchivedVersion, CatalogRefresh, DownloadStart, SteamInfo, ToolResult,
 };
 
 /// Holds the background `play.js` dev server child so it can be stopped.
@@ -144,6 +144,17 @@ fn steam_catalog(app: AppHandle) -> Result<serde_json::Value, String> {
     Ok(load_catalog(&dir))
 }
 
+// Pull the maintained catalog from GitHub (best-effort) and merge the installed
+// game + archived versions into the shared cache. Blocking (network), so it runs
+// off the main thread.
+#[tauri::command]
+async fn steam_refresh(app: AppHandle, remote: bool) -> Result<CatalogRefresh, String> {
+    let dir = resource_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || refresh_catalog(&dir, remote))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn steam_archived() -> Vec<ArchivedVersion> {
     list_archived(&shared_data_dir())
@@ -190,6 +201,7 @@ fn main() {
             stop_play,
             steam_detect,
             steam_catalog,
+            steam_refresh,
             steam_archived,
             steam_remove_archived,
             steam_start,

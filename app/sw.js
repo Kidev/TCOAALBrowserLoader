@@ -97,6 +97,7 @@ const APP_SHELL = [
   "/js/libs/lang-format.js",
   "/js/libs/lang-shim.js",
   "/js/libs/achievements-shim.js",
+  "/js/libs/mod-runtime-worker.js",
   "/mods.json",
   "/expected-files.json",
 ];
@@ -296,6 +297,80 @@ async function serveModAsset(logicalPath, request, preferNetwork) {
     }
     return fetch(request);
   }
+}
+
+/**
+ * Resolve a logical asset path against the BASE game only (no active-mod /
+ * translation overlay). Mirrors the base-game branch of serveFromIDB:
+ * direct (CI) -> extension-stripped (CI) -> hashed -> hashed+ext. Returns a
+ * Response on hit, or null. Used by the per-mod Mods-menu icon route, whose
+ * fallback must always be the unmodified game file.
+ */
+async function resolveBaseAsset(db, logicalPath) {
+  const directCI = await getAssetCI(db, logicalPath);
+  if (directCI !== null) {
+    return new Response(dekit(directCI.value, directCI.actualKey), {
+      status: 200,
+      headers: { "Content-Type": mimeFor(logicalPath) },
+    });
+  }
+  const noExt = logicalPath.replace(/\.[^./]+$/, "");
+  if (noExt !== logicalPath) {
+    const strippedCI = await getAssetCI(db, noExt);
+    if (strippedCI !== null) {
+      return new Response(dekit(strippedCI.value, strippedCI.actualKey), {
+        status: 200,
+        headers: { "Content-Type": mimeFor(logicalPath) },
+      });
+    }
+  }
+  const hashed = await hashPath(logicalPath);
+  const enc = await getAsset(db, hashed);
+  if (enc !== null) {
+    return new Response(dekit(enc, hashed), {
+      status: 200,
+      headers: { "Content-Type": mimeFor(logicalPath) },
+    });
+  }
+  const extMatch = logicalPath.match(/\.[^./]+$/);
+  if (extMatch) {
+    const he = await getAsset(db, hashed + extMatch[0]);
+    if (he !== null) {
+      return new Response(dekit(he, hashed), {
+        status: 200,
+        headers: { "Content-Type": mimeFor(logicalPath) },
+      });
+    }
+  }
+  return null;
+}
+
+/**
+ * Serve a created/imported mod's Mods-menu icon: /__mod-icon__/{tag}/{rel}.
+ *
+ * The Mods menu shows a created mod's icon BEFORE it is enabled, so the
+ * normal active-mod resolution (serveFromIDB) can't be used: the mod isn't
+ * the active overlay. This route resolves the file for one specific mod tag
+ * regardless of active state -> the mod's own copy if it ships/modifies the
+ * file, otherwise the base game's version (the requested default).
+ */
+async function serveModMenuIcon(tag, logicalPath, request) {
+  let db;
+  try {
+    db = await openDB();
+  } catch {
+    return fetch(request);
+  }
+  if (!db) return fetch(request);
+  try {
+    const own = await tryModOverlay(db, tag, logicalPath);
+    if (own) return own;
+  } catch {}
+  try {
+    const base = await resolveBaseAsset(db, logicalPath);
+    if (base) return base;
+  } catch {}
+  return fetch(request);
 }
 
 // Menu icons we add on top of the base game (the Achievements, Mods and Help
@@ -1347,6 +1422,43 @@ async function tryModOverlay(db, modId, logicalPath) {
     }
   }
 
+  // M3c. Extension-less CANONICAL path -> hashed overlay. The engine/DRM
+  //      resolves a logical name to its canonical form WITHOUT the extension
+  //      before fetching: maps and the database load as "data/Map006",
+  //      "data/System" (verified from the engine's XHRs), and media the same
+  //      way. Append the conventional extension, hash THAT, and look up the
+  //      hashed (TCOAAL-encrypted) overlay - mirroring serveFromIDB's own
+  //      base-game extension-guess fallback (step 4b).
+  //
+  //      Without this, code/data edits in an imported mod NEVER apply: the
+  //      engine asks for "data/Map006", M3 hashes "data/Map006" (not
+  //      "data/Map006.json") so the key never matches, and the lookup falls
+  //      through to the base file. (Image FILE swaps still worked via M4 below,
+  //      which is why only data/code edits appeared to be ignored.)
+  if (!extMatch) {
+    const HASHED_EXT_GUESS = {
+      data: [".json"],
+      img: [".png", ".jpg"],
+      audio: [".ogg", ".m4a"],
+      movies: [".webm", ".mp4"],
+    };
+    const guessTopDir = logicalPath.split("/")[0];
+    const guessExts = HASHED_EXT_GUESS[guessTopDir];
+    if (guessExts) {
+      for (const ext of guessExts) {
+        const gHash = await hashPath(logicalPath + ext);
+        const modHashedGuess = await getAsset(db, modPrefix + gHash);
+        if (modHashedGuess !== null) {
+          const decrypted = dekit(modHashedGuess, gHash);
+          return new Response(decrypted, {
+            status: 200,
+            headers: { "Content-Type": mimeFor(logicalPath + ext) },
+          });
+        }
+      }
+    }
+  }
+
   // M4. Pre-hashed extension-less media path override. When the base game's
   //     DRM has already resolved a logical path to its disk-hashed form (e.g.
   //     "img/pictures/057974b069d30654"), the engine requests it without an
@@ -1494,6 +1606,17 @@ self.addEventListener("fetch", (event) => {
       })(),
     );
     return;
+  }
+
+  // Per-mod Mods-menu icon: /__mod-icon__/{tag}/{rel}. Resolves a created
+  // mod's own copy of {rel} (e.g. img/titles1/Book.png), or the base game's
+  // version when the mod doesn't ship it, independent of which mod is active.
+  if (logicalPath.indexOf("__mod-icon__/") === 0) {
+    const mi = logicalPath.match(/^__mod-icon__\/([^/]+)\/(.+)$/);
+    if (mi) {
+      event.respondWith(serveModMenuIcon(mi[1], mi[2], event.request));
+      return;
+    }
   }
 
   // Mod-asset paths: /mods/{id}/www/{rel}. Handled by a dedicated strategy

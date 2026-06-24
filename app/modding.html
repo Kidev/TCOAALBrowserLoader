@@ -108,7 +108,7 @@
         margin: 0 auto;
         /* Small top padding: the visible gap above the content (which reveals
            the background logo) comes from justify-content:flex-end, so tall
-           content can rise toward the top - covering the logo - before the
+           content can rise toward the top, covering the logo, before the
            page ever has to scroll. */
         padding: clamp(1rem, 4vmin, 2.5rem) 1rem clamp(1.5rem, 5vmin, 3rem);
         display: flex;
@@ -368,6 +368,202 @@
         white-space: pre-wrap;
         font-size: 0.95rem;
       }
+      /* Download tab: a horizontal step wizard over a fixed-height body, so
+         switching to this tab (or loading the catalog) never reflows the pane. */
+      .stepper {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        flex-wrap: nowrap; /* always one line */
+      }
+      .step {
+        /* Inactive steps stay compact (number only); the active step grows to
+           fill the row and reveals its label, so the four always fit one line. */
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-width: 0;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        padding: 8px 10px;
+        color: rgba(211, 208, 192, 0.7);
+        font-family: "Georgia", serif;
+        font-size: clamp(11px, 1.4vmin, 13px);
+        white-space: nowrap;
+        cursor: pointer;
+        overflow: hidden;
+        transition:
+          color 0.15s,
+          background-color 0.15s,
+          border-color 0.15s;
+      }
+      /* Only the active step shows its label; the rest collapse to the number
+         (full text stays available via the button's title tooltip). */
+      .step-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .step:not(.active) .step-label {
+        display: none;
+      }
+      .step .step-n {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.14);
+        color: var(--white);
+        font-size: 0.78rem;
+        font-weight: bold;
+      }
+      .step.active {
+        flex: 1 1 auto; /* active step grows to fill the row + show its label */
+        color: var(--white);
+        border-color: var(--purple);
+        background: rgba(236, 131, 195, 0.1);
+      }
+      .step.active .step-n {
+        background: var(--purple);
+        color: #1a0f16;
+      }
+      .step.done .step-n {
+        background: var(--green);
+        color: #10210d;
+      }
+      .step:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      /* Fixed height: panels swap inside without changing the pane's size. */
+      .step-body {
+        height: clamp(250px, 38vh, 390px);
+        display: flex;
+        flex-direction: column;
+      }
+      .step-panel {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0; /* let an inner scroll area (the catalog) shrink */
+        overflow-y: auto; /* a tall panel (step 4) scrolls, never grows the body */
+      }
+      .step-panel[hidden] {
+        display: none;
+      }
+      .step-panel > p {
+        margin: 0 0 8px;
+        font-size: 0.92rem;
+      }
+      #dl-console {
+        width: 100%;
+        resize: none;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+        color: var(--white);
+        background: #161616;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 5px;
+        padding: 8px 10px;
+      }
+      #dl-console:focus {
+        outline: none;
+        border-color: rgba(236, 131, 195, 0.6);
+      }
+      .dl-match {
+        margin: 0 0 8px;
+      }
+      .dl-picked {
+        margin: 0 0 10px;
+        font-size: 0.9rem;
+        color: var(--green);
+      }
+      /* The version list fills the rest of the fixed body and scrolls. */
+      #dl-catalog {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      details.vmajor {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      details.vmajor > summary {
+        cursor: pointer;
+        font-weight: bold;
+        color: var(--white);
+        list-style: revert;
+      }
+      .vitem {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 4px;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+        font-size: 0.9rem;
+      }
+      .vitem .vmeta {
+        opacity: 0.6;
+        font-size: 0.82rem;
+      }
+      .badge {
+        color: var(--green);
+        font-size: 0.78rem;
+        margin-left: 6px;
+      }
+      .dl-step {
+        font-size: 0.9rem;
+        line-height: 1.6;
+        margin: 4px 0;
+      }
+      /* Centre a prominent CTA button (Open console / Select folder). */
+      .dl-step.center {
+        text-align: center;
+        margin: 14px 0;
+      }
+      /* Anchors styled as buttons (console / loader links): don't pick up the
+         .panel link colour or underline. */
+      a.action-btn,
+      a.action-btn:hover {
+        text-decoration: none;
+        display: inline-block;
+      }
+      /* `.action-btn.small` repaints the background to a faint translucent fill,
+         which (defined after `.primary`) would override the purple and leave
+         dark `.primary` text on a near-black button: unreadable. A 3-class rule
+         wins specificity and restores the solid, legible primary look for the
+         small primary buttons (version "Download", wizard "Next"). */
+      .action-btn.small.primary {
+        background: var(--purple);
+        color: #1a0f16;
+        border: none;
+        font-weight: bold;
+      }
+      .action-btn.small.primary:hover {
+        filter: brightness(1.08);
+        background: var(--purple);
+      }
+      .field {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 6px;
+      }
+      .field input {
+        flex: 1;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.88rem;
+      }
       .modcard {
         display: flex;
         align-items: center;
@@ -405,7 +601,46 @@
         }
       }
 
-      /* Tab layout - a vertical tab rail anchored to the left of a pane block
+      /* Progress bar for long ModRuntime tasks (extract / pack / build / apply)
+         that run in a Web Worker. The bar is indeterminate (the worker reports
+         coarse phase lines, not a percentage), so it animates continuously to
+         show the page is alive while the live phase text gives detail. */
+      .progress {
+        margin-top: 8px;
+      }
+      .progress-track {
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+      }
+      .progress-track > span {
+        display: block;
+        height: 100%;
+        width: 40%;
+        border-radius: 3px;
+        background: var(--purple);
+        animation: progress-slide 1.1s ease-in-out infinite;
+      }
+      @keyframes progress-slide {
+        0% {
+          margin-left: -40%;
+        }
+        100% {
+          margin-left: 100%;
+        }
+      }
+      .progress-text {
+        margin-top: 5px;
+        font-size: 12px;
+        opacity: 0.75;
+        min-height: 1em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Tab layout: a vertical tab rail anchored to the left of a pane block
          that is centered in the page. The rail is absolutely positioned so it
          does not count toward the centering (the result is intentionally
          asymmetric). Mirrored by the desktop apps. */
@@ -419,7 +654,7 @@
         margin: 0 auto;
         /* Stack every pane in one grid cell so the block always reserves the
            tallest pane's height. The rail (anchored to the block's top) then
-           never shifts between tabs - reserve-the-tallest, with no JS. */
+           never shifts between tabs: reserve-the-tallest, with no JS. */
         display: grid;
         grid-template-columns: minmax(0, 1fr);
       }
@@ -474,7 +709,7 @@
         transition: opacity 0.18s ease;
       }
       /* Inactive panes stay laid out (so the grid keeps reserving the tallest
-         pane) but are hidden *instantly* - no fade-out - so the outgoing and
+         pane) but are hidden *instantly*, no fade-out, so the outgoing and
          incoming panes never overlap in the shared cell. The incoming pane
          fades in via the base transition above. */
       .tabpane[hidden] {
@@ -505,6 +740,9 @@
           width: auto;
           flex-direction: row;
           flex-wrap: wrap;
+          /* Tighten the inter-tab gap so all five labels fit on one row before
+             wrapping kicks in at the narrowest widths. */
+          gap: clamp(0.0625rem, 0.6vw, 0.25rem);
           margin-right: 0;
           border-right: none;
           border-bottom: 1px solid rgba(255, 255, 255, 0.12);
@@ -515,6 +753,10 @@
           border-left: none;
           border-bottom: 2px solid transparent;
           border-radius: 6px 6px 0 0;
+          /* Trim the horizontal padding (vertical kept) so the row stays on one
+             line as the viewport narrows. */
+          padding-left: clamp(0.25rem, 1.2vw, 0.875rem);
+          padding-right: clamp(0.25rem, 1.2vw, 0.875rem);
         }
         .tab.active {
           border-left-color: transparent;
@@ -962,203 +1204,345 @@
         <div class="tabpanes">
           <nav class="tabs" role="tablist">
             <button class="tab active" data-tab="modding">Modding</button>
-          <button class="tab" data-tab="install">
-            Install mods (<span class="ic-count">0</span>)
-          </button>
-          <button class="tab" data-tab="create">Create project</button>
-          <button class="tab" data-tab="build">Build mod</button>
-          <a class="tab-back" href="loader.html">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-            Back to loader
-          </a>
-        </nav>
+            <button class="tab" data-tab="install">
+              Install mods (<span class="ic-count">0</span>)
+            </button>
+            <button class="tab" data-tab="create">Create project</button>
+            <button class="tab" data-tab="build">Build mod</button>
+            <button class="tab" data-tab="download">Download game</button>
+            <a class="tab-back" href="loader.html">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+              Back to loader
+            </a>
+          </nav>
 
-        <!-- Modding: overview + imported game versions + per-audience split -->
-        <section class="tabpane" id="tab-modding">
-          <div class="panel">
-            <h2 class="panel-title">Modding</h2>
-            <p class="lede">
-              The full modding toolchain, right in your browser. Everything runs
-              locally on your imported game and nothing is uploaded.
-            </p>
-
-            <label style="margin-top: 14px">Imported game versions</label>
-            <div id="game-versions" class="chips"></div>
-            <input type="file" id="ver-dir" webkitdirectory hidden />
-            <input type="file" id="ver-zip" accept=".zip" hidden />
-
-            <hr class="sep" />
-
-            <div class="split">
-              <div class="split-col">
-                <h3 class="col-title">For players</h3>
-                <p class="colp">
-                  Install community mods, then turn them on or off in the in-game
-                  <strong>Mods</strong> menu. Saves stay separate per mod.
-                </p>
-                <div class="row center">
-                  <button class="action-btn small" data-goto="install">
-                    Install mods
-                  </button>
-                </div>
-                <div class="app-dl" id="dl-user"></div>
-              </div>
-              <div class="split-col">
-                <h3 class="col-title">For modders</h3>
-                <p class="colp">
-                  Recover an editable RPG Maker MV project, edit it in the
-                  editor, then build a shareable mod that carries only your
-                  changes.
-                </p>
-                <div class="row center">
-                  <button class="action-btn small" data-goto="create">
-                    Create project
-                  </button>
-                  <button class="action-btn small" data-goto="build">
-                    Build mod
-                  </button>
-                </div>
-                <div class="app-dl" id="dl-creator"></div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Install mods: import a mod + manage the ones already imported -->
-        <section class="tabpane" id="tab-install" hidden>
-          <div class="panel">
-            <h2 class="panel-title">Install a mod</h2>
-            <p class="lede" style="margin-bottom: 12px">
-              Add a community mod to your game. It appears in the in-game
-              <strong>Mods</strong> menu, where you can turn it on or off, or
-              remove it anytime. Your saves are kept separate per mod.
-            </p>
-            <div class="drop" id="drop">
-              <p><strong>Drop a mod file here</strong> or click to choose</p>
-              <p class="meta">
-                Supported: <code>.tcoaalmod</code> diff mods and packaged mod
-                <code>.zip</code> archives.
+          <!-- Modding: overview + imported game versions + per-audience split -->
+          <section class="tabpane" id="tab-modding">
+            <div class="panel">
+              <h2 class="panel-title">Modding</h2>
+              <p class="lede">
+                The full modding toolchain, right in your browser. Everything
+                runs locally on your imported game and nothing is uploaded.
               </p>
-              <input
-                type="file"
-                id="file"
-                accept=".tcoaalmod,.zip,application/zip"
-                hidden
-              />
-            </div>
-            <div class="status" id="analysis" hidden></div>
-            <div
-              class="row center"
-              id="install-row"
-              hidden
-              style="margin-top: 14px"
-            >
-              <button class="action-btn primary" id="btn-install" disabled>
-                Install into my game
-              </button>
-            </div>
-            <p class="meta" id="install-note" style="margin-top: 8px"></p>
 
-            <div class="installed-block">
-              <h3 class="subhead">
-                Imported mods (<span class="ic-count">0</span>)
-              </h3>
-              <div id="installed-list"></div>
-            </div>
-          </div>
-        </section>
+              <label style="margin-top: 14px">Imported game versions</label>
+              <div id="game-versions" class="chips"></div>
+              <input type="file" id="ver-dir" webkitdirectory hidden />
+              <input type="file" id="ver-zip" accept=".zip" hidden />
 
-        <!-- Create project: decrypt a game into an editable RPG Maker MV project -->
-        <section class="tabpane" id="tab-create" hidden>
-          <div class="panel">
-            <h2 class="panel-title">Create an editable project</h2>
-            <p class="lede" style="margin-bottom: 6px">
-              Turn your game into an editable RPG Maker MV project you can open
-              in the editor and start changing. Downloads as a
-              <code>.zip</code>.
-            </p>
-            <label>Select game version</label>
-            <div id="create-base" class="chips"></div>
-            <div class="row center" style="margin-top: 14px">
-              <button class="action-btn primary" id="btn-create" disabled>
-                Create project
-              </button>
-            </div>
-            <div class="status" id="create-status" hidden></div>
-          </div>
-        </section>
+              <hr class="sep" />
 
-        <!--
-          Pack project is intentionally NOT exposed in the browser: re-creating
-          a fully playable game from a project is only legitimate offline, in
-          the desktop apps (so it can't be used to hand a copy of the game to
-          someone who doesn't own it). The runtime packProject code is kept and
-          still used by the Tauri apps and the build/install pipeline.
-        -->
-
-        <!-- Build mod: diff an edited project against base game(s) -> .tcoaalmod -->
-        <section class="tabpane" id="tab-build" hidden>
-          <div class="panel">
-            <h2 class="panel-title">Build a shareable mod</h2>
-            <p class="lede" style="margin-bottom: 6px">
-              Package your edits into a mod file you can share. It contains only your
-              changes and none of the game's content. That makes it legal and DMCA-safe to
-              distribute: no copyrighted game files are ever included.
-            </p>
-
-            <label>Edited project</label>
-            <div id="build-proj-slot" class="chips"></div>
-            <input type="file" id="build-proj-dir" webkitdirectory hidden />
-            <input type="file" id="build-proj-zip" accept=".zip" hidden />
-
-            <label>Select game versions player can use to play</label>
-            <div id="build-bases" class="chips"></div>
-
-            <div class="form-grid">
-              <div>
-                <label>Name</label>
-                <input type="text" id="build-name" />
+              <div class="split">
+                <div class="split-col">
+                  <h3 class="col-title">For players</h3>
+                  <p class="colp">
+                    Install community mods, then turn them on or off in the
+                    in-game
+                    <strong>Mods</strong> menu. Saves stay separate per mod.
+                  </p>
+                  <div class="row center">
+                    <button class="action-btn small" data-goto="install">
+                      Install mods
+                    </button>
+                  </div>
+                  <div class="app-dl" id="dl-user"></div>
+                </div>
+                <div class="split-col">
+                  <h3 class="col-title">For modders</h3>
+                  <p class="colp">
+                    Recover an editable RPG Maker MV project, edit it in the
+                    editor, then build a shareable mod that carries only your
+                    changes.
+                  </p>
+                  <div class="row center">
+                    <button class="action-btn small" data-goto="create">
+                      Create project
+                    </button>
+                    <button class="action-btn small" data-goto="build">
+                      Build mod
+                    </button>
+                  </div>
+                  <div class="app-dl" id="dl-creator"></div>
+                </div>
               </div>
-              <div>
-                <label>Author</label>
-                <input type="text" id="build-author" />
-              </div>
-              <div>
-                <label>Version</label>
+            </div>
+          </section>
+
+          <!-- Install mods: import a mod + manage the ones already imported -->
+          <section class="tabpane" id="tab-install" hidden>
+            <div class="panel">
+              <h2 class="panel-title">Install a mod</h2>
+              <p class="lede" style="margin-bottom: 12px">
+                Add a community mod to your game. It appears in the in-game
+                <strong>Mods</strong> menu, where you can turn it on or off, or
+                remove it anytime. Your saves are kept separate per mod.
+              </p>
+              <div class="drop" id="drop">
+                <p><strong>Drop a mod file here</strong> or click to choose</p>
+                <p class="meta">
+                  Supported: <code>.tcoaalmod</code> diff mods and packaged mod
+                  <code>.zip</code> archives.
+                </p>
                 <input
-                  type="text"
-                  id="build-version"
-                  value="1.0.0"
-                  pattern="\d+\.\d+\.\d+"
-                  title="Use semantic versioning, e.g. 1.0.0"
+                  type="file"
+                  id="file"
+                  accept=".tcoaalmod,.zip,application/zip"
+                  hidden
                 />
               </div>
-            </div>
-            <label>Description (optional)</label>
-            <input type="text" id="build-desc" maxlength="80" />
+              <div class="status" id="analysis" hidden></div>
+              <div
+                class="row center"
+                id="install-row"
+                hidden
+                style="margin-top: 14px"
+              >
+                <button class="action-btn primary" id="btn-install" disabled>
+                  Install into my game
+                </button>
+              </div>
+              <p class="meta" id="install-note" style="margin-top: 8px"></p>
 
-            <div class="row center" style="margin-top: 14px">
-              <button class="action-btn primary" id="btn-build" disabled>
-                Build shareable mod
-              </button>
+              <div class="installed-block">
+                <h3 class="subhead">
+                  Imported mods (<span class="ic-count">0</span>)
+                </h3>
+                <div id="installed-list"></div>
+              </div>
             </div>
-            <div class="status" id="build-status" hidden></div>
-            <p class="hint">
-              Building can take a while for large games. The result downloads as
-              a mod file you can share.
-            </p>
-          </div>
-        </section>
+          </section>
+
+          <!-- Create project: decrypt a game into an editable RPG Maker MV project -->
+          <section class="tabpane" id="tab-create" hidden>
+            <div class="panel">
+              <h2 class="panel-title">Create an editable project</h2>
+              <p class="lede" style="margin-bottom: 6px">
+                Turn your game into an editable RPG Maker MV project you can
+                open in the editor and start changing. Downloads as a
+                <code>.zip</code>.
+              </p>
+              <label>Select game version</label>
+              <div id="create-base" class="chips"></div>
+              <div class="row center" style="margin-top: 14px">
+                <button class="action-btn primary" id="btn-create" disabled>
+                  Create project
+                </button>
+              </div>
+              <div class="status" id="create-status" hidden></div>
+            </div>
+          </section>
+
+          <!--
+          Pack project has no standalone tab and its output is never downloaded:
+          it is folded into the single Build mod action purely as an internal
+          validation step (pack the edited project, throw if it is broken),
+          after which only the copyright-safe .tcoaalmod diff is downloaded.
+          Handing out a packed playable www would distribute the full game, so
+          the bytes stay in-memory. The full rt.packProject runtime is also used
+          by the Tauri apps and the build/install pipeline.
+        -->
+
+          <!-- Build mod: diff an edited project against base game(s) -> .tcoaalmod -->
+          <section class="tabpane" id="tab-build" hidden>
+            <div class="panel">
+              <h2 class="panel-title">Build a shareable mod</h2>
+              <p class="lede" style="margin-bottom: 6px">
+                Package your edits into a mod file you can share. It contains
+                only your changes and none of the game's content. That makes it
+                legal and DMCA-safe to distribute: no copyrighted game files are
+                ever included.
+              </p>
+
+              <label>Edited project</label>
+              <div id="build-proj-slot" class="chips"></div>
+              <input type="file" id="build-proj-dir" webkitdirectory hidden />
+              <input type="file" id="build-proj-zip" accept=".zip" hidden />
+
+              <label>Select game versions player can use to play</label>
+              <div id="build-bases" class="chips"></div>
+
+              <div class="form-grid">
+                <div>
+                  <label>Name</label>
+                  <input type="text" id="build-name" />
+                </div>
+                <div>
+                  <label>Author</label>
+                  <input type="text" id="build-author" />
+                </div>
+                <div>
+                  <label>Version</label>
+                  <input
+                    type="text"
+                    id="build-version"
+                    value="1.0.0"
+                    pattern="\d+\.\d+\.\d+"
+                    title="Use semantic versioning, e.g. 1.0.0"
+                  />
+                </div>
+              </div>
+              <label>Description (optional)</label>
+              <input type="text" id="build-desc" maxlength="80" />
+
+              <div class="row center" style="margin-top: 14px">
+                <button class="action-btn primary" id="btn-build" disabled>
+                  Build shareable mod
+                </button>
+              </div>
+              <div class="status" id="build-status" hidden></div>
+              <p class="hint">
+                Building packs your project to verify your edits, then diffs it
+                against the selected game versions into a mod file carrying only
+                your changes. Only that copyright-safe mod file downloads, never
+                a copy of the game. This can take a while for large games.
+              </p>
+            </div>
+          </section>
+
+          <!-- Download game: drive the user's own Steam to fetch a build's files.
+             A guided wizard: horizontal step tabs over a fixed-height body, so
+             switching tabs / loading the catalog never changes the pane height. -->
+          <section class="tabpane" id="tab-download" hidden>
+            <div class="panel">
+              <h2 class="panel-title">Download a game version</h2>
+              <p class="lede" style="margin-bottom: 14px">
+                Own the game on Steam but need its files? This walks you through
+                pulling a specific build with Steam's built-in console, then
+                importing it. Nothing is uploaded or hosted here, it just drives
+                your own Steam, the same way the desktop app does.
+              </p>
+
+              <!-- Step tabs (single line): inactive steps collapse to just their
+                 number; the active one shows its label. Title = full text on
+                 hover. Click a reached step to jump back to it. -->
+              <div class="stepper" id="dl-stepper">
+                <button class="step" data-step="1" title="Choose version">
+                  <span class="step-n">1</span>
+                  <span class="step-label">Choose version</span>
+                </button>
+                <button class="step" data-step="2" title="Open console">
+                  <span class="step-n">2</span>
+                  <span class="step-label">Open console</span>
+                </button>
+                <button class="step" data-step="3" title="Paste command">
+                  <span class="step-n">3</span>
+                  <span class="step-label">Paste command</span>
+                </button>
+                <button
+                  class="step"
+                  data-step="4"
+                  title="Find and import the folder"
+                >
+                  <span class="step-n">4</span>
+                  <span class="step-label">Find &amp; import</span>
+                </button>
+              </div>
+
+              <!-- Fixed-height body: panels swap inside it without reflowing. -->
+              <div class="step-body">
+                <p class="dl-picked" id="dl-picked" hidden></p>
+
+                <!-- Step 1: pick a version (the catalog scrolls inside the body). -->
+                <div class="step-panel" data-panel="1">
+                  <p class="meta dl-match" id="dl-match" hidden></p>
+                  <div id="dl-catalog">
+                    <p class="meta">
+                      <span class="spinner"></span>Loading versions...
+                    </p>
+                  </div>
+                </div>
+
+                <!-- Step 2: open Steam's console (clicking it advances to 3). -->
+                <div class="step-panel" data-panel="2" hidden>
+                  <p>Open Steam's built-in console:</p>
+                  <div class="dl-step center">
+                    <a
+                      class="action-btn primary"
+                      id="dl-open-console"
+                      href="steam://open/console"
+                    >
+                      Open the Steam console
+                    </a>
+                  </div>
+                  <p class="meta" style="margin-top: 10px">
+                    Nothing happens? Paste
+                    <code>steam://open/console</code> into your browser's
+                    address bar, or open it from Steam itself, then pick step 3
+                    above.
+                  </p>
+                </div>
+
+                <!-- Step 3: copy the command (Copy advances to 4). -->
+                <div class="step-panel" data-panel="3" hidden>
+                  <p>Copy this, paste it into the console and press Enter:</p>
+                  <div class="field">
+                    <input type="text" id="dl-cmd" readonly />
+                    <button class="action-btn small primary" id="dl-copy">
+                      Copy
+                    </button>
+                  </div>
+                  <p class="meta" style="margin-top: 10px">
+                    Steam shows no progress bar, give it a minute to finish.
+                  </p>
+                </div>
+
+                <!-- Step 4: locate the downloaded folder and import it. We show a
+                   best-guess default path, but the user can paste the Steam
+                   console output to pin down the exact destination (Steam often
+                   adds a platform subdir like ubuntu12_32 our guess can't know). -->
+                <div class="step-panel" data-panel="4" hidden>
+                  <p>
+                    Where did Steam put it? Paste the console output to be sure:
+                  </p>
+                  <textarea
+                    id="dl-console"
+                    rows="3"
+                    spellcheck="false"
+                    placeholder='] download_depot 2378900 2378901 ...
+Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
+                  ></textarea>
+                  <div class="field" style="margin-top: 10px">
+                    <input type="text" id="dl-path" readonly />
+                    <button class="action-btn small" id="dl-path-copy">
+                      Copy
+                    </button>
+                  </div>
+                  <p class="meta" id="dl-path-src">
+                    Best-guess default: paste the console output above to
+                    correct it for your machine.
+                  </p>
+                  <div class="dl-step center">
+                    <button class="action-btn primary" id="dl-import-folder">
+                      Select the downloaded folder
+                    </button>
+                  </div>
+                  <input
+                    type="file"
+                    id="dl-import-dir"
+                    webkitdirectory
+                    hidden
+                  />
+                  <p class="meta" id="dl-import-note">
+                    In the picker, go to the path above and choose that folder.
+                    It's added to your <b>imported game versions</b>, ready for
+                    Create / Build.
+                  </p>
+                </div>
+
+                <div class="status" id="dl-status" hidden></div>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
 
@@ -1312,6 +1696,118 @@
           document.head.appendChild(s);
         });
         return _runtimeP;
+      }
+
+      // Heavy ModRuntime ops run in a Web Worker so the page never freezes
+      // ("page unresponsive"). The worker loads the same mod-runtime bundle and
+      // forwards the tools' stdout phase lines as progress. If the worker can't
+      // start (old browser, file blocked), runHeavy falls back to the
+      // main-thread runtime so builds still work (just without responsiveness).
+      var _worker = null;
+      var _workerReady = null; // Promise<boolean>: true once ready, false if fatal
+      var _workerSeq = 0;
+      var _workerPending = {};
+      var _workerProgress = null; // current onProgress callback
+
+      function startWorker() {
+        if (_workerReady) return _workerReady;
+        _workerReady = new Promise(function (resolve) {
+          var w;
+          try {
+            w = new Worker("js/libs/mod-runtime-worker.js");
+          } catch (e) {
+            resolve(false);
+            return;
+          }
+          var settled = false;
+          w.onmessage = function (e) {
+            var m = e.data || {};
+            if (m.type === "ready") {
+              if (!settled) {
+                settled = true;
+                _worker = w;
+                resolve(true);
+              }
+              return;
+            }
+            if (m.type === "fatal") {
+              if (!settled) {
+                settled = true;
+                resolve(false);
+              }
+              return;
+            }
+            if (m.type === "progress") {
+              if (_workerProgress) _workerProgress(m.text);
+              return;
+            }
+            var p = _workerPending[m.id];
+            if (!p) return;
+            delete _workerPending[m.id];
+            m.ok ? p.resolve(m.result) : p.reject(new Error(m.error));
+          };
+          w.onerror = function (ev) {
+            if (!settled) {
+              settled = true;
+              resolve(false);
+            }
+            // Reject anything in flight so callers can fall back / report.
+            Object.keys(_workerPending).forEach(function (id) {
+              _workerPending[id].reject(
+                new Error((ev && ev.message) || "mod runtime worker error"),
+              );
+              delete _workerPending[id];
+            });
+            // Crashed after starting: drop it so the next runHeavy re-creates a
+            // fresh worker (or falls back to the main thread if that fails too).
+            if (_worker === w) {
+              _worker = null;
+              _workerReady = null;
+            }
+          };
+        });
+        return _workerReady;
+      }
+
+      // Run a heavy ModRuntime method, preferring the worker. onProgress(text)
+      // receives each phase line. Falls back to the main thread only when the
+      // worker infrastructure is unavailable - never to mask a real op error.
+      async function runHeavy(method, args, onProgress) {
+        var ok = await startWorker();
+        if (ok && _worker) {
+          _workerProgress = onProgress || null;
+          var id = ++_workerSeq;
+          try {
+            return await new Promise(function (resolve, reject) {
+              _workerPending[id] = { resolve: resolve, reject: reject };
+              _worker.postMessage({ id: id, method: method, args: args || [] });
+            });
+          } finally {
+            _workerProgress = null;
+          }
+        }
+        // No worker: run on the main thread (page will block, but it works).
+        if (onProgress) onProgress("Working (this may freeze the page briefly)...");
+        var rt = await loadRuntime();
+        return await rt[method].apply(rt, args || []);
+      }
+
+      // Render an indeterminate progress bar + live phase text into a status
+      // element, and return an onProgress(text) callback that updates the text.
+      function showProgress(id, label) {
+        setStatusEl(
+          id,
+          (label || "Working") +
+            '<div class="progress">' +
+            '<div class="progress-track"><span></span></div>' +
+            '<div class="progress-text" id="' +
+            id +
+            '-ptext"></div></div>',
+        );
+        return function (text) {
+          var el = $(id + "-ptext");
+          if (el && text) el.textContent = text;
+        };
       }
 
       async function readBaseFiles(db) {
@@ -1712,11 +2208,11 @@
           return;
         }
         $("btn-install").disabled = true;
-        setAnalysis(
-          '<span class="spinner"></span>Installing, this can take a moment (extracting and repacking your game)...',
+        var onInstallProgress = showProgress(
+          "analysis",
+          "Installing, this can take a moment (extracting and repacking your game)...",
         );
         try {
-          var rt = await loadRuntime();
           var tag, meta, files, deletions;
 
           if (_selected.kind === "tcoaalmod") {
@@ -1727,7 +2223,11 @@
               lastErr = null;
             for (var bi = 0; bi < bases.length; bi++) {
               try {
-                res = await rt.applyTcoaalmod(bases[bi].files, _selected.bytes);
+                res = await runHeavy(
+                  "applyTcoaalmod",
+                  [bases[bi].files, _selected.bytes],
+                  onInstallProgress,
+                );
                 break;
               } catch (e) {
                 lastErr = e;
@@ -1738,9 +2238,7 @@
                 "None of your game versions match what this mod needs. " +
                   'Add the required version with "+" on the Modding tab, then ' +
                   "try again." +
-                  (lastErr && lastErr.message
-                    ? "\n\n" + lastErr.message
-                    : ""),
+                  (lastErr && lastErr.message ? "\n\n" + lastErr.message : ""),
               );
             }
             tag = res.tag;
@@ -1774,7 +2272,16 @@
             _db,
             "__mod_meta__:" + tag,
             JSON.stringify({
+              // Display metadata is duplicated here (alongside the
+              // __imported_mods__ registry) so the in-game Mods menu can
+              // self-heal an entry straight from IDB if the registry is ever
+              // missing or stale. See lang-shim loadImportedMods/scanImportedMeta.
+              name: meta.name || "",
+              author: meta.author || "",
               version: meta.version || "",
+              description: meta.description || "",
+              baseLabel: meta.baseLabel || "",
+              type: "overhaul",
               date: new Date().toISOString().substring(0, 10),
               files: relList.length,
               imported: true,
@@ -1890,6 +2397,7 @@
         install: "install-mods",
         create: "create-project",
         build: "build-mod",
+        download: "download-game",
       };
       var TAB_BY_HASH = (function () {
         var m = {};
@@ -1906,6 +2414,9 @@
         document.querySelectorAll(".tabpane").forEach(function (p) {
           p.hidden = p.id !== "tab-" + name;
         });
+        // The Download tab pulls its version catalog lazily, the first time it
+        // is opened (network-only, best-effort).
+        if (name === "download") loadDownload();
       }
 
       // Select a tab and reflect it in the URL hash (so the tab is shareable
@@ -2106,12 +2617,15 @@
             );
             return;
           }
-          setStatusEl(
+          var onCreateProgress = showProgress(
             "create-status",
-            SPIN + "Extracting project, this can take a moment...",
+            "Extracting project, this can take a moment...",
           );
-          var rt = await loadRuntime();
-          var bytes = await rt.createProject(src, { noBake: false });
+          var bytes = await runHeavy(
+            "createProject",
+            [src, { noBake: false }],
+            onCreateProgress,
+          );
           downloadBytes(bytes, "tcoaal-project.zip", "application/zip");
           setStatusEl(
             "create-status",
@@ -2130,56 +2644,6 @@
         }
       }
 
-      // Pack project
-      var _packSource = null; // { label, files }
-
-      function renderPackSource() {
-        renderSlot(
-          "pack-slot",
-          _packSource ? "Project: " + _packSource.label : null,
-          function () {
-            _packSource = null;
-            renderPackSource();
-          },
-          "Select project",
-          choosePackProject,
-        );
-        $("btn-pack").disabled = !_packSource;
-      }
-
-      async function choosePackProject() {
-        var c = await openChooser({
-          title: "Choose your project",
-          sub: "The edited RPG Maker MV project to re-pack.",
-        });
-        if (c === "folder") $("pack-dir").click();
-        else if (c === "zip") $("pack-zip").click();
-      }
-
-      async function doPack() {
-        if (!_packSource) return;
-        try {
-          $("btn-pack").disabled = true;
-          setStatusEl("pack-status", SPIN + "Packing project...");
-          var rt = await loadRuntime();
-          var bytes = await rt.packProject(_packSource.files);
-          downloadBytes(bytes, "tcoaal-www.zip", "application/zip");
-          setStatusEl(
-            "pack-status",
-            '<span class="ok">Packed.</span>\nDownloaded <code>tcoaal-www.zip</code>: re-import it on the loader, or run it with <code>node server.js</code>.',
-            "ok",
-          );
-        } catch (e) {
-          setStatusEl(
-            "pack-status",
-            '<span class="err">Pack failed:</span>\n' +
-              escapeHtml(e.message || String(e)),
-            "err",
-          );
-        } finally {
-          $("btn-pack").disabled = false;
-        }
-      }
 
       // Build mod
       var _buildProject = null; // { label, files }
@@ -2251,6 +2715,19 @@
         else if (c === "zip") $("build-proj-zip").click();
       }
 
+      // An editable RPG Maker MV project (what Build expects) always carries a
+      // Game.rpgproject and/or a plain data/System.json. A packed/shipped www
+      // (hashed + encrypted data, e.g. the output of Pack, or a game's own www)
+      // has neither - those must be extracted back to a project before building.
+      function looksLikeProject(files) {
+        return Object.keys(files).some(function (k) {
+          return (
+            /(^|\/)Game\.rpgproject$/i.test(k) ||
+            /(^|\/)data\/System\.json$/i.test(k)
+          );
+        });
+      }
+
       async function doBuild() {
         if (!_buildProject) return;
         // At least one game version must be selected to build a mod.
@@ -2278,29 +2755,65 @@
         $("build-version").value = version;
         try {
           $("btn-build").disabled = true;
-          setStatusEl(
-            "build-status",
-            SPIN +
-              "Building: extracting and diffing each base, this can take a while...",
+          var onBuildProgress = showProgress("build-status", "Preparing...");
+
+          // Step 0 - If the upload is an already-packed/shipped www instead of an
+          // editable project, extract it back to a project first (and skip the
+          // pack step below - there is nothing to re-pack). This lets a modder
+          // build straight from a packed game/mod folder.
+          var projectFiles = _buildProject.files;
+          if (!looksLikeProject(projectFiles)) {
+            onBuildProgress(
+              "This looks like a packed game/mod - extracting it to a project first...",
+            );
+            var projZip = await runHeavy(
+              "createProject",
+              [toWwwRoot(projectFiles), { noBake: false }],
+              onBuildProgress,
+            );
+            var rtLite = await loadRuntime();
+            projectFiles = rtLite.readZip(projZip);
+          } else {
+            // Step 1 - Pack (validation only): re-pack the edited project into a
+            // playable www to prove the edits are valid (a broken project throws
+            // here, before anything ships). The packed www is NEVER downloaded -
+            // that would hand out a full copy of the game (illegal). It stays an
+            // internal intermediate; only the copyright-safe .tcoaalmod ships.
+            onBuildProgress("Packing your project into a playable copy...");
+            await runHeavy("packProject", [projectFiles], onBuildProgress);
+          }
+
+          // Step 2 - Build: diff the project against each base into the mod.
+          onBuildProgress(
+            "Diffing against each game version, this can take a while...",
           );
-          var rt = await loadRuntime();
           var bases = [];
           for (var i = 0; i < _buildSelected.length; i++) {
             var v = _buildSelected[i];
             var files = v.imported ? await readBaseFiles(_db) : v.files;
             bases.push({ label: v.label, files: toWwwRoot(files) });
           }
-          var bytes = await rt.buildShare(_buildProject.files, bases, {
-            name: $("build-name").value,
-            author: $("build-author").value,
-            version: version,
-            description: $("build-desc").value,
-          });
+          var bytes = await runHeavy(
+            "buildShare",
+            [
+              projectFiles,
+              bases,
+              {
+                name: $("build-name").value,
+                author: $("build-author").value,
+                version: version,
+                description: $("build-desc").value,
+              },
+            ],
+            onBuildProgress,
+          );
           var fname =
             ($("build-name").value || "mymod")
               .toLowerCase()
               .replace(/[^a-z0-9._-]+/g, "-")
               .replace(/^-+|-+$/g, "") || "mymod";
+          // Only the copyright-safe mod is downloaded; the packed www stays
+          // internal (downloading it would distribute the full game).
           downloadBytes(
             bytes,
             fname + ".tcoaalmod",
@@ -2314,7 +2827,7 @@
               _buildSelected.length +
               " base variant" +
               (_buildSelected.length === 1 ? "" : "s") +
-              ").</span>\nShare it: players install it from the Install tab, or the desktop installer.",
+              ").</span>\nYour edits were packed and verified first. Share the mod file: players install it from the Install tab, or the desktop installer.",
             "ok",
           );
         } catch (e) {
@@ -2330,10 +2843,9 @@
       }
 
       // Desktop apps: list the latest release's downloads, grouped per app and
-      // per OS, straight from GitHub. Network-only and best-effort - if it
-      // fails we fall back to a link to the releases page.
+      // per OS, straight from GitHub. Network-only and best-effort: if we can't
+      // get real download links we hide the desktop apps entirely (no dead UI).
       var GH_REPO = "Kidev/TCOAALBrowserLoader";
-      var GH_RELEASES = "https://github.com/" + GH_REPO + "/releases";
 
       var OS_ICONS = {
         windows:
@@ -2447,12 +2959,9 @@
             "</span></a>";
         });
         if (!btns) {
-          el.innerHTML =
-            '<p class="dl-cap">' +
-            label +
-            ': <a href="' +
-            GH_RELEASES +
-            '">no build yet</a></p>';
+          // No usable link for this app: hide it entirely rather than advertise
+          // a build that isn't downloadable.
+          el.innerHTML = "";
           return;
         }
         el.innerHTML =
@@ -2476,13 +2985,10 @@
           if (!r.ok) throw new Error("HTTP " + r.status);
           rel = await r.json();
         } catch (e) {
-          var msg =
-            '<p class="dl-cap">Desktop app: ' +
-            '<a href="' +
-            GH_RELEASES +
-            '">get it on GitHub</a></p>';
-          if ($("dl-user")) $("dl-user").innerHTML = msg;
-          if ($("dl-creator")) $("dl-creator").innerHTML = msg;
+          // Couldn't reach GitHub for the release: don't surface the desktop
+          // apps at all (no links to give).
+          if ($("dl-user")) $("dl-user").innerHTML = "";
+          if ($("dl-creator")) $("dl-creator").innerHTML = "";
           return;
         }
         var version = rel.tag_name || rel.name || "";
@@ -2519,6 +3025,323 @@
           picks.creator,
           here,
         );
+      }
+
+      // ===== Download game (Steam console) =================================
+      // Mirrors the desktop creator's Steam tab, minus the parts a browser can't
+      // do (Steam detection, watching the filesystem). We just list the
+      // maintained version catalog and hand the user the exact
+      // `download_depot <appid> <depot> <manifest>` line + a Copy button; their
+      // own Steam client does the actual download. Catalog is the same file the
+      // desktop apps pull (one commit benefits every client).
+      var DL_CATALOG_URL =
+        "https://raw.githubusercontent.com/" +
+        GH_REPO +
+        "/main/tools/tcoaal-versions.json";
+      // Offline/format fallbacks (the catalog ships these too).
+      var DL_DEFAULT_APPID = "2378900";
+      var DL_DEFAULT_DEPOT = "2378901";
+      var _dlLoaded = false;
+      var _dlCat = null;
+      var _dlStep = 1; // current wizard step (1-4)
+      var _dlSel = null; // chosen catalog entry (gates steps 2-4)
+
+      async function loadDownload() {
+        dlGoStep(1); // reset the wizard each time the tab is (re)opened
+        if (_dlLoaded) return;
+        _dlLoaded = true;
+        var box = $("dl-catalog");
+        try {
+          var r = await fetch(DL_CATALOG_URL, { cache: "no-cache" });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          _dlCat = await r.json();
+        } catch (e) {
+          _dlLoaded = false; // allow a retry on the next tab visit
+          box.innerHTML =
+            '<p class="meta">Could not load the version list right now. ' +
+            "Check your connection and reopen this tab to try again.</p>";
+          return;
+        }
+        renderDlCatalog();
+      }
+
+      // Show step `n`: swap the visible panel and reflect the stepper state.
+      // Steps 2-4 stay locked until a version is chosen.
+      function dlGoStep(n) {
+        if (n > 1 && !_dlSel) return;
+        _dlStep = n;
+        // The "Downloading <version>" line is context for steps 2-4 only.
+        $("dl-picked").hidden = n === 1 || !_dlSel;
+        document
+          .querySelectorAll("#tab-download .step-panel")
+          .forEach(function (p) {
+            p.hidden = Number(p.dataset.panel) !== n;
+          });
+        document.querySelectorAll("#dl-stepper .step").forEach(function (b) {
+          var s = Number(b.dataset.step);
+          b.classList.toggle("active", s === n);
+          b.classList.toggle("done", !!_dlSel && s < n);
+          b.disabled = s > 1 && !_dlSel;
+        });
+      }
+
+      function dlAppid() {
+        return (_dlCat && _dlCat.appid) || DL_DEFAULT_APPID;
+      }
+      function dlDepot() {
+        return (_dlCat && _dlCat.depot) || DL_DEFAULT_DEPOT;
+      }
+
+      // Does this catalog entry match the game the user already imported? The
+      // imported version is a plain "3.0.13"; catalog entries carry the same in
+      // `version`. Used to mark it in the list and steer the default choice.
+      function dlIsImported(v) {
+        return !!(
+          _importedVersion &&
+          v &&
+          v.version &&
+          v.version === _importedVersion
+        );
+      }
+
+      function renderDlCatalog() {
+        var box = $("dl-catalog");
+        var majors = (_dlCat && _dlCat.majors) || [];
+        if (!majors.length) {
+          box.innerHTML = '<p class="meta">No versions available.</p>';
+          return;
+        }
+        // If the imported game matches a listed build, call it out up top so the
+        // user knows which row reproduces the files they already have.
+        var matched = false;
+        majors.forEach(function (mj) {
+          (mj.versions || []).forEach(function (v) {
+            if (dlIsImported(v)) matched = true;
+          });
+        });
+        var matchEl = $("dl-match");
+        if (matched) {
+          matchEl.innerHTML =
+            "You imported <b>" +
+            escapeHtml(verText(_importedVersion)) +
+            "</b>, it's marked below. Re-download it for a clean copy, or pick another build.";
+          matchEl.hidden = false;
+        } else {
+          matchEl.hidden = true;
+        }
+
+        box.innerHTML = "";
+        majors.forEach(function (mj, mi) {
+          var det = document.createElement("details");
+          det.className = "vmajor";
+          // Open the group holding the imported match (else the first group).
+          var hasMatch = (mj.versions || []).some(dlIsImported);
+          if (hasMatch || (!matched && mi === 0)) det.open = true;
+          var sum = document.createElement("summary");
+          sum.textContent =
+            (mj.major || "?") + (mj.label ? ": " + mj.label : "");
+          det.appendChild(sum);
+          (mj.versions || []).forEach(function (v) {
+            var row = document.createElement("div");
+            row.className = "vitem";
+            var left = document.createElement("div");
+            left.innerHTML =
+              escapeHtml(v.name || v.version || "version") +
+              (dlIsImported(v)
+                ? '<span class="badge">your imported version</span>'
+                : "") +
+              (v.date
+                ? '<div class="vmeta">' + escapeHtml(v.date) + "</div>"
+                : "");
+            var btn = document.createElement("button");
+            btn.className = "action-btn small primary";
+            btn.textContent = "Download";
+            // Entries with an empty manifest are listed but not yet downloadable.
+            btn.disabled = !v.manifest;
+            if (!v.manifest) btn.title = "Manifest id not available yet";
+            btn.onclick = function () {
+              dlSelect(v);
+            };
+            row.appendChild(left);
+            row.appendChild(btn);
+            det.appendChild(row);
+          });
+          box.appendChild(det);
+        });
+      }
+
+      // The full path the depot download lands in. `download_depot` always
+      // writes under the *main* Steam root's content folder, so we just need the
+      // OS-default root (mirrors loader.html's guessGameInstallPath). The user
+      // already imported their game, so they're on a desktop Steam box, but we
+      // still hide the absolute path on mobile/unknown UAs where it'd mislead.
+      function steamContentPath(appid, depot) {
+        var rel = "steamapps/content/app_" + appid + "/depot_" + depot;
+        var ua = (navigator.userAgent || "") + " " + (navigator.platform || "");
+        if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return rel;
+        if (/Win(dows|32|64|CE|NT)?/i.test(ua)) {
+          return "C:\\Program Files (x86)\\Steam\\" + rel.replace(/\//g, "\\");
+        }
+        if (/Mac|Darwin/i.test(ua)) {
+          return "~/Library/Application Support/Steam/" + rel;
+        }
+        if (/Linux|CrOS|BSD/i.test(ua)) {
+          return "~/.local/share/Steam/" + rel;
+        }
+        return rel;
+      }
+
+      // Pull the real destination out of pasted Steam console output. The
+      // success line is: `Depot download complete : "<path>" (manifest <id>)` -
+      // and `<path>` often has a platform subdir (e.g. ubuntu12_32) our default
+      // guess can't know, so the paste fixes a wrong default. Falls back to any
+      // token containing `depot_<depot>`.
+      function parseDepotPath(text) {
+        if (!text) return null;
+        var m = text.match(/Depot download complete\s*:?\s*"([^"]+)"/i);
+        if (m) return m[1].trim();
+        var depot = String(dlDepot()).replace(/[^0-9A-Za-z_]/g, "");
+        var m2 = text.match(
+          new RegExp('([^\\s"\\r\\n]*depot_' + depot + '[^\\s"\\r\\n]*)'),
+        );
+        return m2 ? m2[1].trim() : null;
+      }
+
+      var DL_PATH_DEFAULT_NOTE =
+        "Best-guess default: paste the console output above to correct it for " +
+        "your machine.";
+      var DL_IMPORT_NOTE =
+        "In the picker, go to the path above and choose that folder. It's added " +
+        "to your <b>imported game versions</b>, ready for Create / Build.";
+
+      // Reset step 4 to the best-guess default (called when a version is picked).
+      function dlResetPath() {
+        $("dl-console").value = "";
+        $("dl-path").value = steamContentPath(dlAppid(), dlDepot());
+        $("dl-path-src").textContent = DL_PATH_DEFAULT_NOTE;
+        $("dl-import-note").innerHTML = DL_IMPORT_NOTE;
+      }
+
+      // Live-update the destination as the user pastes their console output.
+      function dlApplyConsole() {
+        var raw = $("dl-console").value;
+        var p = parseDepotPath(raw);
+        if (p) {
+          $("dl-path").value = p;
+          $("dl-path-src").textContent =
+            "Detected from your console output: this is where your files are.";
+        } else if (raw.trim()) {
+          $("dl-path").value = steamContentPath(dlAppid(), dlDepot());
+          $("dl-path-src").textContent =
+            'No path found yet: paste the whole output, including the "Depot ' +
+            'download complete" line.';
+        } else {
+          $("dl-path").value = steamContentPath(dlAppid(), dlDepot());
+          $("dl-path-src").textContent = DL_PATH_DEFAULT_NOTE;
+        }
+      }
+
+      // Pick a version -> fill in the command + default folder, then advance the
+      // wizard to step 2.
+      function dlSelect(v) {
+        if (!v.manifest) return;
+        _dlSel = v;
+        var picked = $("dl-picked");
+        picked.hidden = false;
+        picked.innerHTML =
+          "Downloading <b>" +
+          escapeHtml(v.name || v.version || "version") +
+          "</b>" +
+          (dlIsImported(v) ? " (the version you imported)" : "") +
+          ".";
+        $("dl-cmd").value =
+          "download_depot " + dlAppid() + " " + dlDepot() + " " + v.manifest;
+        dlResetPath();
+        $("dl-status").hidden = true;
+        dlGoStep(2);
+      }
+
+      // Copy a readonly field's value; report via the status line. Shared by the
+      // command and the folder-path copy buttons.
+      async function dlCopy(id) {
+        var el = $(id);
+        var ok = false;
+        try {
+          await navigator.clipboard.writeText(el.value);
+          ok = true;
+        } catch (e) {}
+        if (!ok) {
+          el.focus();
+          el.select();
+          try {
+            ok = document.execCommand("copy");
+          } catch (e2) {}
+        }
+        var what = id === "dl-path" ? "Folder path" : "Command";
+        setStatusEl(
+          "dl-status",
+          ok
+            ? what +
+                " copied." +
+                (id === "dl-cmd"
+                  ? " Paste it into the Steam console and press Enter, then wait for the download to finish."
+                  : "")
+            : "Couldn't copy automatically: select the text above and copy it (Ctrl+C).",
+        );
+      }
+
+      function wireDownload() {
+        // No Back/Next buttons: doing each step's action advances the wizard.
+        // console -> 3, copy command -> 4 (step 4 is the final find + import).
+        $("dl-open-console").onclick = function () {
+          // Let the steam:// protocol handler fire, then move on.
+          dlGoStep(3);
+        };
+        $("dl-copy").onclick = function () {
+          dlCopy("dl-cmd");
+          dlGoStep(4);
+        };
+        $("dl-path-copy").onclick = function () {
+          dlCopy("dl-path");
+        };
+        // Step 4: refine the destination from pasted console output, then pick
+        // the folder -> add it to the imported game versions (same list as
+        // Modding -> "+"), with inline feedback here.
+        $("dl-console").addEventListener("input", dlApplyConsole);
+        $("dl-import-folder").onclick = function () {
+          $("dl-import-dir").click();
+        };
+        $("dl-import-dir").onchange = async function () {
+          if (!this.files.length) return;
+          var note = $("dl-import-note");
+          note.innerHTML = SPIN + "Reading the folder...";
+          try {
+            var top =
+              (this.files[0].webkitRelativePath || "version").split("/")[0] ||
+              "version";
+            var files = await filesFromFileList(this.files);
+            var v = baseVersionFromFiles(files);
+            var label = verText(v) || top;
+            _gameVersions.push({ label: label, files: files });
+            renderGameVersions();
+            note.innerHTML =
+              "Added <b>" +
+              escapeHtml(label) +
+              "</b> to your imported game versions, it's now available under " +
+              "<b>Modding</b> and in Create / Build.";
+          } catch (e) {
+            note.textContent = "Couldn't read that folder: " + String(e);
+          }
+          this.value = "";
+        };
+        // The step tabs themselves are the only manual navigation (jump back to
+        // any reached step).
+        document.querySelectorAll("#dl-stepper .step").forEach(function (b) {
+          b.onclick = function () {
+            dlGoStep(Number(b.dataset.step));
+          };
+        });
+        dlGoStep(1);
       }
 
       // Source-picker modal. openChooser() resolves to "imported", "folder",
@@ -2578,6 +3401,10 @@
         // Pack and Build so each feature exposes a single "choose" button.
         wireChooser();
 
+        // Download tab (Steam console copy button). The catalog itself loads
+        // lazily on first open (see showTab).
+        wireDownload();
+
         // Home: extra game versions (folder / .zip) for installing mods that
         // target a specific build. The "+" chip calls addGameVersion().
         $("ver-dir").onchange = async function () {
@@ -2607,9 +3434,6 @@
         // Adding a version reuses the shared "+" flow (ver-dir / ver-zip).
         $("btn-create").onclick = doCreate;
         renderCreateVersions();
-
-        // Pack project is desktop-only (see the note where its pane used to be);
-        // doPack / renderPackSource are kept but intentionally not wired here.
 
         // Build
         $("build-proj-dir").onchange = async function () {
@@ -2658,7 +3482,7 @@
           return;
         }
         // Read the imported game's version once (used across the tabs), and
-        // seed it as the imported version chip - the default Create selection
+        // seed it as the imported version chip: the default Create selection
         // and the default Build target.
         _importedVersion = await baseVersion(_db);
         _gameVersions.push({

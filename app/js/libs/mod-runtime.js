@@ -3090,7 +3090,7 @@ var ModRuntime = (() => {
       };
       exports2.ERRSTR = {
         PATH_STR: "path must be a string, Buffer, or Uint8Array",
-        // FD: 'file descriptor must be a unsigned 32-bit integer',
+        // FD:             'file descriptor must be a unsigned 32-bit integer',
         FD: "fd must be a file descriptor",
         MODE_INT: "mode must be an int",
         CB: "callback must be a function",
@@ -15898,7 +15898,7 @@ var ModRuntime = (() => {
           if (end - start !== size)
             throw 8;
         }
-        // One level reading, any value
+        // One level reading - any value
         decodeLevel(value) {
           this.reader.reset(value);
           return this.readLevel();
@@ -15945,7 +15945,7 @@ var ModRuntime = (() => {
           const end = reader.x;
           return new JsonPackValue_1.JsonPackValue(reader.uint8.subarray(start, end));
         }
-        // One level reading, object
+        // One level reading - object
         readObjLevel(minor) {
           const length = this.readMinorLen(minor);
           if (length >= 0)
@@ -15974,7 +15974,7 @@ var ModRuntime = (() => {
           this.reader.x++;
           return obj;
         }
-        // One level reading, array
+        // One level reading - array
         readArrLevel(minor) {
           const length = this.readMinorLen(minor);
           if (length >= 0)
@@ -62695,7 +62695,7 @@ var ModRuntime = (() => {
         Z_ERRNO: -1,
         Z_STREAM_ERROR: -2,
         Z_DATA_ERROR: -3,
-        //Z_MEM_ERROR: -4,
+        //Z_MEM_ERROR:     -4,
         Z_BUF_ERROR: -5,
         //Z_VERSION_ERROR: -6,
         /* compression levels */
@@ -62711,11 +62711,11 @@ var ModRuntime = (() => {
         /* Possible values of the data_type field (though see inflate()) */
         Z_BINARY: 0,
         Z_TEXT: 1,
-        //Z_ASCII: 1, // = Z_TEXT (deprecated)
+        //Z_ASCII:                1, // = Z_TEXT (deprecated)
         Z_UNKNOWN: 2,
         /* The deflate compression method */
         Z_DEFLATED: 8
-        //Z_NULL: null // Use -1 or null inline, depending on var type
+        //Z_NULL:                 null // Use -1 or null inline, depending on var type
       };
     }
   });
@@ -72039,6 +72039,19 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
       function unbakeAssetNames(doc) {
         transformDoc(doc, toHash);
       }
+      function unbakeMapBackground(map) {
+        if (!map || typeof map.parallaxName !== "string" || !map.parallaxName) return;
+        if (typeof map.note !== "string" || !map.note) return;
+        const ground = (map.note.match(/<ground:([^>]+)>/) || [])[1];
+        const par = (map.note.match(/<par:([^>]+)>/) || [])[1];
+        if (!ground && !par) return;
+        const g = ground ? ground.trim() : "";
+        const p = par ? par.trim() : "";
+        const synthetic = g && p ? `bg_${g}_${p}` : g || p;
+        if (map.parallaxName === synthetic) {
+          map.parallaxName = "";
+        }
+      }
       function lookupRename(rel) {
         const idx = rel.lastIndexOf("/");
         if (idx < 0) return null;
@@ -72156,6 +72169,7 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
         toHash,
         bakeAssetNames,
         unbakeAssetNames,
+        unbakeMapBackground,
         lookupRename
       };
     }
@@ -72300,14 +72314,31 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
           ...Object.keys(cld.linesLUT || {}),
           ...Object.keys(cld.labelLUT || {})
         ]);
-        return function mint() {
-          let k;
-          do {
-            k = "";
-            for (let i = 0; i < 8; i++) {
-              k += ALPHA[Math.random() * ALPHA.length | 0];
-            }
-          } while (used.has(k));
+        function hashKey(seed) {
+          let fnv = 2166136261;
+          let djb = 5381;
+          for (let i = 0; i < seed.length; i++) {
+            const c = seed.charCodeAt(i);
+            fnv = (fnv ^ c) >>> 0;
+            fnv = fnv + ((fnv << 1) + (fnv << 4) + (fnv << 7) + (fnv << 8) + (fnv << 24)) >>> 0;
+            djb = (djb << 5) + djb + c >>> 0;
+          }
+          let n = fnv * 4096 + (djb & 4095);
+          let k = "";
+          for (let i = 0; i < 8; i++) {
+            k += ALPHA[n % ALPHA.length];
+            n = Math.floor(n / ALPHA.length);
+            if (n === 0) n = djb >>> i * 4;
+          }
+          return k;
+        }
+        return function mint(seed) {
+          const base = typeof seed === "string" ? seed : "";
+          let k = hashKey(base);
+          let salt = 0;
+          while (used.has(k)) {
+            k = hashKey(base + "\0" + ++salt);
+          }
           used.add(k);
           return k;
         };
@@ -72332,7 +72363,7 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
             if (/^\(label\)\[/.test(inner)) return m;
             let key = labelRev.get(inner);
             if (key === void 0) {
-              key = mint();
+              key = mint(inner);
               cld.labelLUT[key] = inner;
               labelRev.set(inner, key);
               stats.mintedLabels++;
@@ -72357,7 +72388,7 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
           if (key !== void 0) {
             stats.restored++;
           } else {
-            key = mint();
+            key = mint(body);
             cld.linesLUT[key] = body.split("\n");
             linesRev.set(body, key);
             stats.mintedLines++;
@@ -72376,7 +72407,7 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
             stats.restored++;
             return "(lines)[" + key + "]";
           }
-          key = mint();
+          key = mint(str);
           cld.labelLUT[key] = str;
           labelRev.set(str, key);
           stats.mintedLabels++;
@@ -72567,14 +72598,22 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
       var _compositeCache = /* @__PURE__ */ new Map();
       async function compositeLayers(parallaxDir, ground, par) {
         const cv = canvas();
-        if (!cv) return null;
         const key = ground + "\0" + par;
         if (_compositeCache.has(key)) return _compositeCache.get(key);
         const groundPath = path.join(parallaxDir, ground + ".png");
         const parPath = path.join(parallaxDir, par + ".png");
-        if (!fs.existsSync(groundPath) || !fs.existsSync(parPath)) {
-          _compositeCache.set(key, null);
-          return null;
+        const haveGround = fs.existsSync(groundPath);
+        const havePar = fs.existsSync(parPath);
+        if (!cv || !haveGround || !havePar) {
+          const src = haveGround ? groundPath : havePar ? parPath : null;
+          if (!src) {
+            _compositeCache.set(key, null);
+            return null;
+          }
+          const name2 = `bg_${ground}_${par}`;
+          fs.copyFileSync(src, path.join(parallaxDir, name2 + ".png"));
+          _compositeCache.set(key, name2);
+          return name2;
         }
         const { createCanvas, loadImage } = cv;
         const [g, p] = await Promise.all([loadImage(groundPath), loadImage(parPath)]);
@@ -72949,7 +72988,7 @@ Project ready: ${path.resolve(out, "Game.rpgproject")}`);
       var path = require_path_browserify();
       var { hashPath, fileMask, walk } = require_build_tomb_mod();
       var { loadCLD, createUnbaker, serializeCLD } = require_lang_roundtrip();
-      var { unbakeAssetNames } = require_map_names();
+      var { unbakeAssetNames, unbakeMapBackground } = require_map_names();
       var ASSET_SIG = import_buffer.Buffer.from("TCOAAL");
       var STD_DATA = [
         "System",
@@ -73090,6 +73129,7 @@ Project ready: ${path.resolve(out, "Game.rpgproject")}`);
           } catch (e) {
             continue;
           }
+          unbakeMapBackground(obj);
           unbakeAssetNames(obj);
           if (ub) ub.unbakeDoc(obj);
           unbaked.set(rel, import_buffer.Buffer.from(JSON.stringify(obj)));
@@ -73326,6 +73366,31 @@ Project ready: ${path.resolve(out, "Game.rpgproject")}`);
         if (fs.existsSync(path.join(input, "www", "data"))) return path.join(input, "www");
         return input;
       }
+      function readSteamMeta(baseInput, baseWww) {
+        const candidates = [
+          path.join(baseInput, "steam.json"),
+          path.join(path.dirname(baseWww), "steam.json")
+        ];
+        for (const p of candidates) {
+          try {
+            if (fs.existsSync(p)) {
+              const o = JSON.parse(fs.readFileSync(p, "utf8"));
+              if (o && o.manifest) {
+                return {
+                  appid: String(o.appid || ""),
+                  depot: String(o.depot || ""),
+                  manifest: String(o.manifest),
+                  name: String(o.name || o.version || ""),
+                  buildid: String(o.buildid || ""),
+                  date: String(o.date || "")
+                };
+              }
+            }
+          } catch (e) {
+          }
+        }
+        return null;
+      }
       function sha256hex(buf) {
         return crypto.createHash("sha256").update(buf).digest("hex");
       }
@@ -73367,8 +73432,11 @@ Project ready: ${path.resolve(out, "Game.rpgproject")}`);
             if (!files.length) {
               fail(`Base "${label}" is identical to the edited project (no changes).`);
             }
+            const steam = readSteamMeta(baseInput, baseWww);
+            const baseMeta = { ...fp, label, extractArgs: opts.extractArgs };
+            if (steam) baseMeta.steam = steam;
             variants.push({
-              base: { ...fp, label, extractArgs: opts.extractArgs },
+              base: baseMeta,
               files,
               stats
             });
@@ -73743,6 +73811,9 @@ Easiest of all: import this .tcoaalmod directly in the BrowserPlayer loader.
           if (a === "--apply") {
             opts.mode = "apply";
             opts.modFile = argv[++i];
+          } else if (a === "--info") {
+            opts.mode = "info";
+            opts.modFile = argv[++i];
           } else if (a === "--rollback") {
             opts.mode = "rollback";
             opts.target = argv[++i];
@@ -73801,11 +73872,32 @@ Options:
 `
         );
       }
+      function modInfo(modFile) {
+        const zip = zipRead(fs.readFileSync(modFile));
+        const m = readManifest(zip);
+        return {
+          format: m.format,
+          name: m.name,
+          author: m.author || "",
+          version: m.version || "",
+          description: m.description || "",
+          created: m.created || "",
+          variants: (m.variants || []).map((v) => ({
+            label: v.base.label,
+            hash: v.base.hash,
+            fileCount: v.base.fileCount,
+            steam: v.base.steam || null
+          }))
+        };
+      }
       async function main() {
         const opts = parseArgs(import_process.default.argv.slice(2));
         if (opts.mode === "apply") {
           if (!opts.base) fail("--apply requires --base <gameFolder>.");
           await apply(opts);
+        } else if (opts.mode === "info") {
+          if (!opts.modFile) fail("--info requires a <mod.tcoaalmod>.");
+          import_process.default.stdout.write(JSON.stringify(modInfo(opts.modFile)) + "\n");
         } else if (opts.mode === "rollback") {
           if (!opts.target) fail("--rollback requires a <gameFolder>.");
           rollback(opts);
@@ -73820,6 +73912,7 @@ Options:
         build,
         apply,
         rollback,
+        modInfo,
         extractBaseline,
         packProject,
         diffProjects,

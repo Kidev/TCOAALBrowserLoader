@@ -39,7 +39,7 @@ const fs = require("fs");
 const path = require("path");
 const { hashPath, fileMask, walk } = require("./build-tomb-mod.js");
 const { loadCLD, createUnbaker, serializeCLD } = require("./lang-roundtrip.js");
-const { unbakeAssetNames } = require("./map-names.js");
+const { unbakeAssetNames, unbakeMapBackground } = require("./map-names.js");
 
 const ASSET_SIG = Buffer.from("TCOAAL");
 
@@ -225,6 +225,11 @@ function run(opts) {
     } catch (e) {
       continue; // not JSON (e.g. Credits.txt-like): leave to verbatim read
     }
+    // Clear the editor-only parallax composite name BEFORE unbakeAssetNames
+    // rewrites the note's <ground>/<par> back to hashes (the match needs the
+    // human-named note that parallaxName was built from). Otherwise the engine
+    // 404s on img/parallaxes/bg_<ground>_<par> at run time.
+    unbakeMapBackground(obj);
     unbakeAssetNames(obj);
     if (ub) ub.unbakeDoc(obj);
     unbaked.set(rel, Buffer.from(JSON.stringify(obj)));

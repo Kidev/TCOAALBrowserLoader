@@ -54,7 +54,7 @@
         margin-top: 4px;
       }
 
-      /* Tab layout - a vertical tab rail on the left, mirrors the browser
+      /* Tab layout: a vertical tab rail on the left, mirrors the browser
          Modding page. */
       .tab-layout {
         display: flex;
@@ -141,13 +141,26 @@
         letter-spacing: 0.08em;
         text-transform: uppercase;
         font-size: 0.9rem;
-        margin-bottom: 12px;
+        margin-bottom: 14px;
+      }
+      .section {
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .section-title {
+        color: var(--default);
+        opacity: 0.55;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 0.76rem;
+        margin-bottom: 10px;
       }
       label {
         display: block;
         font-size: 0.82rem;
         opacity: 0.7;
-        margin: 10px 0 4px;
+        margin: 12px 0 4px;
       }
       input[type="text"] {
         width: 100%;
@@ -215,27 +228,44 @@
       .row.center {
         justify-content: center;
       }
-      #log {
-        background: #0c0c0c;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 6px;
-        padding: 12px;
-        font-family: ui-monospace, Menlo, Consolas, monospace;
-        font-size: 0.82rem;
+      .status {
+        min-height: 1.2em;
+        font-size: 0.88rem;
+        line-height: 1.45;
+        margin-top: 14px;
         white-space: pre-wrap;
-        max-height: 240px;
-        overflow: auto;
-        color: #b8d0b0;
+        word-break: break-word;
+        opacity: 0.85;
       }
-      .ok {
+      .status:empty {
+        display: none;
+        margin-top: 0;
+      }
+      .status.ok {
         color: var(--green);
+        opacity: 1;
       }
-      .err {
+      .status.err {
         color: var(--red);
+        opacity: 1;
       }
-      .state {
-        font-size: 0.9rem;
+      .linkrow {
         margin-top: 8px;
+      }
+      .linkbtn {
+        background: none;
+        border: none;
+        color: var(--default);
+        opacity: 0.6;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 0.82rem;
+        text-decoration: underline;
+        padding: 0;
+      }
+      .linkbtn:hover {
+        opacity: 1;
+        color: var(--white);
       }
       details.vmajor {
         border: 1px solid rgba(255, 255, 255, 0.1);
@@ -278,8 +308,28 @@
         font-family: inherit;
       }
       .vmeta {
-        opacity: 0.65;
+        opacity: 0.6;
         font-size: 0.82rem;
+      }
+      .badge {
+        color: var(--green);
+        font-size: 0.78rem;
+        margin-left: 6px;
+      }
+      .dl-box {
+        margin-top: 14px;
+        padding: 14px;
+        border: 1px solid rgba(236, 131, 195, 0.4);
+        border-radius: 6px;
+        background: rgba(236, 131, 195, 0.06);
+      }
+      .dl-step {
+        font-size: 0.9rem;
+        line-height: 1.5;
+        margin-bottom: 8px;
+      }
+      .dl-step b {
+        color: var(--white);
       }
     </style>
   </head>
@@ -288,9 +338,9 @@
       <header>
         <h1>TCOAAL Mod Installer</h1>
         <div class="sub">
-          Install a community mod (.tcoaalmod) onto your own copy of the game,
-          then launch the game as usual. One mod at a time; uninstall restores
-          your game exactly. Your saves are never touched.
+          Install a mod onto your own copy of the game, then launch the game as
+          usual. One mod at a time; uninstall restores your game exactly. Your
+          saves are never touched.
         </div>
       </header>
 
@@ -298,14 +348,10 @@
         <div class="panel-title">Your game</div>
         <label>Game folder (the folder that contains www/)</label>
         <div class="field">
-          <input
-            type="text"
-            id="game"
-            placeholder="path to your installed game"
-          />
+          <input type="text" id="game" />
           <button class="btn" onclick="pickGame()">Browse</button>
         </div>
-        <div class="state" id="state"></div>
+        <div class="status" id="game-status"></div>
       </div>
 
       <div class="tab-layout">
@@ -318,143 +364,122 @@
         <div class="tab-content">
           <!-- Install a mod -->
           <section class="tabpane" id="tab-install">
-            <div class="panel" id="install-panel">
+            <div class="panel">
               <div class="panel-title">Install a mod</div>
-              <label>Mod file (.tcoaalmod)</label>
-              <div class="field">
-                <input
-                  type="text"
-                  id="mod"
-                  placeholder="the mod file you downloaded"
-                />
-                <button class="btn" onclick="pickMod()">Browse</button>
+              <div id="install-body">
+                <label>Mod file (.tcoaalmod)</label>
+                <div class="field">
+                  <input type="text" id="mod" />
+                  <button class="btn" onclick="pickMod()">Browse</button>
+                </div>
+                <div class="row center">
+                  <button
+                    class="btn primary"
+                    id="btn-install"
+                    onclick="doInstall()"
+                  >
+                    Install onto my game
+                  </button>
+                </div>
+                <div id="mod-versions"></div>
               </div>
-              <div class="row center">
-                <button
-                  class="btn primary"
-                  id="btn-install"
-                  onclick="doInstall()"
-                >
-                  Install onto my game
-                </button>
-              </div>
-              <div id="mod-versions" style="margin-top: 14px"></div>
-            </div>
-            <div class="panel" id="install-blocked" hidden>
-              <div class="panel-title">A mod is already installed</div>
-              <p class="sub">
-                One mod at a time. Switch to the <strong>Uninstall</strong> tab
-                to restore your game before installing another.
+              <p class="sub" id="install-blocked" hidden>
+                A mod is already installed. Switch to the
+                <strong>Uninstall</strong> tab to restore your game before
+                installing another.
               </p>
+              <div class="status" id="install-status"></div>
             </div>
           </section>
 
           <!-- Uninstall / restore -->
           <section class="tabpane" id="tab-uninstall" hidden>
-            <div class="panel" id="uninstall-panel">
-              <div class="panel-title">A mod is installed</div>
-              <p class="sub">
-                Uninstalling restores your game to its exact pre-mod state and
-                removes the rollback file.
-              </p>
-              <div class="row center">
-                <button
-                  class="btn danger"
-                  id="btn-uninstall"
-                  onclick="doUninstall()"
-                >
-                  Uninstall / restore game
-                </button>
+            <div class="panel">
+              <div class="panel-title">Uninstall</div>
+              <div id="uninstall-body" hidden>
+                <p class="sub">
+                  Uninstalling restores your game to its exact pre-mod state.
+                </p>
+                <div class="row center">
+                  <button
+                    class="btn danger"
+                    id="btn-uninstall"
+                    onclick="doUninstall()"
+                  >
+                    Uninstall / restore game
+                  </button>
+                </div>
               </div>
-            </div>
-            <div class="panel" id="uninstall-none" hidden>
-              <div class="panel-title">Nothing to uninstall</div>
-              <p class="sub">No mod is installed on this game.</p>
+              <p class="sub" id="uninstall-none">No mod is installed on this game.</p>
+              <div class="status" id="uninstall-status"></div>
             </div>
           </section>
 
           <!-- Steam version downloader -->
           <section class="tabpane" id="tab-steam" hidden>
             <div class="panel">
-              <div class="panel-title">Download game versions from Steam</div>
-              <p class="sub">
-                A mod supports specific game versions. If you don't have a
-                supported version, download one here - it is archived
-                permanently for this app, safe from later Steam updates.
-              </p>
-              <div id="steam-state" class="state">Checking for Steam...</div>
-            </div>
+              <div class="panel-title">Steam versions</div>
 
-            <div class="panel">
-              <div class="panel-title">Available versions</div>
-              <div class="row" style="margin-top: 0; margin-bottom: 8px">
-                <button class="btn" onclick="checkMissing()">
-                  Check for missing versions
-                </button>
-                <span class="sub" id="steam-cat-note"
-                  >Offline list. Click to pull the latest from the repo.</span
+              <div id="steam-state" class="sub">Checking for Steam...</div>
+
+              <div class="section">
+                <div
+                  class="section-title"
+                  style="display: flex; justify-content: space-between; align-items: center; gap: 8px"
                 >
+                  <span>Download a version</span>
+                  <button
+                    class="linkbtn"
+                    id="steam-refresh-btn"
+                    style="text-transform: none; letter-spacing: 0"
+                    onclick="steamRefresh()"
+                  >
+                    Refresh from GitHub
+                  </button>
+                </div>
+                <p class="sub" style="margin-bottom: 10px">
+                  A mod supports specific game versions. If you don't have one,
+                  download it here, it is kept for this app, safe from later
+                  Steam updates.
+                </p>
+                <div class="status" id="steam-refresh-status"></div>
+                <div id="steam-catalog">
+                  <span class="sub">Loading versions...</span>
+                </div>
+                <div class="dl-box" id="steam-dl" hidden>
+                  <div class="dl-step">
+                    <b>1.</b> Steam's console has opened. Paste this line into it
+                    and press Enter:
+                  </div>
+                  <div class="field">
+                    <input type="text" id="steam-cmd" readonly />
+                    <button class="btn" onclick="steamCopyCmd()">Copy</button>
+                  </div>
+                  <div class="dl-step" style="margin-top: 10px">
+                    <b>2.</b> Steam shows no progress bar. Leave this window open,
+                    the version is saved here automatically when the download
+                    finishes.
+                  </div>
+                  <div class="status" id="steam-dl-status"></div>
+                  <div class="linkrow">
+                    <button class="linkbtn" onclick="steamArchiveNow()">
+                      It already finished, save it now
+                    </button>
+                    <span style="opacity: 0.4">&nbsp;|&nbsp;</span>
+                    <button class="linkbtn" onclick="steamCancel()">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div id="steam-catalog">
-                <span class="sub">Loading catalog...</span>
-              </div>
-              <label
-                >Or download by manifest id (read it from steamdb.info)</label
-              >
-              <div class="field">
-                <input
-                  type="text"
-                  id="steam-manifest"
-                  placeholder="e.g. 7415012965776985886"
-                />
-                <button class="btn" onclick="steamDownloadManual()">
-                  Download
-                </button>
-              </div>
-            </div>
 
-            <div class="panel" id="steam-dl-panel" hidden>
-              <div class="panel-title">
-                Downloading <span id="steam-dl-name"></span>
+              <div class="section">
+                <div class="section-title">Downloaded versions</div>
+                <div id="steam-archived"></div>
               </div>
-              <p class="sub">
-                1. The Steam console was opened. Paste this command there and
-                press Enter:
-              </p>
-              <div class="field">
-                <input type="text" id="steam-cmd" readonly />
-                <button class="btn" onclick="steamCopyCmd()">Copy</button>
-              </div>
-              <p class="sub" id="steam-copy-note"></p>
-              <p class="sub">
-                2. Steam shows no progress. When it finishes, archive the
-                download:
-              </p>
-              <div class="row">
-                <button
-                  class="btn primary"
-                  id="btn-steam-wait"
-                  onclick="steamArchive(true)"
-                >
-                  Wait and archive
-                </button>
-                <button class="btn" onclick="steamArchive(false)">
-                  Archive now (already finished)
-                </button>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-title">Archived versions</div>
-              <div id="steam-archived"></div>
             </div>
           </section>
         </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-title">Output</div>
-        <div id="log">Pick your game folder to begin.</div>
       </div>
     </div>
 
@@ -492,18 +517,22 @@
         };
       });
 
-      function log(text, cls) {
-        var el = $("log");
-        el.className = cls || "";
-        el.textContent = text;
-        el.scrollTop = el.scrollHeight;
+      function setStatus(id, text, cls) {
+        var el = $(id);
+        if (!el) return;
+        el.className = "status" + (cls ? " " + cls : "");
+        el.textContent = text || "";
       }
-      function appendResult(res) {
-        var out = (res.stdout || "") + (res.stderr ? "\n" + res.stderr : "");
-        log(
-          out.trim() || (res.success ? "Done." : "Failed."),
-          res.success ? "ok" : "err",
-        );
+      function toolMessage(res) {
+        var out = ((res.stderr || "") + "\n" + (res.stdout || "")).trim();
+        if (!out) return res.success ? "Done." : "Failed.";
+        var lines = out.split("\n").filter(function (l) {
+          return l.trim();
+        });
+        return lines.slice(-5).join("\n");
+      }
+      function reportResult(id, res) {
+        setStatus(id, toolMessage(res), res.success ? "ok" : "err");
       }
 
       async function refreshState() {
@@ -515,19 +544,17 @@
           } catch (e) {}
         }
         if (!game) {
-          $("state").textContent = "";
+          setStatus("game-status", "");
         } else if (applied) {
-          $("state").innerHTML =
-            '<span class="ok">A mod is currently installed on this game.</span>';
+          setStatus("game-status", "A mod is currently installed.", "ok");
         } else {
-          $("state").innerHTML =
-            '<span class="sub">No mod installed - ready to install one.</span>';
+          setStatus("game-status", "No mod installed, ready to install one.");
         }
         // Install tab: blocked while a mod is applied.
-        $("install-panel").hidden = applied;
+        $("install-body").hidden = applied;
         $("install-blocked").hidden = !applied;
         // Uninstall tab: only actionable while a mod is applied.
-        $("uninstall-panel").hidden = !applied;
+        $("uninstall-body").hidden = !applied;
         $("uninstall-none").hidden = applied;
       }
 
@@ -553,37 +580,28 @@
       // for any that embed a manifest id.
       async function renderModVersions(modFile) {
         var box = $("mod-versions");
-        box.innerHTML =
-          '<span class="sub">Reading supported versions...</span>';
+        box.innerHTML = "";
         var info;
         try {
           info = await invoke("mod_info", { modFile: modFile });
         } catch (e) {
-          box.innerHTML = "";
           return;
         }
         var vs = info.variants || [];
-        if (!vs.length) {
-          box.innerHTML = "";
-          return;
-        }
-        var html =
-          '<div class="panel-title">Supported versions</div>' +
-          '<p class="sub">Install onto a game folder of one of these versions. ' +
-          "If you don't have one, download it from Steam:</p>";
-        box.innerHTML = html;
+        if (!vs.length) return;
+        var wrap = document.createElement("div");
+        wrap.className = "section";
+        wrap.innerHTML =
+          '<div class="section-title">Supported versions</div>' +
+          '<p class="sub" style="margin-bottom:8px">Install onto a game folder of one of these versions. ' +
+          "If you don't have one, download it from the Steam versions tab.</p>";
+        box.appendChild(wrap);
         vs.forEach(function (v) {
           var row = document.createElement("div");
           row.className = "base-item";
           var span = document.createElement("span");
           var st = v.steam;
-          span.innerHTML =
-            escapeHtml((st && st.name) || v.label) +
-            '<div class="vmeta">' +
-            (st && st.manifest
-              ? "Steam manifest " + escapeHtml(st.manifest)
-              : "no Steam manifest embedded") +
-            "</div>";
+          span.textContent = (st && st.name) || v.label;
           row.appendChild(span);
           if (st && st.manifest) {
             var btn = document.createElement("button");
@@ -601,125 +619,76 @@
             };
             row.appendChild(btn);
           }
-          box.appendChild(row);
+          wrap.appendChild(row);
         });
       }
 
       async function doInstall() {
-        if (!$("game").value) return log("Pick your game folder first.", "err");
-        if (!$("mod").value) return log("Pick a .tcoaalmod file.", "err");
+        if (!$("game").value)
+          return setStatus("install-status", "Pick your game folder first.", "err");
+        if (!$("mod").value)
+          return setStatus("install-status", "Pick a .tcoaalmod file.", "err");
         $("btn-install").disabled = true;
-        log(
-          "Installing - extracting and repacking your game, this can take a while...",
+        setStatus(
+          "install-status",
+          "Installing: extracting and repacking your game, this can take a while...",
         );
         try {
-          appendResult(
+          reportResult(
+            "install-status",
             await invoke("install_mod", {
               modFile: $("mod").value,
               game: $("game").value,
             }),
           );
         } catch (e) {
-          log(String(e), "err");
+          setStatus("install-status", String(e), "err");
         }
         $("btn-install").disabled = false;
         await refreshState();
       }
 
       async function doUninstall() {
-        if (!$("game").value) return log("Pick your game folder first.", "err");
+        if (!$("game").value)
+          return setStatus(
+            "uninstall-status",
+            "Pick your game folder first.",
+            "err",
+          );
         $("btn-uninstall").disabled = true;
-        log("Restoring your game...");
+        setStatus("uninstall-status", "Restoring your game...");
         try {
-          appendResult(
+          reportResult(
+            "uninstall-status",
             await invoke("uninstall_mod", { game: $("game").value }),
           );
         } catch (e) {
-          log(String(e), "err");
+          setStatus("uninstall-status", String(e), "err");
         }
         $("btn-uninstall").disabled = false;
         await refreshState();
       }
 
-      // Steam version downloader
+      // ===== Steam version downloader ======================================
       var _steamLoaded = false;
       var _steamSel = null;
-      var _steamInfo = null; // result of steam_detect (installed manifest/build)
+      var _steamInfo = null;
+      var _archiving = false;
 
       async function loadSteam() {
         if (_steamLoaded) return;
         _steamLoaded = true;
         try {
-          var info = await invoke("steam_detect");
-          _steamInfo = info;
-          if (!info) {
-            $("steam-state").innerHTML =
-              '<span class="err">Steam was not found on this computer.</span> Install Steam (and own the game) to download versions.';
-          } else {
-            $("steam-state").innerHTML = steamStateHtml(info);
-          }
+          _steamInfo = await invoke("steam_detect");
+          $("steam-state").innerHTML = _steamInfo
+            ? steamStateHtml(_steamInfo)
+            : '<span class="err">Steam was not found on this computer.</span> Install Steam (and own the game) to download versions.';
         } catch (e) {
           $("steam-state").innerHTML =
             '<span class="err">' + escapeHtml(String(e)) + "</span>";
         }
         await renderCatalog();
         await renderArchived();
-      }
-
-      // Two catalog sources. The app works fully offline from the bundled list
-      // (+ the locally installed version, whose manifest is known for free).
-      // The repo's latest list is pulled ONLY when the user asks ("Check for
-      // missing versions"), e.g. after not playing for a while.
-      var REMOTE_CATALOG =
-        "https://raw.githubusercontent.com/Kidev/TCOAALBrowserLoader/main/tools/tcoaal-versions.json";
-      async function bundledCatalog() {
-        try {
-          return await invoke("steam_catalog");
-        } catch (e) {
-          return null;
-        }
-      }
-      async function remoteCatalog() {
-        try {
-          var ctrl = new AbortController();
-          var t = setTimeout(function () {
-            ctrl.abort();
-          }, 8000);
-          var r = await fetch(REMOTE_CATALOG, {
-            cache: "no-store",
-            signal: ctrl.signal,
-          });
-          clearTimeout(t);
-          if (r.ok) {
-            var j = await r.json();
-            if (j && j.majors) return j;
-          }
-        } catch (e) {}
-        return null;
-      }
-      async function checkMissing() {
-        $("steam-cat-note").textContent =
-          "Pulling the latest list from the repo...";
-        var remote = await remoteCatalog();
-        if (!remote) {
-          $("steam-cat-note").innerHTML =
-            '<span class="err">Could not reach the repo. Still showing the offline list.</span>';
-          return;
-        }
-        await renderCatalog(remote);
-        $("steam-cat-note").innerHTML =
-          '<span class="ok">Up to date with the repo (plus your installed version).</span>';
-      }
-
-      function catalogMaxBuild(cat) {
-        var max = 0;
-        (cat.majors || []).forEach(function (mj) {
-          (mj.versions || []).forEach(function (v) {
-            var b = Number(v.buildid) || 0;
-            if (b > max) max = b;
-          });
-        });
-        return max;
       }
 
       function isOutdated(info) {
@@ -732,42 +701,19 @@
       }
 
       function steamStateHtml(info) {
-        var parts = [
-          '<span class="ok">Steam found</span> at ' +
-            escapeHtml(info.root) +
-            ".",
-        ];
+        if (info.installed_manifest && isOutdated(info)) {
+          return '<span class="ok">Steam found.</span> Your installed game is an older version: the latest is shown below and can be downloaded.';
+        }
         if (info.installed_manifest) {
-          parts.push(
-            " Installed build " +
-              escapeHtml(info.installed_buildid || "?") +
-              ".",
-          );
+          return '<span class="ok">Steam found.</span> Your installed game is up to date.';
         }
-        if (info.latest_buildid) {
-          parts.push(
-            isOutdated(info)
-              ? ' <span class="err">A newer version is available (build ' +
-                  escapeHtml(info.latest_buildid) +
-                  ") - update via Steam, or download it below.</span>"
-              : ' <span class="sub">Latest available build ' +
-                  escapeHtml(info.latest_buildid) +
-                  ".</span>",
-          );
-        }
-        return parts.join("");
+        return '<span class="ok">Steam found.</span> Pick a version below to download.';
       }
 
-      // Fold the local Steam facts into the catalog view. Both the installed and
-      // the latest-available manifests are known for free (appmanifest +
-      // appinfo cache), so they are usable even before the shared catalog lists
-      // them. A higher build id than the catalog = a new release.
       function withLocalVersions(cat) {
         var info = _steamInfo;
-        if (!info) return { cat: cat, newRelease: false, outdated: false };
-        var maxB = catalogMaxBuild(cat);
+        if (!info) return cat;
         var extra = [];
-
         function fold(manifest, buildid, baseName, flag) {
           if (!manifest) return;
           var seen = false;
@@ -780,8 +726,6 @@
             });
           });
           if (seen) return;
-          var b = Number(buildid) || 0;
-          var isNew = flag === "_latest" && !!(b && maxB && b > maxB);
           var e = {
             name: baseName,
             version: "",
@@ -790,52 +734,65 @@
             manifest: manifest,
           };
           e[flag] = true;
-          e._new = isNew;
           extra.push(e);
         }
-
-        fold(
-          info.latest_manifest,
-          info.latest_buildid,
-          "Latest available",
-          "_latest",
-        );
-        if (info.installed_manifest !== info.latest_manifest) {
+        fold(info.latest_manifest, info.latest_buildid, "Latest version", "_latest");
+        if (info.installed_manifest !== info.latest_manifest)
           fold(
             info.installed_manifest,
             info.installed_buildid,
-            "Currently installed",
+            "Your installed version",
             "_installed",
           );
-        }
-
-        var newRelease = extra.some(function (e) {
-          return e._new;
-        });
-        var outdated = isOutdated(info);
-        if (!extra.length)
-          return { cat: cat, newRelease: newRelease, outdated: outdated };
-        var merged = {
+        if (!extra.length) return cat;
+        return {
           majors: [
-            {
-              major: "steam",
-              label: "From your Steam client",
-              versions: extra,
-            },
+            { major: "Latest", label: "from your Steam", versions: extra },
           ].concat(cat.majors || []),
         };
-        return { cat: merged, newRelease: newRelease, outdated: outdated };
       }
 
-      async function renderCatalog(catOverride) {
+      async function bundledCatalog() {
+        try {
+          return await invoke("steam_catalog");
+        } catch (e) {
+          return null;
+        }
+      }
+
+      // Manual refresh: pull the maintained catalog from GitHub and merge in the
+      // installed game + archived versions, then re-render. The result is cached
+      // (shared by both apps) and used in place of the build-time bundled copy.
+      async function steamRefresh() {
+        var btn = $("steam-refresh-btn");
+        if (btn.disabled) return;
+        var prev = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Refreshing...";
+        setStatus(
+          "steam-refresh-status",
+          "Pulling the latest version list from GitHub...",
+        );
+        try {
+          var res = await invoke("steam_refresh", { remote: true });
+          await renderCatalog();
+          if (res && res.note) setStatus("steam-refresh-status", res.note, "err");
+          else setStatus("steam-refresh-status", "Version list updated.", "ok");
+        } catch (e) {
+          setStatus("steam-refresh-status", "Refresh failed: " + String(e), "err");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = prev;
+        }
+      }
+
+      async function renderCatalog() {
         var box = $("steam-catalog");
-        var cat = catOverride || (await bundledCatalog());
+        var cat = await bundledCatalog();
         if (!cat || !cat.majors) cat = { majors: [] };
-        var merged = withLocalVersions(cat);
-        cat = merged.cat;
+        cat = withLocalVersions(cat);
         if (!cat.majors.length) {
-          box.innerHTML =
-            '<span class="sub">No catalog available. Use the manifest id field below.</span>';
+          box.innerHTML = '<span class="sub">No versions available.</span>';
           return;
         }
         box.innerHTML = "";
@@ -845,7 +802,7 @@
           if (mi === 0) det.open = true;
           var sum = document.createElement("summary");
           sum.textContent =
-            (mj.major || "?") + (mj.label ? " - " + mj.label : "");
+            (mj.major || "?") + (mj.label ? ": " + mj.label : "");
           det.appendChild(sum);
           (mj.versions || []).forEach(function (v) {
             var row = document.createElement("div");
@@ -853,17 +810,11 @@
             var left = document.createElement("div");
             left.innerHTML =
               escapeHtml(v.name || v.version || "version") +
-              (v._latest ? ' <span class="ok">(latest)</span>' : "") +
-              (v._installed ? ' <span class="ok">(installed)</span>' : "") +
-              (v._new ? ' <span class="ok">new</span>' : "") +
-              '<div class="vmeta">' +
-              (v.version ? "v" + escapeHtml(v.version) + " " : "") +
-              (v.date ? escapeHtml(v.date) + " " : "") +
-              (v.buildid ? "build " + escapeHtml(v.buildid) + " " : "") +
-              (v.manifest
-                ? "manifest " + escapeHtml(v.manifest)
-                : '<span class="err">manifest unknown</span>') +
-              "</div>";
+              (v._latest ? '<span class="badge">latest</span>' : "") +
+              (v._installed ? '<span class="badge">installed</span>' : "") +
+              (v.date
+                ? '<div class="vmeta">' + escapeHtml(v.date) + "</div>"
+                : "");
             var btn = document.createElement("button");
             btn.className = "btn primary";
             btn.textContent = "Download";
@@ -883,78 +834,65 @@
           });
           box.appendChild(det);
         });
-        if (merged.outdated) {
-          var w = document.createElement("p");
-          w.className = "sub";
-          w.style.marginTop = "8px";
-          w.innerHTML =
-            '<span class="err">Your installed game is outdated.</span> The latest available version is shown above (build ' +
-            escapeHtml((_steamInfo && _steamInfo.latest_buildid) || "?") +
-            ") - update it in Steam, or download it here.";
-          box.appendChild(w);
-        }
-        if (merged.newRelease) {
-          var note = document.createElement("p");
-          note.className = "sub";
-          note.style.marginTop = "8px";
-          note.innerHTML =
-            "Your Steam shows a version newer than the shared catalog - it works here already.";
-          box.appendChild(note);
-        }
-      }
-
-      function steamDownloadManual() {
-        var m = $("steam-manifest").value.trim();
-        if (!m) return log("Enter a manifest id.", "err");
-        steamStart({
-          manifest: m,
-          name: m,
-          version: "",
-          buildid: "",
-          date: "",
-        });
       }
 
       async function steamStart(sel) {
+        if (_archiving) return;
         _steamSel = sel;
         showTab("steam");
         try {
           var res = await invoke("steam_start", { manifest: sel.manifest });
-          $("steam-dl-name").textContent = sel.name ? "- " + sel.name : "";
           $("steam-cmd").value = res.command;
-          $("steam-dl-panel").hidden = false;
-          $("steam-copy-note").textContent = "";
-          steamCopyCmd();
-          log(
-            "Steam console opened. Paste the command shown in the Steam tab and press Enter.",
-            "ok",
-          );
+          $("steam-dl").hidden = false;
+          $("steam-dl").scrollIntoView({ behavior: "smooth", block: "nearest" });
+          await steamCopyCmd();
+          steamArchive(true);
         } catch (e) {
-          log(String(e), "err");
+          setStatus("steam-dl-status", String(e), "err");
+          $("steam-dl").hidden = false;
         }
       }
 
       async function steamCopyCmd() {
+        var ok = false;
         try {
           await navigator.clipboard.writeText($("steam-cmd").value);
-          $("steam-copy-note").innerHTML =
-            '<span class="ok">Command copied to clipboard.</span>';
-        } catch (e) {
+          ok = true;
+        } catch (e) {}
+        if (!ok) {
           var el = $("steam-cmd");
           el.focus();
           el.select();
-          $("steam-copy-note").textContent =
-            "Select the command above and copy it (Ctrl+C).";
+          try {
+            ok = document.execCommand("copy");
+          } catch (e2) {}
         }
+        setStatus(
+          "steam-dl-status",
+          ok
+            ? "Command copied. Paste it into the Steam console and press Enter, then wait..."
+            : "Select the command above and copy it (Ctrl+C), paste it into Steam, then wait...",
+          "",
+        );
+      }
+
+      function steamArchiveNow() {
+        steamArchive(false);
+      }
+      function steamCancel() {
+        $("steam-dl").hidden = true;
+        setStatus("steam-dl-status", "");
+        _steamSel = null;
       }
 
       async function steamArchive(wait) {
-        if (!_steamSel) return;
-        $("btn-steam-wait").disabled = true;
-        log(
+        if (!_steamSel || _archiving) return;
+        _archiving = true;
+        setStatus(
+          "steam-dl-status",
           wait
-            ? "Waiting for the Steam download to finish, then archiving..."
-            : "Archiving the downloaded version...",
+            ? "Waiting for the Steam download to finish, then saving..."
+            : "Saving the downloaded version...",
         );
         try {
           var v = await invoke("steam_finish", {
@@ -965,20 +903,14 @@
             date: _steamSel.date,
             wait: !!wait,
           });
-          log(
-            "Archived version: " +
-              v.name +
-              " (" +
-              v.path +
-              "). Point 'Your game' at it to install onto it.",
-            "ok",
-          );
-          $("steam-dl-panel").hidden = true;
+          $("steam-dl").hidden = true;
+          _steamSel = null;
           await renderArchived();
+          setStatus("steam-dl-status", "");
         } catch (e) {
-          log(String(e), "err");
+          setStatus("steam-dl-status", String(e), "err");
         }
-        $("btn-steam-wait").disabled = false;
+        _archiving = false;
       }
 
       async function renderArchived() {
@@ -988,7 +920,8 @@
           list = await invoke("steam_archived");
         } catch (e) {}
         if (!list.length) {
-          box.innerHTML = '<span class="sub">No versions archived yet.</span>';
+          box.innerHTML =
+            '<span class="sub">No versions downloaded yet.</span>';
           return;
         }
         box.innerHTML = "";
@@ -996,11 +929,7 @@
           var row = document.createElement("div");
           row.className = "base-item";
           var span = document.createElement("span");
-          span.innerHTML =
-            escapeHtml(v.name) +
-            '<div class="vmeta">' +
-            escapeHtml(v.path) +
-            "</div>";
+          span.textContent = v.name;
           var actions = document.createElement("span");
           var useBtn = document.createElement("button");
           useBtn.className = "link";
@@ -1010,7 +939,6 @@
             $("game").value = v.path;
             showTab("install");
             refreshState();
-            log('Set game folder to archived version "' + v.name + '".', "ok");
           };
           var rm = document.createElement("button");
           rm.className = "link";
@@ -1019,9 +947,7 @@
             try {
               await invoke("steam_remove_archived", { key: v.key });
               await renderArchived();
-            } catch (e) {
-              log(String(e), "err");
-            }
+            } catch (e) {}
           };
           actions.appendChild(useBtn);
           actions.appendChild(document.createTextNode("  "));

@@ -246,7 +246,17 @@ const TEXT_GROUPS = {
 };
 
 /** Mint short CLD keys in the existing 8-char base62 style, unique within the
- *  CLD (and across this un-bake run). */
+ *  CLD (and across this un-bake run).
+ *
+ *  DETERMINISTIC: the key is derived from the text it labels (not Math.random),
+ *  so the same edited/new line always mints the same key. This matters for
+ *  share-project/applyTcoaalmod, which un-bake the pristine baseline and the
+ *  modded project independently and then DIFF the two packs: with random keys,
+ *  every edge-case mint differs between the two packs, so unchanged files (and
+ *  the whole CLD) churn into the overlay and the content-hash mod tag is
+ *  unstable (a re-import gets a new tag -> save isolation breaks). Deriving the
+ *  key from content makes the baseline's and the mod's mints identical for
+ *  identical text, so they cancel and the overlay carries only real edits. */
 function makeMinter(cld) {
   const ALPHA =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -254,14 +264,37 @@ function makeMinter(cld) {
     ...Object.keys(cld.linesLUT || {}),
     ...Object.keys(cld.labelLUT || {}),
   ]);
-  return function mint() {
-    let k;
-    do {
-      k = "";
-      for (let i = 0; i < 8; i++) {
-        k += ALPHA[(Math.random() * ALPHA.length) | 0];
-      }
-    } while (used.has(k));
+  // Two independent 32-bit string hashes (FNV-1a + djb2) give ~64 bits of
+  // entropy, base62-encoded to 8 chars. Pure JS so it runs identically under
+  // Node and the esbuild browser bundle (no crypto dependency).
+  function hashKey(seed) {
+    let fnv = 0x811c9dc5;
+    let djb = 5381;
+    for (let i = 0; i < seed.length; i++) {
+      const c = seed.charCodeAt(i);
+      fnv = (fnv ^ c) >>> 0;
+      fnv = (fnv + ((fnv << 1) + (fnv << 4) + (fnv << 7) + (fnv << 8) + (fnv << 24))) >>> 0;
+      djb = ((djb << 5) + djb + c) >>> 0;
+    }
+    // Mix the two 32-bit words into one 53-bit-safe integer, then base62 it.
+    let n = fnv * 4096 + (djb & 0xfff); // keep within Number's exact range
+    let k = "";
+    for (let i = 0; i < 8; i++) {
+      k += ALPHA[n % ALPHA.length];
+      n = Math.floor(n / ALPHA.length);
+      if (n === 0) n = djb >>> (i * 4); // pull in more djb bits to fill 8 chars
+    }
+    return k;
+  }
+  return function mint(seed) {
+    // `seed` is the value being keyed (line body / speaker name / choice text).
+    // Salt deterministically on collision so the result stays reproducible.
+    const base = typeof seed === "string" ? seed : "";
+    let k = hashKey(base);
+    let salt = 0;
+    while (used.has(k)) {
+      k = hashKey(base + " " + ++salt);
+    }
     used.add(k);
     return k;
   };
@@ -302,7 +335,7 @@ function createUnbaker(cld) {
       if (/^\(label\)\[/.test(inner)) return m; // already a placeholder (no-bake)
       let key = labelRev.get(inner);
       if (key === undefined) {
-        key = mint();
+        key = mint(inner);
         cld.labelLUT[key] = inner;
         labelRev.set(inner, key);
         stats.mintedLabels++;
@@ -337,7 +370,7 @@ function createUnbaker(cld) {
     } else {
       // Edited or brand-new dialogue: mint a key. Split on "\n" so multi-line
       // authored text becomes one segment per line, matching shipped shape.
-      key = mint();
+      key = mint(body);
       cld.linesLUT[key] = body.split("\n");
       linesRev.set(body, key);
       stats.mintedLines++;
@@ -362,7 +395,7 @@ function createUnbaker(cld) {
       stats.restored++;
       return "(lines)[" + key + "]";
     }
-    key = mint();
+    key = mint(str);
     cld.labelLUT[key] = str;
     labelRev.set(str, key);
     stats.mintedLabels++;

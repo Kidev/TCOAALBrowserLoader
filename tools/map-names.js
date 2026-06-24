@@ -250,6 +250,35 @@ function unbakeAssetNames(doc) {
   transformDoc(doc, toHash);
 }
 
+// Reverse of extract-project's setMapBackground. extract points an otherwise
+// empty parallaxName at an editor-only composite ("bg_<ground>_<par>", or a
+// single <ground>/<par> layer) so the editor map view shows the background. The
+// shipped game keeps parallaxName "" and draws the background from the map note
+// via the OrangeOverlay plugin - so packing back MUST clear that synthetic name,
+// otherwise the engine requests img/parallaxes/bg_<ground>_<par> at run time and
+// 404s (the composite is never shipped).
+//
+// Only clears when parallaxName is EXACTLY the value extract would have minted
+// from this same map's note (so an author-set parallax is left untouched), and
+// must run BEFORE unbakeAssetNames (which rewrites the note's <ground>/<par> back
+// to hashes) so the note values still match the human-named parallaxName.
+function unbakeMapBackground(map) {
+  if (!map || typeof map.parallaxName !== "string" || !map.parallaxName) return;
+  if (typeof map.note !== "string" || !map.note) return;
+  const ground = (map.note.match(/<ground:([^>]+)>/) || [])[1];
+  const par = (map.note.match(/<par:([^>]+)>/) || [])[1];
+  if (!ground && !par) return;
+  const g = ground ? ground.trim() : "";
+  const p = par ? par.trim() : "";
+  const synthetic = g && p ? `bg_${g}_${p}` : g || p;
+  if (map.parallaxName === synthetic) {
+    map.parallaxName = "";
+    // The remaining parallax* fields are inert once the name is empty (MV draws
+    // no parallax without a name), so leaving them is harmless and keeps the
+    // diff minimal.
+  }
+}
+
 // For extract-project's file walk: given an on-disk relative path
 // (e.g. "img/faces/e916...[BUST]"), return { dir, stem } when the asset has a
 // known name, else null. The caller appends the extension.
@@ -407,5 +436,6 @@ module.exports = {
   toHash,
   bakeAssetNames,
   unbakeAssetNames,
+  unbakeMapBackground,
   lookupRename,
 };

@@ -347,6 +347,26 @@
   // up the durable copy independently of whether the SW intercepted.
   var MODS_JSON_IDB_KEY = "__shell:mods.json__";
 
+  // Assets DB access constants (shared 'tcoaal' IDB for game + mod files).
+  // These MUST be assigned here, ABOVE the loadModsData()/loadImportedMods()
+  // calls below, because both reach openAssetsDb() during the synchronous IIFE
+  // run. If they were declared after those calls, `var` hoisting would leave
+  // ASSETS_DB_NAME undefined at the first openAssetsDb(): indexedDB.open(
+  // undefined) then opens a database named "undefined" and caches that wrong
+  // connection in _assetsDb for the whole session, so every registry/save read
+  // returns null and user-imported mods never show up in the Mods menu.
+  var ASSETS_DB_NAME = "tcoaal";
+  var ASSETS_DB_VERSION = 1;
+  var ASSETS_STORE = "assets";
+  var _assetsDb = null;
+
+  // One-time cleanup: earlier builds called openAssetsDb() before ASSETS_DB_NAME
+  // was assigned, which created a stray database literally named "undefined".
+  // Drop it so it stops showing up in DevTools; a no-op when it isn't there.
+  try {
+    indexedDB.deleteDatabase("undefined");
+  } catch (e) {}
+
   function persistModsJsonToIdb(text) {
     if (!text || typeof text !== "string") return;
     openAssetsDb(function (db) {
@@ -474,12 +494,59 @@
     return _modsData[modKey] || null;
   }
 
+  // Default Mods-menu icon URL for a created/imported mod: the game's
+  // img/titles1/Book.png, resolved per-mod by the service worker so a mod that
+  // ships its own Book.png shows it, otherwise the base game's version. The SW
+  // route (sw.js serveModMenuIcon) handles the mod-own-vs-base fallback.
+  function importedModIconUrl(tag) {
+    return "__mod-icon__/" + tag + "/img/titles1/Book.png";
+  }
+
+  /**
+   * Scan __mod_meta__:* entries flagged imported:true. Used to self-heal the
+   * Mods list: any created mod whose files+meta are in IDB but which the
+   * __imported_mods__ registry doesn't list (a registry write that didn't
+   * land, or an install from an older build) is still surfaced. Keyed by tag.
+   */
+  function scanImportedMeta(db, cb) {
+    var out = {};
+    try {
+      var tx = db.transaction(ASSETS_STORE, "readonly");
+      var store = tx.objectStore(ASSETS_STORE);
+      var prefix = "__mod_meta__:";
+      var range = IDBKeyRange.bound(prefix, prefix + "\uffff");
+      var cur = store.openCursor(range);
+      cur.onsuccess = function (e) {
+        var c = e.target.result;
+        if (c) {
+          try {
+            var meta =
+              typeof c.value === "string" ? JSON.parse(c.value) : c.value;
+            if (meta && meta.imported) {
+              out[String(c.key).substring(prefix.length)] = meta;
+            }
+          } catch (e2) {}
+          c.continue();
+        } else {
+          cb(out);
+        }
+      };
+      cur.onerror = function () {
+        cb(out);
+      };
+    } catch (e) {
+      cb(out);
+    }
+  }
+
   /**
    * Merge user-imported mods (modding.html, key __imported_mods__) into
    * _modsData as already-installed overhaul entries, so they show up in the
    * Mods menu. Their files are already in IDB under mod:{tag}:..., so there is
    * no remote path/file-list to fetch (path:"" / files:[]). Async (IDB), but it
    * resolves long before the player can open the Mods menu; harmless if empty.
+   * The __mod_meta__ scan self-heals entries missing from the registry, and
+   * every imported mod defaults to the Book.png Mods-menu icon.
    */
   function loadImportedMods(cb) {
     openAssetsDb(function (db) {
@@ -488,33 +555,51 @@
         return;
       }
       getAssetMain(db, IMPORTED_MODS_KEY, function (raw) {
+        var reg = {};
         try {
-          var reg = raw
+          var parsed = raw
             ? typeof raw === "string"
               ? JSON.parse(raw)
               : raw
             : null;
-          if (reg && typeof reg === "object") {
-            _importedMods = reg;
-            if (!_modsData) _modsData = {};
-            Object.keys(reg).forEach(function (tag) {
-              var m = reg[tag] || {};
-              _modsData[tag] = {
-                name: m.name || tag,
-                author: m.author || "",
-                version: m.version || "",
-                description: m.description || "",
-                type: m.type || MOD_TYPE_OVERHAUL,
-                icon: m.icon || "",
-                imported: true,
-                addedDate: m.addedDate || "",
-                path: "", // already in IDB; nothing to fetch
-                files: [],
-              };
-            });
-          }
+          if (parsed && typeof parsed === "object") reg = parsed;
         } catch (e) {}
-        if (cb) cb();
+        scanImportedMeta(db, function (metaMap) {
+          // Backfill any imported mod present in IDB but absent from the
+          // registry, reconstructing display metadata from __mod_meta__.
+          Object.keys(metaMap).forEach(function (tag) {
+            if (reg[tag]) return;
+            var meta = metaMap[tag] || {};
+            reg[tag] = {
+              name: meta.name || tag,
+              author: meta.author || "",
+              version: meta.version || "",
+              description: meta.description || "",
+              baseLabel: meta.baseLabel || "",
+              type: meta.type || MOD_TYPE_OVERHAUL,
+              imported: true,
+              addedDate: meta.addedDate || meta.date || "",
+            };
+          });
+          _importedMods = reg;
+          if (!_modsData) _modsData = {};
+          Object.keys(reg).forEach(function (tag) {
+            var m = reg[tag] || {};
+            _modsData[tag] = {
+              name: m.name || tag,
+              author: m.author || "",
+              version: m.version || "",
+              description: m.description || "",
+              type: m.type || MOD_TYPE_OVERHAUL,
+              icon: m.icon || importedModIconUrl(tag),
+              imported: true,
+              addedDate: m.addedDate || "",
+              path: "", // already in IDB; nothing to fetch
+              files: [],
+            };
+          });
+          if (cb) cb();
+        });
       });
     });
   }
@@ -757,12 +842,14 @@
     }, 50);
   }
 
-  // Assets DB access (shared f'tcoaal' IDB for game + mod files)
-
-  var ASSETS_DB_NAME = "tcoaal";
-  var ASSETS_DB_VERSION = 1;
-  var ASSETS_STORE = "assets";
-  var _assetsDb = null;
+  // Assets DB access (shared 'tcoaal' IDB for game + mod files).
+  // NOTE: the constants ASSETS_DB_NAME / ASSETS_DB_VERSION / ASSETS_STORE and
+  // _assetsDb are declared near the top of the IIFE (before loadModsData /
+  // loadImportedMods run), NOT here. They MUST be assigned before the first
+  // openAssetsDb() call: otherwise `var` hoisting leaves ASSETS_DB_NAME
+  // undefined at that call, indexedDB.open(undefined) opens a database literally
+  // named "undefined", and that wrong connection gets cached in _assetsDb for
+  // the whole session (every read returns null -> imported mods never appear).
 
   function openAssetsDb(callback) {
     if (_assetsDb) {
@@ -2033,9 +2120,14 @@
           if (_importedMods && _importedMods[modId]) {
             delete _importedMods[modId];
             if (_modsData) delete _modsData[modId];
-            putAsset(db, IMPORTED_MODS_KEY, JSON.stringify(_importedMods), function () {
-              if (callback) callback(null, count);
-            });
+            putAsset(
+              db,
+              IMPORTED_MODS_KEY,
+              JSON.stringify(_importedMods),
+              function () {
+                if (callback) callback(null, count);
+              },
+            );
           } else if (callback) {
             callback(null, count);
           }
@@ -5067,9 +5159,19 @@
       try {
         document.body.classList.add("mods-scene-active");
       } catch (e) {}
-      fetchAllModStatus(function () {
-        if (self._listWindow) self._listWindow.refresh();
-        if (self._activeModWindow) self._activeModWindow.refresh();
+      // Re-read user-imported mods (installed via modding.html, possibly while
+      // this game tab was already open) before resolving install status, so a
+      // freshly created mod appears without a full page reload. The boot-time
+      // loadImportedMods only ran once; modding.html, by contrast, re-reads the
+      // registry on every render, which is why it always shows the mod.
+      loadImportedMods(function () {
+        if (self._listWindow && self._listWindow.rebuild) {
+          self._listWindow.rebuild();
+        }
+        fetchAllModStatus(function () {
+          if (self._listWindow) self._listWindow.refresh();
+          if (self._activeModWindow) self._activeModWindow.refresh();
+        });
       });
     };
 
@@ -6025,6 +6127,31 @@
       }
     };
 
+    // Rebuild the row models from the current _modsData. Called when the Mods
+    // scene opens after re-reading user-imported mods, so a mod installed via
+    // modding.html while this game tab was already open (no page reload) shows
+    // up without restarting the game. Mirrors the filter in initialize (the
+    // active overhaul/translation lives in the pin, not the list).
+    Window_ModList.prototype.rebuild = function () {
+      var am = getActiveMod();
+      var prevLen = this._mods ? this._mods.length : 0;
+      this._mods = getModList().filter(function (m) {
+        return !(am && m.key === am && !isPluginType(m.type));
+      });
+      this._iconBitmaps = {};
+      this._loadIcons();
+      if (this.index() >= this._mods.length) {
+        this.select(this._mods.length > 0 ? this._mods.length - 1 : -1);
+      }
+      this.refresh();
+      // Nothing was selectable before (empty list handed focus to the pin);
+      // now that rows exist, take focus so the new mod is reachable.
+      if (prevLen === 0 && this._mods.length > 0 && !this.active) {
+        this.select(0);
+        this.activate();
+      }
+    };
+
     Window_ModList.prototype._loadIcons = function () {
       var self = this;
       for (var i = 0; i < this._mods.length; i++) {
@@ -6858,4 +6985,42 @@
   })();
 
   window.__langShimHookBoot = hookSceneBoot;
+
+  // Diagnostic: read the imported-mods registry through lang-shim's OWN
+  // openAssetsDb/getAssetMain path and report alongside the in-memory
+  // _modsData keys, so a "modding.html shows it but the game doesn't" report
+  // can be pinpointed (read discrepancy vs merge vs render). Also force a
+  // re-merge so calling it can repair a stale list on the spot.
+  window.__langShimDebugMods = function (cb) {
+    openAssetsDb(function (db) {
+      var out = {
+        dbConnection: !!db,
+        modsDataKeysBefore: _modsData ? Object.keys(_modsData) : null,
+      };
+      if (!db) {
+        console.log("[langShimDebug] openAssetsDb returned NO db", out);
+        if (cb) cb(out);
+        return;
+      }
+      getAssetMain(db, IMPORTED_MODS_KEY, function (raw) {
+        out.registryViaLangShim = raw || null;
+        loadImportedMods(function () {
+          out.modsDataKeysAfter = _modsData ? Object.keys(_modsData) : null;
+          console.log(
+            "[langShimDebug] registry via lang-shim:",
+            out.registryViaLangShim,
+          );
+          console.log(
+            "[langShimDebug] _modsData BEFORE re-merge:",
+            out.modsDataKeysBefore,
+          );
+          console.log(
+            "[langShimDebug] _modsData AFTER re-merge:",
+            out.modsDataKeysAfter,
+          );
+          if (cb) cb(out);
+        });
+      });
+    });
+  };
 })();

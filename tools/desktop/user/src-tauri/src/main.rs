@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //
-// TCOAAL Mod Installer - thin Tauri GUI over share-project.js:
+// TCOAAL Mod Installer: thin Tauri GUI over share-project.js:
 //   install    -> apply a .tcoaalmod in place onto the game folder
 //   uninstall  -> roll the applied mod back (restores the exact pre-mod state)
 // One mod at a time: share-project refuses a second in-place apply until the
@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 use tcoaal_desktop_core::{
-    find_steam, list_archived, load_catalog, remove_archived, resolve_resource_dir, run_tool,
-    shared_data_dir, steam_finish_download, steam_start_download, ArchivedVersion, DownloadStart,
-    SteamInfo, ToolResult,
+    find_steam, list_archived, load_catalog, refresh_catalog, remove_archived,
+    resolve_resource_dir, run_tool, shared_data_dir, steam_finish_download, steam_start_download,
+    ArchivedVersion, CatalogRefresh, DownloadStart, SteamInfo, ToolResult,
 };
 
 fn resource_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -87,6 +87,17 @@ fn steam_catalog(app: AppHandle) -> Result<serde_json::Value, String> {
     Ok(load_catalog(&dir))
 }
 
+// Pull the maintained catalog from GitHub (best-effort) and merge the installed
+// game + archived versions into the shared cache. Blocking (network), so it runs
+// off the main thread.
+#[tauri::command]
+async fn steam_refresh(app: AppHandle, remote: bool) -> Result<CatalogRefresh, String> {
+    let dir = resource_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || refresh_catalog(&dir, remote))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn steam_archived() -> Vec<ArchivedVersion> {
     list_archived(&shared_data_dir())
@@ -131,6 +142,7 @@ fn main() {
             mod_info,
             steam_detect,
             steam_catalog,
+            steam_refresh,
             steam_archived,
             steam_remove_archived,
             steam_start,
