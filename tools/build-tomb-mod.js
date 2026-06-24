@@ -1552,12 +1552,14 @@ async function build(opts) {
 
   if (failures.length && !opts.force) {
     reportFailures(failures);
-    console.error(
-      "\nAborting without writing. The --base game likely does not match the\n" +
-        "version this mod targets. Point --base at the correct version (old_game\n" +
-        "for Side Dishes), or pass --force to write what succeeds.",
+    // Throw (not process.exit) so library callers - the in-browser/desktop mod
+    // runtime - fail loudly without writing a partial www; the CLI's main()
+    // catch turns this back into an exit(1).
+    throw new Error(
+      "Aborting without writing. The base game likely does not match the " +
+        "version this mod targets. Point the base at the correct version " +
+        "(old_game for Side Dishes), or pass --force to write what succeeds.",
     );
-    process.exit(1);
   }
 
   // Phase 1: base game (only in full mode).
@@ -1976,6 +1978,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  build,
+  parseArgs,
   canvas,
   hashPath,
   fileMask,

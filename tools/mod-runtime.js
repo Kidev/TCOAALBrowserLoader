@@ -31,7 +31,7 @@
 const { vol } = require("memfs");
 const crypto = require("crypto");
 const share = require("./share-project.js");
-const { walk } = require("./build-tomb-mod.js");
+const { walk, hashPath, dekit } = require("./build-tomb-mod.js");
 
 // Make logging safe under the browser process polyfill (some builds leave
 // process.stdout undefined). Routes the tools' progress writes to console.
@@ -140,6 +140,78 @@ async function applyTcoaalmod(baseFiles, modBytes) {
 }
 
 /**
+ * Build a Tomb-format mod into a self-contained overhaul against an older base
+ * game (the in-browser equivalent of `build-tomb-mod --diff <mod> --base <2.0.14>`).
+ *
+ * Tomb mods describe their changes as a `mod.json` manifest (dataDeltas, assets,
+ * imageDeltas, languages, plugins) that cannot be applied live; we flatten them
+ * offline into a plain `www/` and ship that whole tree as an overhaul overlay.
+ *
+ * @param {Object<string,Uint8Array>} baseFiles  the base game www (shipped form,
+ *        keyed by relative path) the mod targets - must be the version the mod
+ *        was made for (TCOAAL 2.0.14), or build() throws on the patch mismatch.
+ * @param {Uint8Array} modBytes  the Tomb mod's .zip bytes (carries mod.json).
+ * @returns {Promise<{tag,name,files}>}  `files` is the flattened www to store as
+ *          mod:{tag}:{relPath}.
+ */
+async function buildTomb(baseFiles, modBytes) {
+  ensureStdio();
+  vol.reset();
+  try {
+    const path = require("path");
+    for (const rel of Object.keys(baseFiles)) {
+      writeMem("/base/www/" + rel, baseFiles[rel]);
+    }
+
+    // Unpack the mod .zip, anchoring /diff at the directory that holds mod.json
+    // (the archive may wrap the mod in a top-level folder, with or without a
+    // www/ subdir - assembleMod resolves www/ from there).
+    const zip = share.zipRead(Buffer.from(modBytes));
+    let modJsonRel = null;
+    for (const [name] of zip) {
+      if (/(^|\/)mod\.json$/.test(name)) {
+        if (modJsonRel === null || name.length < modJsonRel.length) {
+          modJsonRel = name;
+        }
+      }
+    }
+    if (modJsonRel === null) {
+      throw new Error("Not a Tomb mod: no mod.json found in the archive.");
+    }
+    const diffPrefix = modJsonRel.replace(/mod\.json$/, ""); // "" or "wrapper/"
+    for (const [name, data] of zip) {
+      if (name.endsWith("/")) continue;
+      writeMem("/diff/" + name, data);
+    }
+
+    const { build } = require("./build-tomb-mod.js");
+    await build({
+      diff: ("/diff/" + diffPrefix).replace(/\/+$/, ""),
+      base: "/base",
+      out: "/out",
+      overlays: [],
+      thin: false,
+      force: false,
+      pretty: false,
+    });
+
+    const outWww = "/out/www";
+    const files = {};
+    for (const rel of walk(outWww)) {
+      files[rel.split(path.sep).join("/")] = new Uint8Array(
+        vol.readFileSync(path.join(outWww, rel)),
+      );
+    }
+    if (!Object.keys(files).length) {
+      throw new Error("Tomb build produced no files.");
+    }
+    return { tag: contentTag(files), files };
+  } finally {
+    vol.reset();
+  }
+}
+
+/**
  * Cheap analysis of a .tcoaalmod (no base game needed): reads the manifest and
  * summarizes it for the importer UI. Throws if the file isn't a recognized
  * tcoaal-share archive.
@@ -170,6 +242,134 @@ function readZip(bytes) {
   const m = share.zipRead(Buffer.from(bytes));
   const out = {};
   for (const [k, v] of m) out[k] = new Uint8Array(v);
+  return out;
+}
+
+/**
+ * Light ZIP inspection for the importer's classify step: parse only the central
+ * directory for the entry names, and inflate just the (tiny) mod.json entries
+ * for manifest sniffing. Crucially it does NOT inflate the payloads, so a
+ * multi-hundred-MB overhaul archive classifies instantly on the main thread
+ * instead of blocking it while every asset decompresses.
+ *
+ * @returns {{ names: string[], modJsons: Object<string,Uint8Array> }}
+ */
+function inspectZip(bytes) {
+  const zlib = require("zlib");
+  const buf = Buffer.from(bytes);
+  let p = buf.length - 22;
+  while (p >= 0 && buf.readUInt32LE(p) !== 0x06054b50) p--;
+  if (p < 0) throw new Error("not a ZIP (no end-of-directory record)");
+  const count = buf.readUInt16LE(p + 10);
+  let cd = buf.readUInt32LE(p + 16);
+  const names = [];
+  const modJsons = {};
+  for (let i = 0; i < count; i++) {
+    if (buf.readUInt32LE(cd) !== 0x02014b50) {
+      throw new Error("corrupt ZIP central directory");
+    }
+    const method = buf.readUInt16LE(cd + 10);
+    const compSize = buf.readUInt32LE(cd + 20);
+    const nameLen = buf.readUInt16LE(cd + 28);
+    const extraLen = buf.readUInt16LE(cd + 30);
+    const commentLen = buf.readUInt16LE(cd + 32);
+    const lho = buf.readUInt32LE(cd + 42);
+    const name = buf.toString("utf8", cd + 46, cd + 46 + nameLen);
+    names.push(name);
+    if (/(^|\/)mod\.json$/.test(name)) {
+      const lNameLen = buf.readUInt16LE(lho + 26);
+      const lExtraLen = buf.readUInt16LE(lho + 28);
+      const dataStart = lho + 30 + lNameLen + lExtraLen;
+      const raw = buf.subarray(dataStart, dataStart + compSize);
+      const data = method === 0 ? Buffer.from(raw) : zlib.inflateRawSync(raw);
+      modJsons[name] = new Uint8Array(data);
+    }
+    cd += 46 + nameLen + extraLen + commentLen;
+  }
+  return { names, modJsons };
+}
+
+/** Pull the player-facing game title out of a decrypted System.json buffer. The
+ *  remaster stores it under `sysLabel.Game` (what an overhaul re-titles), with
+ *  the classic MV `gameTitle` as a fallback. Returns null on anything unparsable. */
+function titleFromSystemBytes(buf) {
+  try {
+    const sys = JSON.parse(Buffer.from(buf).toString("utf8"));
+    if (sys && sys.sysLabel && sys.sysLabel.Game) return String(sys.sysLabel.Game);
+    if (sys && sys.gameTitle) return String(sys.gameTitle);
+  } catch (e) {}
+  return null;
+}
+
+/**
+ * Read ONLY data/System.json out of a packaged overhaul .zip and return the
+ * mod's player-facing title (its `sysLabel.Game`), or null. Like inspectZip this
+ * walks the central directory and inflates a single small entry - it never
+ * touches the hundreds of MB of assets, so it is safe on the main thread during
+ * the importer's analysis step.
+ *
+ * `prefix` is the www root inside the archive (as returned by the importer's
+ * classifyOverlayZip, e.g. "wrapper/www/" or ""). System.json may be shipped
+ * plain (`data/System.json`, a decrypted dump) or hashed + TCOAAL-encrypted
+ * (`data/<hash>`, a real game www); both are resolved, and dekit() no-ops on the
+ * plain case.
+ */
+function readSystemTitle(bytes, prefix) {
+  const zlib = require("zlib");
+  const buf = Buffer.from(bytes);
+  prefix = prefix || "";
+  const candidates = [prefix + "data/System.json", prefix + hashPath("data/System.json")];
+  let p = buf.length - 22;
+  while (p >= 0 && buf.readUInt32LE(p) !== 0x06054b50) p--;
+  if (p < 0) return null;
+  const count = buf.readUInt16LE(p + 10);
+  let cd = buf.readUInt32LE(p + 16);
+  for (let i = 0; i < count; i++) {
+    if (buf.readUInt32LE(cd) !== 0x02014b50) return null;
+    const method = buf.readUInt16LE(cd + 10);
+    const compSize = buf.readUInt32LE(cd + 20);
+    const nameLen = buf.readUInt16LE(cd + 28);
+    const extraLen = buf.readUInt16LE(cd + 30);
+    const commentLen = buf.readUInt16LE(cd + 32);
+    const lho = buf.readUInt32LE(cd + 42);
+    const name = buf.toString("utf8", cd + 46, cd + 46 + nameLen);
+    if (candidates.indexOf(name) >= 0) {
+      const lNameLen = buf.readUInt16LE(lho + 26);
+      const lExtraLen = buf.readUInt16LE(lho + 28);
+      const dataStart = lho + 30 + lNameLen + lExtraLen;
+      const raw = buf.subarray(dataStart, dataStart + compSize);
+      let data = method === 0 ? Buffer.from(raw) : zlib.inflateRawSync(raw);
+      // Hashed entries are TCOAAL-encrypted; dekit returns the bytes unchanged
+      // when the magic header is absent (the plain data/System.json case).
+      data = dekit(data, name);
+      return titleFromSystemBytes(data);
+    }
+    cd += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
+}
+
+/**
+ * Full unpack of a packaged overhaul .zip into a canonical, www-relative file
+ * map. Heavy (inflates every entry), so it runs in the worker. `prefix` is the
+ * www root to strip (e.g. "wrapper/www/"); an empty prefix means the game
+ * folders sit at the archive root, and only those folders are kept.
+ *
+ * @returns {Object<string,Uint8Array>}
+ */
+function unpackOverlay(bytes, prefix) {
+  const all = share.zipRead(Buffer.from(bytes));
+  const GAME_DIR = /^(data|img|audio|js|fonts|movies|languages)\//;
+  const out = {};
+  for (const [name, data] of all) {
+    if (name.endsWith("/")) continue;
+    if (prefix) {
+      if (name.indexOf(prefix) !== 0) continue;
+      out[name.slice(prefix.length)] = new Uint8Array(data);
+    } else if (GAME_DIR.test(name)) {
+      out[name] = new Uint8Array(data);
+    }
+  }
   return out;
 }
 
@@ -301,8 +501,12 @@ async function buildShare(projectFiles, bases, meta) {
 
 module.exports = {
   applyTcoaalmod,
+  buildTomb,
   inspect,
   readZip,
+  inspectZip,
+  readSystemTitle,
+  unpackOverlay,
   contentTag,
   createProject,
   packProject,

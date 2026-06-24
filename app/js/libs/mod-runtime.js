@@ -64603,10 +64603,9 @@ var ModRuntime = (() => {
         }
         if (failures.length && !opts.force) {
           reportFailures(failures);
-          console.error(
-            "\nAborting without writing. The --base game likely does not match the\nversion this mod targets. Point --base at the correct version (old_game\nfor Side Dishes), or pass --force to write what succeeds."
+          throw new Error(
+            "Aborting without writing. The base game likely does not match the version this mod targets. Point the base at the correct version (old_game for Side Dishes), or pass --force to write what succeeds."
           );
-          import_process.default.exit(1);
         }
         if (!opts.thin) {
           for (const rel of walk(baseRoot)) {
@@ -64964,6 +64963,8 @@ CanopyImageBuilder images. Image categories need: npm install @napi-rs/canvas
         });
       }
       module2.exports = {
+        build,
+        parseArgs,
         canvas,
         hashPath,
         fileMask,
@@ -73943,7 +73944,7 @@ Options:
       var { vol } = require_lib9();
       var crypto = require_crypto_browserify();
       var share = require_share_project();
-      var { walk } = require_build_tomb_mod();
+      var { walk, hashPath, dekit } = require_build_tomb_mod();
       function ensureStdio() {
         if (!import_process.default.stdout || typeof import_process.default.stdout.write !== "function") {
           import_process.default.stdout = { write: (s) => (console.log(String(s).replace(/\n$/, "")), true) };
@@ -74017,6 +74018,56 @@ Options:
           deletions
         };
       }
+      async function buildTomb(baseFiles, modBytes) {
+        ensureStdio();
+        vol.reset();
+        try {
+          const path = require_path_browserify();
+          for (const rel of Object.keys(baseFiles)) {
+            writeMem("/base/www/" + rel, baseFiles[rel]);
+          }
+          const zip = share.zipRead(import_buffer.Buffer.from(modBytes));
+          let modJsonRel = null;
+          for (const [name] of zip) {
+            if (/(^|\/)mod\.json$/.test(name)) {
+              if (modJsonRel === null || name.length < modJsonRel.length) {
+                modJsonRel = name;
+              }
+            }
+          }
+          if (modJsonRel === null) {
+            throw new Error("Not a Tomb mod: no mod.json found in the archive.");
+          }
+          const diffPrefix = modJsonRel.replace(/mod\.json$/, "");
+          for (const [name, data] of zip) {
+            if (name.endsWith("/")) continue;
+            writeMem("/diff/" + name, data);
+          }
+          const { build } = require_build_tomb_mod();
+          await build({
+            diff: ("/diff/" + diffPrefix).replace(/\/+$/, ""),
+            base: "/base",
+            out: "/out",
+            overlays: [],
+            thin: false,
+            force: false,
+            pretty: false
+          });
+          const outWww = "/out/www";
+          const files = {};
+          for (const rel of walk(outWww)) {
+            files[rel.split(path.sep).join("/")] = new Uint8Array(
+              vol.readFileSync(path.join(outWww, rel))
+            );
+          }
+          if (!Object.keys(files).length) {
+            throw new Error("Tomb build produced no files.");
+          }
+          return { tag: contentTag(files), files };
+        } finally {
+          vol.reset();
+        }
+      }
       function inspect(modBytes) {
         ensureStdio();
         const zip = share.zipRead(import_buffer.Buffer.from(modBytes));
@@ -74040,6 +74091,96 @@ Options:
         const m = share.zipRead(import_buffer.Buffer.from(bytes));
         const out = {};
         for (const [k, v] of m) out[k] = new Uint8Array(v);
+        return out;
+      }
+      function inspectZip(bytes) {
+        const zlib = require_lib10();
+        const buf = import_buffer.Buffer.from(bytes);
+        let p = buf.length - 22;
+        while (p >= 0 && buf.readUInt32LE(p) !== 101010256) p--;
+        if (p < 0) throw new Error("not a ZIP (no end-of-directory record)");
+        const count = buf.readUInt16LE(p + 10);
+        let cd = buf.readUInt32LE(p + 16);
+        const names = [];
+        const modJsons = {};
+        for (let i = 0; i < count; i++) {
+          if (buf.readUInt32LE(cd) !== 33639248) {
+            throw new Error("corrupt ZIP central directory");
+          }
+          const method = buf.readUInt16LE(cd + 10);
+          const compSize = buf.readUInt32LE(cd + 20);
+          const nameLen = buf.readUInt16LE(cd + 28);
+          const extraLen = buf.readUInt16LE(cd + 30);
+          const commentLen = buf.readUInt16LE(cd + 32);
+          const lho = buf.readUInt32LE(cd + 42);
+          const name = buf.toString("utf8", cd + 46, cd + 46 + nameLen);
+          names.push(name);
+          if (/(^|\/)mod\.json$/.test(name)) {
+            const lNameLen = buf.readUInt16LE(lho + 26);
+            const lExtraLen = buf.readUInt16LE(lho + 28);
+            const dataStart = lho + 30 + lNameLen + lExtraLen;
+            const raw = buf.subarray(dataStart, dataStart + compSize);
+            const data = method === 0 ? import_buffer.Buffer.from(raw) : zlib.inflateRawSync(raw);
+            modJsons[name] = new Uint8Array(data);
+          }
+          cd += 46 + nameLen + extraLen + commentLen;
+        }
+        return { names, modJsons };
+      }
+      function titleFromSystemBytes(buf) {
+        try {
+          const sys = JSON.parse(import_buffer.Buffer.from(buf).toString("utf8"));
+          if (sys && sys.sysLabel && sys.sysLabel.Game) return String(sys.sysLabel.Game);
+          if (sys && sys.gameTitle) return String(sys.gameTitle);
+        } catch (e) {
+        }
+        return null;
+      }
+      function readSystemTitle(bytes, prefix) {
+        const zlib = require_lib10();
+        const buf = import_buffer.Buffer.from(bytes);
+        prefix = prefix || "";
+        const candidates = [prefix + "data/System.json", prefix + hashPath("data/System.json")];
+        let p = buf.length - 22;
+        while (p >= 0 && buf.readUInt32LE(p) !== 101010256) p--;
+        if (p < 0) return null;
+        const count = buf.readUInt16LE(p + 10);
+        let cd = buf.readUInt32LE(p + 16);
+        for (let i = 0; i < count; i++) {
+          if (buf.readUInt32LE(cd) !== 33639248) return null;
+          const method = buf.readUInt16LE(cd + 10);
+          const compSize = buf.readUInt32LE(cd + 20);
+          const nameLen = buf.readUInt16LE(cd + 28);
+          const extraLen = buf.readUInt16LE(cd + 30);
+          const commentLen = buf.readUInt16LE(cd + 32);
+          const lho = buf.readUInt32LE(cd + 42);
+          const name = buf.toString("utf8", cd + 46, cd + 46 + nameLen);
+          if (candidates.indexOf(name) >= 0) {
+            const lNameLen = buf.readUInt16LE(lho + 26);
+            const lExtraLen = buf.readUInt16LE(lho + 28);
+            const dataStart = lho + 30 + lNameLen + lExtraLen;
+            const raw = buf.subarray(dataStart, dataStart + compSize);
+            let data = method === 0 ? import_buffer.Buffer.from(raw) : zlib.inflateRawSync(raw);
+            data = dekit(data, name);
+            return titleFromSystemBytes(data);
+          }
+          cd += 46 + nameLen + extraLen + commentLen;
+        }
+        return null;
+      }
+      function unpackOverlay(bytes, prefix) {
+        const all = share.zipRead(import_buffer.Buffer.from(bytes));
+        const GAME_DIR = /^(data|img|audio|js|fonts|movies|languages)\//;
+        const out = {};
+        for (const [name, data] of all) {
+          if (name.endsWith("/")) continue;
+          if (prefix) {
+            if (name.indexOf(prefix) !== 0) continue;
+            out[name.slice(prefix.length)] = new Uint8Array(data);
+          } else if (GAME_DIR.test(name)) {
+            out[name] = new Uint8Array(data);
+          }
+        }
         return out;
       }
       var EXTRACT_ARGS = ["--not-playable"];
@@ -74125,8 +74266,12 @@ Options:
       }
       module2.exports = {
         applyTcoaalmod,
+        buildTomb,
         inspect,
         readZip,
+        inspectZip,
+        readSystemTitle,
+        unpackOverlay,
         contentTag,
         createProject,
         packProject,

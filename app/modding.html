@@ -1289,8 +1289,8 @@
               </p>
               <div class="drop" id="drop">
                 <p><strong>Drop a mod file here</strong> or click to choose</p>
-                <p class="meta">
-                  Supported: <code>.tcoaalmod</code> diff mods and packaged mod
+                <p class="meta" id="drop-supported">
+                  Supported: <code>.tcoaalmod</code> files and packaged mod
                   <code>.zip</code> archives.
                 </p>
                 <input
@@ -1565,6 +1565,17 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       var DB_NAME = "tcoaal";
       var STORE = "assets";
       var REGISTRY_KEY = "__imported_mods__";
+
+      // Feature switch: accept packaged mod .zip archives (full-game overhauls
+      // shipping their own www/, and Tomb-format mods built against an older
+      // base) in addition to .tcoaalmod files. Flip to false to restrict the
+      // Install drop zone to .tcoaalmod only; the drop-zone caption and the file
+      // picker's accept list adapt to match (see applyCustomModZip).
+      var CUSTOM_MOD_ZIP = true;
+
+      // Tomb-format mods are built offline against this exact game version (they
+      // carry RFC-6902/.olid deltas keyed to it); the user must have it imported.
+      var TOMB_BASE_VERSION = "2.0.14";
 
       function openDb() {
         return new Promise(function (resolve, reject) {
@@ -2031,12 +2042,40 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             escapeHtml(file.name) +
             "...",
         );
-        var bytes = new Uint8Array(await file.arrayBuffer());
         var isTcoaalmod = /\.tcoaalmod$/i.test(file.name);
 
         try {
+          // Read the bytes inside the try: a stale File handle (the file was
+          // moved or deleted after it was dropped) rejects here with a
+          // NotFoundError, which must surface in the UI rather than leave the
+          // spinner up with an uncaught promise rejection.
+          var bytes;
+          try {
+            bytes = new Uint8Array(await file.arrayBuffer());
+          } catch (readErr) {
+            setAnalysis(
+              '<span class="err">Could not read this file.</span>\nIt may ' +
+                "have been moved, renamed, or deleted. Choose it again.",
+              "err",
+            );
+            return;
+          }
           var rt = await loadRuntime();
-          if (isTcoaalmod || sniffTcoaalmod(bytes, rt)) {
+
+          // Light ZIP probe: entry names + the tiny mod.json only. This must NOT
+          // inflate the payloads - an overhaul archive is hundreds of MB, and
+          // decompressing it on the main thread is exactly what used to wedge the
+          // "Analyzing..." spinner. zinfo is null when the file isn't a ZIP.
+          var zinfo = null;
+          try {
+            zinfo = rt.inspectZip(bytes);
+          } catch (e) {
+            zinfo = null;
+          }
+
+          // .tcoaalmod (by extension or by its tcoaal-share mod.json). These are
+          // small, so the full manifest read is fine on the main thread.
+          if (isTcoaalmod || (zinfo && isShareArchive(zinfo.modJsons))) {
             var info = rt.inspect(bytes);
             _selected = {
               name: file.name,
@@ -2047,35 +2086,77 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             await renderTcoaalmodAnalysis(file, info);
             return;
           }
-          // A plain .zip: peek at its entries to classify it.
-          var entries = rt.readZip(bytes);
-          var names = Object.keys(entries);
-          if (
-            names.indexOf("mod.json") >= 0 &&
-            looksLikeTomb(entries["mod.json"])
-          ) {
+
+          if (!zinfo) {
             setAnalysis(
-              '<span class="warn">Tomb-format mod detected.</span>\n' +
-                "In-browser Tomb import is not available yet (it needs the base-2_0_14 reference). " +
-                "Use the desktop tools for now.",
-              "warn",
+              '<span class="err">Unrecognized file.</span>\nIt is not a ' +
+                ".tcoaalmod or a .zip archive.",
+              "err",
             );
             return;
           }
-          var shipped = names.filter(function (n) {
-            return /^(data|img|audio|js|fonts|movies)\//.test(n);
-          });
-          if (shipped.length) {
+
+          // Past here we are looking at a plain .zip. When packaged-mod support
+          // is switched off, only .tcoaalmod files are accepted.
+          if (!CUSTOM_MOD_ZIP) {
+            setAnalysis(
+              '<span class="err">Unsupported file.</span>\nOnly ' +
+                "<code>.tcoaalmod</code> files can be installed.",
+              "err",
+            );
+            return;
+          }
+
+          // 1) Tomb-format mod: a mod.json manifest of deltas the app cannot
+          //    apply live. It is flattened offline against an imported v2.0.14
+          //    base into a self-contained overhaul.
+          var tombJson = findTombManifest(zinfo.modJsons);
+          if (tombJson) {
+            await analyzeTomb(file, bytes, tombJson);
+            return;
+          }
+
+          // 2) Full-game overhaul shipping its own www/ (TCOAAR, TCOAAJ,
+          //    TCOAALili, TDOAAL, TLCOAAA, ...): plain, unencrypted data under a
+          //    www/ root (possibly inside a wrapper folder), or the game folders
+          //    at the archive root. Either way the www is layered over the base.
+          //    The actual unzip is deferred to install (in the worker); here we
+          //    only need the entry names to recognize the shape.
+          var overlay = classifyOverlayZip(zinfo.names);
+          if (overlay) {
+            // Name the mod after its own data/System.json title (sysLabel.Game),
+            // enriched with the author when it matches a known mod in mods.json.
+            var ometa = await resolveOverlayMeta(
+              bytes,
+              overlay.prefix,
+              file.name.replace(/\.zip$/i, ""),
+            );
             _selected = {
               name: file.name,
               bytes: bytes,
-              kind: "shippedzip",
-              entries: entries,
+              kind: "overlay",
+              prefix: overlay.prefix,
+              modName: ometa.name,
+              modAuthor: ometa.author,
             };
             setAnalysis(
               '<span class="ok">Packaged mod archive.</span>\n' +
-                shipped.length +
-                " game files found. This will be layered over your base game as-is.",
+                (ometa.matched
+                  ? "Recognized as a known mod.\n"
+                  : "") +
+                '<dl class="kv">' +
+                "<dt>Name</dt><dd>" +
+                escapeHtml(ometa.name) +
+                "</dd>" +
+                (ometa.author
+                  ? "<dt>Author</dt><dd>" +
+                    escapeHtml(ometa.author) +
+                    "</dd>"
+                  : "") +
+                "<dt>Files</dt><dd>" +
+                overlay.count +
+                "</dd></dl>" +
+                "This will be layered over your base game as-is.",
               "ok",
             );
             $("install-row").hidden = false;
@@ -2083,6 +2164,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             $("install-note").textContent = "";
             return;
           }
+
           setAnalysis(
             '<span class="err">Unrecognized archive.</span>\nIt does not look like a .tcoaalmod or a packaged game mod.',
             "err",
@@ -2096,27 +2178,217 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         }
       }
 
-      function sniffTcoaalmod(bytes, rt) {
-        try {
-          var entries = rt.readZip(bytes);
-          return (
-            !!entries["mod.json"] &&
-            /tcoaal-share/.test(new TextDecoder().decode(entries["mod.json"]))
-          );
-        } catch (e) {
-          return false;
+      // A .tcoaalmod carries a mod.json whose `format` is "tcoaal-share...".
+      function isShareArchive(modJsons) {
+        var keys = Object.keys(modJsons || {});
+        for (var i = 0; i < keys.length; i++) {
+          try {
+            if (
+              /tcoaal-share/.test(
+                new TextDecoder().decode(modJsons[keys[i]]),
+              )
+            ) {
+              return true;
+            }
+          } catch (e) {}
         }
+        return false;
       }
-      function looksLikeTomb(modJsonBytes) {
-        try {
-          var o = JSON.parse(new TextDecoder().decode(modJsonBytes));
-          return !!(
-            o &&
-            (o.dataDeltas || o.imageDeltas || o.assets || o.files)
-          );
-        } catch (e) {
-          return false;
+      // Find a Tomb mod.json among the (already inflated, small) mod.json entries
+      // and return its parsed manifest, or null. A .tcoaalmod's own mod.json is
+      // excluded (already handled by isShareArchive).
+      function findTombManifest(modJsons) {
+        var names = Object.keys(modJsons || {});
+        for (var i = 0; i < names.length; i++) {
+          var o;
+          try {
+            o = JSON.parse(new TextDecoder().decode(modJsons[names[i]]));
+          } catch (e) {
+            continue;
+          }
+          if (!o || typeof o !== "object") continue;
+          if (o.format && /tcoaal-share/.test(String(o.format))) continue;
+          if (
+            o.dataDeltas ||
+            o.imageDeltas ||
+            o.assets ||
+            o.languages ||
+            o.plugins ||
+            o.files
+          ) {
+            return o;
+          }
         }
+        return null;
+      }
+
+      // Classify a packaged full-game overhaul .zip from its entry names alone:
+      // locate the www/ root (which may sit inside a wrapper folder) or the game
+      // folders at the archive root. Returns { prefix, count } - `prefix` is the
+      // path to strip (e.g. "wrapper/www/", or "" when the game folders are at
+      // the root) - or null. The bytes are unzipped later (in the worker) via
+      // ModRuntime.unpackOverlay(prefix); the data is plain, so the SW's dekit is
+      // a no-op and the files serve straight from mod:{tag}:{rel}.
+      var GAME_DIR_RE = /^(data|img|audio|js|fonts|movies|languages)\//;
+      function classifyOverlayZip(allNames) {
+        var names = allNames.filter(function (n) {
+          return !n.endsWith("/");
+        });
+        // www/ root: the shortest prefix ending in "www/" that leads to a game
+        // folder (so "wrapper/www/data/..." -> strip "wrapper/www/").
+        var prefix = null;
+        for (var i = 0; i < names.length; i++) {
+          var m = names[i].match(
+            /^(.*?www\/)(?:data|img|audio|js|fonts|movies|languages)\//i,
+          );
+          if (m && (prefix === null || m[1].length < prefix.length))
+            prefix = m[1];
+        }
+        if (prefix) {
+          var count = 0;
+          for (var j = 0; j < names.length; j++) {
+            if (names[j].indexOf(prefix) === 0) count++;
+          }
+          return { prefix: prefix, count: count };
+        }
+        // Game folders already at the archive root (no www/ wrapper).
+        var rootCount = 0;
+        for (var k = 0; k < names.length; k++) {
+          if (GAME_DIR_RE.test(names[k])) rootCount++;
+        }
+        return rootCount ? { prefix: "", count: rootCount } : null;
+      }
+
+      // Known-mod catalog (the same mods.json the loader/in-game Mods menu use).
+      // Best-effort and cached: a packaged overhaul .zip that re-titles the game
+      // (its data/System.json sysLabel.Game) is matched against this by name, so
+      // an imported community overhaul shows its real name + author instead of a
+      // bare file name. Failure to fetch just means no enrichment.
+      var _modsCatalogP = null;
+      function loadModsCatalog() {
+        if (_modsCatalogP) return _modsCatalogP;
+        _modsCatalogP = fetch("mods.json", { cache: "no-cache" })
+          .then(function (r) {
+            return r.ok ? r.json() : {};
+          })
+          .catch(function () {
+            return {};
+          });
+        return _modsCatalogP;
+      }
+      // Find the mods.json entry whose display name equals `title` (case/space
+      // insensitive). Returns { id, name, author, type } or null.
+      async function findKnownMod(title) {
+        var want = String(title || "")
+          .trim()
+          .toLowerCase();
+        if (!want) return null;
+        var cat = await loadModsCatalog();
+        var keys = Object.keys(cat || {});
+        for (var i = 0; i < keys.length; i++) {
+          var e = cat[keys[i]];
+          if (
+            e &&
+            e.name &&
+            String(e.name).trim().toLowerCase() === want
+          ) {
+            return {
+              id: keys[i],
+              name: e.name,
+              author: e.author || "",
+              type: e.type || "",
+            };
+          }
+        }
+        return null;
+      }
+      // Resolve the display name + author for a packaged overhaul .zip: read its
+      // data/System.json title (sysLabel.Game) and, when that matches a known
+      // mod in mods.json, adopt that mod's name + author too. Falls back to the
+      // file name when the archive carries no usable title.
+      async function resolveOverlayMeta(bytes, prefix, fallbackName) {
+        var title = null;
+        try {
+          var rt = await loadRuntime();
+          title = rt.readSystemTitle(bytes, prefix || "");
+        } catch (e) {
+          title = null;
+        }
+        var meta = {
+          name: title || fallbackName,
+          author: "",
+          title: title || "",
+          matched: false,
+        };
+        if (title) {
+          var known = await findKnownMod(title);
+          if (known) {
+            meta.name = known.name;
+            meta.author = known.author || "";
+            meta.matched = true;
+          }
+        }
+        return meta;
+      }
+
+      // The imported game version usable as a Tomb base (must be the exact
+      // TOMB_BASE_VERSION the deltas were keyed to), or null.
+      async function findTombBase() {
+        for (var i = 0; i < _gameVersions.length; i++) {
+          var v = _gameVersions[i];
+          var ver = v.imported
+            ? _importedVersion
+            : baseVersionFromFiles(v.files);
+          if (ver === TOMB_BASE_VERSION) return v;
+        }
+        return null;
+      }
+      // The www (shipped form) of a _gameVersions entry, for mounting as a base.
+      async function tombBaseFilesOf(v) {
+        return v.imported ? await readBaseFiles(_db) : toWwwRoot(v.files);
+      }
+
+      // Tomb branch of analyzeFile: needs an imported v2.0.14 base to flatten
+      // against; without it, surface the requirement instead of an Install CTA.
+      async function analyzeTomb(file, bytes, manifest) {
+        var modName =
+          (manifest && (manifest.name || manifest.title)) ||
+          file.name.replace(/\.zip$/i, "");
+        var base = await findTombBase();
+        if (!base) {
+          _selected = null;
+          $("install-row").hidden = true;
+          setAnalysis(
+            '<span class="warn">Tomb-format mod detected (' +
+              escapeHtml(modName) +
+              ").</span>\nIt must be built against game version <strong>" +
+              escapeHtml(verText(TOMB_BASE_VERSION)) +
+              "</strong>, which you do not have imported. Add that version with " +
+              'the "+" on the Modding tab (or import it on the loader), then try ' +
+              "again.",
+            "warn",
+          );
+          return;
+        }
+        _selected = {
+          name: file.name,
+          bytes: bytes,
+          kind: "tomb",
+          modName: modName,
+          tombBase: base,
+        };
+        setAnalysis(
+          '<span class="ok">Tomb-format mod detected (' +
+            escapeHtml(modName) +
+            ").</span>\nIt will be built against your <strong>" +
+            escapeHtml(base.label) +
+            "</strong> game and layered over it as an overhaul. This can take a " +
+            "while.",
+          "ok",
+        );
+        $("install-row").hidden = false;
+        $("btn-install").disabled = false;
+        $("install-note").textContent = "";
       }
 
       async function renderTcoaalmodAnalysis(file, info) {
@@ -2136,7 +2408,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             ? "any one of these game versions:"
             : "this game version:";
         setAnalysis(
-          '<span class="ok">Valid mod diff (' +
+          '<span class="ok">Valid mod (' +
             escapeHtml(info.format) +
             ").</span>\n" +
             '<dl class="kv">' +
@@ -2250,14 +2522,42 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
               description: res.description,
               baseLabel: res.baseLabel,
             };
+          } else if (_selected.kind === "tomb") {
+            // Tomb-format mod: flatten it offline against the matched v2.0.14
+            // base into a self-contained overhaul www, then store that.
+            var tombBaseFiles = await tombBaseFilesOf(_selected.tombBase);
+            var built = await runHeavy(
+              "buildTomb",
+              [tombBaseFiles, _selected.bytes],
+              onInstallProgress,
+            );
+            files = built.files;
+            deletions = [];
+            tag = built.tag;
+            meta = {
+              name: _selected.modName,
+              author: "",
+              version: "1.0.0",
+              baseLabel: _selected.tombBase.label,
+            };
           } else {
-            // shipped-format .zip: store its entries verbatim.
-            files = _selected.entries;
+            // Packaged full-game overhaul (.zip): unzip in the worker (the
+            // archive can be hundreds of MB, so this stays off the main thread),
+            // re-keyed to canonical www-relative paths, then store its www
+            // verbatim.
+            files = await runHeavy(
+              "unpackOverlay",
+              [_selected.bytes, _selected.prefix],
+              onInstallProgress,
+            );
             deletions = [];
             tag = await contentTagOf(files);
             meta = {
-              name: _selected.name.replace(/\.zip$/i, ""),
-              author: "",
+              // Name + author resolved at analysis time from the mod's own
+              // data/System.json title (sysLabel.Game), matched against mods.json
+              // when known; fall back to the file name.
+              name: _selected.modName || _selected.name.replace(/\.zip$/i, ""),
+              author: _selected.modAuthor || "",
               version: "1.0.0",
             };
           }
@@ -2708,7 +3008,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       async function chooseBuildProject() {
         var c = await openChooser({
           title: "Choose your project",
-          sub: "The edited RPG Maker MV project to diff into a mod.",
+          sub: "The edited RPG Maker MV project to build into a mod.",
         });
         if (c === "folder") $("build-proj-dir").click();
         else if (c === "zip") $("build-proj-zip").click();
@@ -3496,6 +3796,18 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
 
         var drop = $("drop");
         var input = $("file");
+        // Adapt the drop zone to the CUSTOM_MOD_ZIP switch: caption text + the
+        // file picker's accept list. Off -> .tcoaalmod only.
+        if (CUSTOM_MOD_ZIP) {
+          input.accept = ".tcoaalmod,.zip,application/zip";
+          $("drop-supported").innerHTML =
+            "Supported: <code>.tcoaalmod</code> files and packaged mod " +
+            "<code>.zip</code> archives.";
+        } else {
+          input.accept = ".tcoaalmod";
+          $("drop-supported").innerHTML =
+            "Supported: <code>.tcoaalmod</code> files.";
+        }
         drop.onclick = function () {
           input.click();
         };
