@@ -2374,6 +2374,13 @@
         opacity: 0.6;
         font-size: 0.82rem;
       }
+      /* Row a "Download it" CTA steered us to (from the Install tab when the
+         required version isn't imported): briefly outline it so it's findable. */
+      .vitem.dl-focus {
+        background: rgba(236, 131, 195, 0.12);
+        border-radius: 4px;
+        box-shadow: inset 0 0 0 1px var(--purple);
+      }
       .badge {
         color: var(--green);
         font-size: 0.78rem;
@@ -2776,6 +2783,22 @@
       }
       .modal .modal-cancel:hover {
         color: var(--white);
+      }
+      .modal select,
+      .modal input[type="text"] {
+        width: 100%;
+        font-family: inherit;
+        font-size: 0.95rem;
+        color: var(--white);
+        background: #161616;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 5px;
+        padding: 8px 10px;
+      }
+      .modal select:focus,
+      .modal input[type="text"]:focus {
+        outline: none;
+        border-color: var(--purple);
       }
 
       /* Build bases as inline chips (version + remove), with a "+" to add. */
@@ -3359,13 +3382,15 @@
                 />
               </div>
               <div class="status" id="analysis" hidden></div>
-              <div
-                class="row center"
-                id="install-row"
-                hidden
-                style="margin-top: 14px"
-              >
-                <button class="action-btn primary" id="btn-install" disabled>
+              <!-- CTA area, populated by setInstallActions(): it always holds at
+                   least an invisible placeholder button so the row keeps its
+                   height and analysing a file never shifts the layout. -->
+              <div class="row center" id="install-row" style="margin-top: 14px">
+                <button
+                  class="action-btn primary"
+                  disabled
+                  style="visibility: hidden"
+                >
                   Install into my game
                 </button>
               </div>
@@ -3578,19 +3603,14 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
                   </p>
                   <div class="dl-step center">
                     <button class="action-btn primary" id="dl-import-folder">
-                      Select the downloaded folder
+                      Import the downloaded version
                     </button>
                   </div>
-                  <input
-                    type="file"
-                    id="dl-import-dir"
-                    webkitdirectory
-                    hidden
-                  />
                   <p class="meta" id="dl-import-note">
-                    In the picker, go to the path above and choose that folder.
-                    It's added to your <b>imported game versions</b>, ready for
-                    Create / Build.
+                    This takes you to the <b>Modding</b> tab and opens the same
+                    importer as the <b>+</b> button. In the picker, go to the
+                    path above and choose that folder. It's added to your
+                    <b>imported game versions</b>, ready for Create / Build.
                   </p>
                 </div>
 
@@ -3612,6 +3632,27 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           <button class="action-btn" id="chooser-folder">From a folder</button>
           <button class="action-btn" id="chooser-zip">From a .zip file</button>
           <button class="modal-cancel" id="chooser-cancel">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Version picker: shown when an added game's version can't be read from
+           its files (older 1.x/2.x builds store no version), so the user can
+           say which build it is - needed for mods that target a specific one. -->
+      <div class="modal-overlay" id="verpick" hidden>
+        <div class="modal">
+          <h3>Which game version is this?</h3>
+          <p class="modal-sub" id="verpick-sub">
+            We couldn't read a version from these files (older builds don't store
+            one). Tell us which build you imported so mods that need a specific
+            version can use it.
+          </p>
+          <div id="verpick-body"></div>
+          <button class="action-btn primary" id="verpick-ok">
+            Use this version
+          </button>
+          <button class="modal-cancel" id="verpick-cancel">
+            Skip (label by folder name)
+          </button>
         </div>
       </div>
     </div>
@@ -5497,13 +5538,105 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       }
 
       // Base-game files are stored under their plain relative path; mod overlays
-      // use a "mod:" prefix and bookkeeping keys use "__...__".
+      // use a "mod:" prefix, extra imported game versions a "gamever:" prefix,
+      // and bookkeeping keys use "__...__". Only the active base game is a
+      // "base file" - the others must never be picked up by readBaseFiles /
+      // hasBaseGame (they'd corrupt the active game).
       function isBaseFileKey(k) {
         return (
           typeof k === "string" &&
           k.indexOf("mod:") !== 0 &&
+          k.indexOf(GAMEVER_PREFIX) !== 0 &&
           k.indexOf("__") !== 0
         );
+      }
+
+      // Extra imported game versions (the ones added with "+" on the Modding
+      // tab, or downloaded via Steam) are persisted so they survive a reload,
+      // show as "imported" in the Download tab, are findable in IDB, and keep
+      // unlocking version-gated mods. Each version's files live under
+      // "gamever:{id}:{relPath}"; a registry lists them for cheap enumeration.
+      var GAMEVER_PREFIX = "gamever:";
+      var GAMEVER_REGISTRY_KEY = "__game_versions__";
+
+      // Stable id for a version entry: the read version when known (so re-adding
+      // the same build replaces it instead of duplicating), else its label.
+      function gameVerId(version, label) {
+        var base = version ? "v" + version : "x" + (label || "");
+        return base.replace(/[^0-9A-Za-z._-]+/g, "-");
+      }
+
+      async function getGameVerRegistry(db) {
+        var raw = await idbGet(db, GAMEVER_REGISTRY_KEY);
+        if (!raw) return {};
+        try {
+          return typeof raw === "string" ? JSON.parse(raw) : raw;
+        } catch (e) {
+          return {};
+        }
+      }
+
+      // Write many key/value pairs in one transaction (a full game is thousands
+      // of files - a transaction per file would be needlessly slow).
+      function idbPutMany(db, pairs) {
+        return new Promise(function (resolve, reject) {
+          var tx = db.transaction(STORE, "readwrite");
+          var store = tx.objectStore(STORE);
+          for (var i = 0; i < pairs.length; i++)
+            store.put(pairs[i][1], pairs[i][0]);
+          tx.oncomplete = function () {
+            resolve();
+          };
+          tx.onerror = function () {
+            reject(tx.error);
+          };
+        });
+      }
+
+      // Persist an added game version (files + registry entry) to IDB.
+      async function persistGameVersion(db, entry) {
+        var prefix = GAMEVER_PREFIX + entry.id + ":";
+        // Drop any prior copy of this id before re-writing it.
+        await idbDeletePrefix(db, prefix);
+        var pairs = [];
+        Object.keys(entry.files).forEach(function (rel) {
+          pairs.push([prefix + rel, entry.files[rel]]);
+        });
+        await idbPutMany(db, pairs);
+        var reg = await getGameVerRegistry(db);
+        reg[entry.id] = {
+          label: entry.label,
+          version: entry.version,
+          fileCount: entry.fileCount,
+        };
+        await idbPut(db, GAMEVER_REGISTRY_KEY, JSON.stringify(reg));
+        entry.persisted = true;
+      }
+
+      // Read a persisted version's files back from IDB as { relPath: bytes }.
+      async function readGameVerFiles(db, id) {
+        var prefix = GAMEVER_PREFIX + id + ":";
+        var keys = await idbKeys(db);
+        var files = {};
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          if (typeof k !== "string" || k.indexOf(prefix) !== 0) continue;
+          var val = await idbGet(db, k);
+          if (val == null) continue;
+          files[k.slice(prefix.length)] =
+            val instanceof ArrayBuffer ? new Uint8Array(val) : val;
+        }
+        return files;
+      }
+
+      // The file map for any _gameVersions entry, wherever it lives: an
+      // in-memory add (just picked, before/around persistence), the active base
+      // game (imported), or a persisted add read back from IDB.
+      async function gameVerFiles(v) {
+        if (v.files) return v.files;
+        if (v.imported) return await readBaseFiles(_db);
+        if (v.id) return await readGameVerFiles(_db, v.id);
+        return {};
       }
 
       var _runtimeP = null;
@@ -5662,6 +5795,10 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       var _modInitDone = false;
       var _modInitStarted = false;
       var _selected = null; // { name, bytes, kind, info|entries }
+      // A Tomb mod that analyzed cleanly but was blocked on a missing game
+      // version. Kept so that, once the required version is imported, returning
+      // to the Install tab can re-analyze and install it straight away.
+      var _pendingTomb = null; // { file, bytes, manifest }
 
       function fmtBytes(n) {
         var u = ["B", "KB", "MB", "GB"];
@@ -5739,11 +5876,44 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         } catch (e) {}
         return null;
       }
+      // The most reliable version source: js/main.js carries
+      // `const GAME_VERSION = "x.y.z"` in EVERY build (old 1.x/2.x and the
+      // remaster), and engine JS is never encrypted or hash-renamed - unlike the
+      // CLD, which only exists hashed (data/9c70...) on the remaster (older
+      // builds keep logical names like data/Map001.k9a, so that file is absent).
+      function mainJsVersion(raw) {
+        if (raw == null) return null;
+        try {
+          var bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+          var text = new TextDecoder().decode(bytes);
+          var m = text.match(/GAME_VERSION\s*=\s*["']([^"']+)["']/);
+          return (m && m[1].trim()) || null;
+        } catch (e) {
+          return null;
+        }
+      }
+      // Look up a file in a { relPath: bytes } map by a path suffix, tolerating
+      // a leading folder segment (e.g. "www/js/main.js" matches "js/main.js").
+      function fileBySuffix(files, suffix) {
+        if (files[suffix]) return files[suffix];
+        var keys = Object.keys(files);
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          if (k === suffix || k.slice(-(suffix.length + 1)) === "/" + suffix)
+            return files[k];
+        }
+        return null;
+      }
       async function baseVersion(db) {
-        return cldVersion(await idbGet(db, CLD_KEY));
+        return (
+          mainJsVersion(await idbGet(db, "js/main.js")) ||
+          cldVersion(await idbGet(db, CLD_KEY))
+        );
       }
       // Version of a base passed as a { relPath: bytes } map (folder/zip add).
       function baseVersionFromFiles(files) {
+        var mv = mainJsVersion(fileBySuffix(files, "js/main.js"));
+        if (mv) return mv;
         var raw = files[CLD_KEY];
         if (!raw) {
           var hit = Object.keys(files).filter(function (k) {
@@ -5761,39 +5931,138 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       // The set of game versions available for installing mods: the imported
       // game (first, not removable) plus any extra versions the user adds via
       // "+", so a mod that targets a specific (often older) build can be
-      // installed against the right one. Session-scoped (kept in memory).
-      var _gameVersions = []; // [{ label, imported, files? }]
+      // installed against the right one. Added versions are persisted to IDB
+      // (gamever:{id}: keys + the __game_versions__ registry) so they survive a
+      // reload; their files are read lazily via gameVerFiles().
+      var _gameVersions = []; // [{ id, label, version, imported?, files?, fileCount }]
+
+      // Naming hint carried from the Download wizard into the shared "+" import
+      // flow: the version the user actually picked, so a freshly downloaded
+      // depot folder is labelled "v2.0.14" instead of its "depot_..." name when
+      // its own CLD version can't be read. Set by addGameVersion(hint), consumed
+      // (once) by the folder/zip onchange handlers via pushGameVersion.
+      var _dlImportHint = null; // { version, name } | null
+
+      // Record an imported game version. Prefer the version read from its own
+      // CLD; failing that, a hint (e.g. the Download wizard's picked version);
+      // failing that, the folder/file name. The entry is shown immediately and
+      // persisted to IDB (so it survives reload, shows as imported on the
+      // Download tab, and stays usable for version-gated mods). Returns the
+      // pushed entry.
+      async function pushGameVersion(files, fallbackName, hint) {
+        var v = baseVersionFromFiles(files) || (hint && hint.version) || null;
+        // Older 1.x/2.x builds store no readable version. When we can't detect
+        // one (and the Download wizard didn't supply a hint), ask the user which
+        // build it is - mods that target a specific version need to know.
+        if (!v) v = await openVerPick();
+        var label = verText(v) || (hint && hint.name) || fallbackName;
+        var id = gameVerId(v, label);
+        // Replace any prior (non-imported) copy of the same id rather than
+        // stacking duplicates.
+        for (var i = _gameVersions.length - 1; i >= 0; i--) {
+          if (!_gameVersions[i].imported && _gameVersions[i].id === id)
+            _gameVersions.splice(i, 1);
+        }
+        var entry = {
+          id: id,
+          label: label,
+          version: v,
+          files: files,
+          fileCount: Object.keys(files).length,
+        };
+        _gameVersions.push(entry);
+        renderGameVersions();
+        try {
+          await persistGameVersion(_db, entry);
+        } catch (e) {
+          // Quota/transaction failure: keep the in-memory entry (still usable
+          // this session), but surface why it won't survive a reload.
+          console.warn("Could not persist game version:", e);
+        }
+        return entry;
+      }
 
       function renderGameVersions() {
         var box = $("game-versions");
         if (!box) return;
         box.innerHTML = "";
-        _gameVersions.forEach(function (v, i) {
+        _gameVersions.forEach(function (v) {
           box.appendChild(
             chipEl(
               v.label,
               v.imported
                 ? null
                 : function () {
-                    _gameVersions.splice(i, 1);
-                    renderGameVersions();
+                    removeGameVersion(v);
                   },
             ),
           );
         });
-        box.appendChild(addChip("Add a game version", addGameVersion));
+        box.appendChild(
+          addChip("Add a game version", function () {
+            addGameVersion();
+          }),
+        );
         // Create and Build pick from this same list; keep them in sync.
         renderCreateVersions();
         renderBuildState();
+        // If the Download catalog is already loaded, refresh its "imported"
+        // badges to reflect the current set of versions.
+        if (typeof _dlCat !== "undefined" && _dlCat) renderDlCatalog();
       }
 
-      async function addGameVersion() {
+      // Remove an added game version: drop it from the in-memory list and
+      // delete its persisted files + registry entry from IDB.
+      async function removeGameVersion(v) {
+        var idx = _gameVersions.indexOf(v);
+        if (idx >= 0) _gameVersions.splice(idx, 1);
+        renderGameVersions();
+        if (v.imported || !v.id) return;
+        try {
+          await idbDeletePrefix(_db, GAMEVER_PREFIX + v.id + ":");
+          var reg = await getGameVerRegistry(_db);
+          delete reg[v.id];
+          await idbPut(_db, GAMEVER_REGISTRY_KEY, JSON.stringify(reg));
+        } catch (e) {
+          console.warn("Could not remove persisted game version:", e);
+        }
+      }
+
+      // Load versions persisted in IDB into the in-memory list (files stay in
+      // IDB and are read lazily). Skips any whose id already exists (e.g. the
+      // active imported game).
+      async function loadPersistedGameVersions(db) {
+        var reg = await getGameVerRegistry(db);
+        Object.keys(reg).forEach(function (id) {
+          if (
+            _gameVersions.some(function (g) {
+              return g.id === id;
+            })
+          )
+            return;
+          var r = reg[id] || {};
+          _gameVersions.push({
+            id: id,
+            label: r.label || id,
+            version: r.version || null,
+            fileCount: r.fileCount || 0,
+          });
+        });
+        renderGameVersions();
+      }
+
+      async function addGameVersion(hint) {
+        // Carry the naming hint (if any) through the async chooser to the
+        // folder/zip onchange. Reset on every entry so a stale hint from an
+        // earlier cancelled flow never mislabels an unrelated import.
+        _dlImportHint = hint || null;
         var c = await openChooser({
           title: "Add a game version",
           sub: "Another copy of the game, for mods that need a specific version.",
         });
         if (c === "folder") $("ver-dir").click();
         else if (c === "zip") $("ver-zip").click();
+        else _dlImportHint = null; // cancelled
       }
 
       async function renderInstalled() {
@@ -5857,10 +6126,67 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         el.innerHTML = html;
       }
 
+      // Render the Install CTA area. `actions` is an array of
+      // { label, primary, onclick }. They live in the reserved row (so e.g. the
+      // Tomb "Download it"/"Import it" pair fills the row's empty space rather
+      // than adding height below the analysis). An empty/missing array keeps an
+      // invisible placeholder button so the row's height never changes.
+      function setInstallActions(actions) {
+        var row = $("install-row");
+        row.hidden = false;
+        row.innerHTML = "";
+        if (!actions || !actions.length) {
+          var ph = document.createElement("button");
+          ph.className = "action-btn primary";
+          ph.disabled = true;
+          ph.style.visibility = "hidden";
+          ph.textContent = "Install into my game";
+          row.appendChild(ph);
+          return;
+        }
+        actions.forEach(function (a) {
+          var b = document.createElement("button");
+          b.className = "action-btn" + (a.primary ? " primary" : "");
+          b.textContent = a.label;
+          b.onclick = a.onclick;
+          row.appendChild(b);
+        });
+      }
+
+      // Single-button convenience over setInstallActions for the common install
+      // CTA. When the required game version isn't imported we flip it to a
+      // "Download required version" button that opens the Download tab instead.
+      //   opts: { show, label, action }   action: "install" (default) | "download"
+      function setInstallButton(opts) {
+        if (!opts || !opts.show) {
+          setInstallActions(null);
+          return;
+        }
+        if (opts.action === "download") {
+          setInstallActions([
+            {
+              label: opts.label || "Download required version",
+              primary: true,
+              onclick: function () {
+                openDownloadForVersion(opts.version || null);
+              },
+            },
+          ]);
+        } else {
+          setInstallActions([
+            {
+              label: opts.label || "Install into my game",
+              primary: true,
+              onclick: doInstall,
+            },
+          ]);
+        }
+      }
+
       async function analyzeFile(file) {
         _selected = null;
-        $("install-row").hidden = true;
-        $("btn-install").disabled = true;
+        _pendingTomb = null;
+        setInstallButton({ show: false });
         setAnalysis(
           '<span class="spinner"></span>Analyzing ' +
             escapeHtml(file.name) +
@@ -5983,9 +6309,19 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
                 "This will be layered over your base game as-is.",
               "ok",
             );
-            $("install-row").hidden = false;
-            $("btn-install").disabled = false;
-            $("install-note").textContent = "";
+            if (await hasBaseGame(_db)) {
+              setInstallButton({ show: true, label: "Install into my game" });
+              $("install-note").textContent = "";
+            } else {
+              setInstallButton({
+                show: true,
+                label: "Download required version",
+                action: "download",
+              });
+              $("install-note").innerHTML =
+                '<span class="err">No game imported.</span> This mod is layered ' +
+                "over a base game; download or import one first.";
+            }
             return;
           }
 
@@ -6160,16 +6496,17 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       async function findTombBase() {
         for (var i = 0; i < _gameVersions.length; i++) {
           var v = _gameVersions[i];
-          var ver = v.imported
-            ? _importedVersion
-            : baseVersionFromFiles(v.files);
+          // Every entry carries its version (read from the CLD, a Download hint,
+          // or the persisted registry), so match on that directly - a persisted
+          // entry has no in-memory files to re-read.
+          var ver = v.imported ? v.version || _importedVersion : v.version;
           if (ver === TOMB_BASE_VERSION) return v;
         }
         return null;
       }
       // The www (shipped form) of a _gameVersions entry, for mounting as a base.
       async function tombBaseFilesOf(v) {
-        return v.imported ? await readBaseFiles(_db) : toWwwRoot(v.files);
+        return toWwwRoot(await gameVerFiles(v));
       }
 
       // Tomb branch of analyzeFile: needs an imported v2.0.14 base to flatten
@@ -6181,19 +6518,44 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         var base = await findTombBase();
         if (!base) {
           _selected = null;
-          $("install-row").hidden = true;
+          // Remember this mod so that, once the required version is imported,
+          // landing back on the Install tab resumes straight into the install.
+          _pendingTomb = { file: file, bytes: bytes, manifest: manifest };
           setAnalysis(
-            '<span class="warn">Tomb-format mod detected (' +
+            '<span class="warn">The mod <strong>' +
               escapeHtml(modName) +
-              ").</span>\nIt must be built against game version <strong>" +
+              "</strong> uses Tomb, and requires the game version <strong>" +
               escapeHtml(verText(TOMB_BASE_VERSION)) +
-              "</strong>, which you do not have imported. Add that version with " +
-              'the "+" on the Modding tab (or import it on the loader), then try ' +
-              "again.",
+              "</strong> that you have not yet imported. Import it or download " +
+              "it.</span>",
             "warn",
           );
+          // The two CTAs fill the reserved install-row (no extra height below).
+          setInstallActions([
+            {
+              // Download it -> Download tab, pre-opened on the required version.
+              label: "Download it",
+              primary: true,
+              onclick: function () {
+                openDownloadForVersion(TOMB_BASE_VERSION);
+              },
+            },
+            {
+              // Import it -> Modding tab + the "add a game version" file picker,
+              // hinted with the required version so the import is named right.
+              label: "Import it",
+              onclick: function () {
+                selectTab("modding");
+                addGameVersion({
+                  version: TOMB_BASE_VERSION,
+                  name: verText(TOMB_BASE_VERSION),
+                });
+              },
+            },
+          ]);
           return;
         }
+        _pendingTomb = null;
         _selected = {
           name: file.name,
           bytes: bytes,
@@ -6210,8 +6572,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             "while.",
           "ok",
         );
-        $("install-row").hidden = false;
-        $("btn-install").disabled = false;
+        setInstallButton({ show: true, label: "Install into my game" });
         $("install-note").textContent = "";
       }
 
@@ -6258,9 +6619,8 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             "</dd>" +
             "</dl>",
         );
-        $("install-row").hidden = false;
-        $("btn-install").disabled = false;
         if (await hasBaseGame(_db)) {
+          setInstallButton({ show: true, label: "Install into my game" });
           var v = _importedVersion || (await baseVersion(_db));
           $("install-note").innerHTML =
             "Your game versions" +
@@ -6269,9 +6629,14 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             "If none match, add the version this mod needs with the " +
             '"+" on the Modding tab, then install again.';
         } else {
+          setInstallButton({
+            show: true,
+            label: "Download required version",
+            action: "download",
+          });
           $("install-note").innerHTML =
-            '<span class="err">No game imported.</span> Import one of the required ' +
-            'versions on the <a href="loader.html" style="color: var(--purple)">loader</a> first, then return here.';
+            '<span class="err">No game imported.</span> Download or import one of ' +
+            "the required versions first, then return here.";
         }
       }
 
@@ -6281,14 +6646,13 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         var out = [];
         for (var i = 0; i < _gameVersions.length; i++) {
           var v = _gameVersions[i];
-          if (v.imported) {
-            out.push({ label: v.label, files: await readBaseFiles(_db) });
-          } else if (v.files) {
-            out.push({ label: v.label, files: toWwwRoot(v.files) });
-          }
+          out.push({ label: v.label, files: toWwwRoot(await gameVerFiles(v)) });
         }
         if (!out.length) {
-          out.push({ label: "imported", files: await readBaseFiles(_db) });
+          out.push({
+            label: "imported",
+            files: toWwwRoot(await readBaseFiles(_db)),
+          });
         }
         return out;
       }
@@ -6302,7 +6666,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           );
           return;
         }
-        $("btn-install").disabled = true;
+        setInstallRowDisabled(true);
         var onInstallProgress = showProgress(
           "analysis",
           "Installing, this can take a moment (extracting and repacking your game)...",
@@ -6436,7 +6800,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
               "</code>).</span>\nOpen the game and enable it from the <strong>Mods</strong> menu.",
             "ok",
           );
-          $("install-row").hidden = true;
+          setInstallButton({ show: false });
           _selected = null;
           await renderInstalled();
         } catch (e) {
@@ -6445,8 +6809,17 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
               escapeHtml(e.message || String(e)),
             "err",
           );
-          $("btn-install").disabled = false;
+          setInstallRowDisabled(false);
         }
+      }
+
+      // Enable/disable every button in the Install CTA row (during install).
+      function setInstallRowDisabled(disabled) {
+        $("install-row")
+          .querySelectorAll("button")
+          .forEach(function (b) {
+            b.disabled = disabled;
+          });
       }
 
       function bufOf(u8) {
@@ -6540,6 +6913,28 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         // The Download tab pulls its version catalog lazily, the first time it
         // is opened (network-only, best-effort).
         if (name === "download") loadDownload();
+        // Landing on Install with a Tomb mod that was blocked on a missing
+        // game version: if it's now imported, resume into the install directly.
+        if (name === "install") maybeResumeTomb();
+      }
+
+      // Re-check a Tomb mod that was previously blocked on a missing game
+      // version. If the required version is now imported, re-run the analysis
+      // (which yields an installable selection) and kick off the install
+      // immediately, progress bar and all.
+      var _resumingTomb = false;
+      async function maybeResumeTomb() {
+        if (!_pendingTomb || _resumingTomb) return;
+        _resumingTomb = true;
+        try {
+          if (!(await findTombBase())) return; // still missing -> stay pending
+          var p = _pendingTomb;
+          _pendingTomb = null;
+          await analyzeTomb(p.file, p.bytes, p.manifest);
+          if (_selected && _selected.kind === "tomb") await doInstall();
+        } finally {
+          _resumingTomb = false;
+        }
       }
 
       // Select a tab and reflect it in the URL hash (so the tab is shareable
@@ -6729,9 +7124,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         try {
           $("btn-create").disabled = true;
           setStatusEl("create-status", SPIN + "Reading source files...");
-          var src = _createSelected.imported
-            ? toWwwRoot(await readBaseFiles(_db))
-            : toWwwRoot(_createSelected.files);
+          var src = toWwwRoot(await gameVerFiles(_createSelected));
           if (!fileCount(src)) {
             setStatusEl(
               "create-status",
@@ -6913,7 +7306,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           var bases = [];
           for (var i = 0; i < _buildSelected.length; i++) {
             var v = _buildSelected[i];
-            var files = v.imported ? await readBaseFiles(_db) : v.files;
+            var files = await gameVerFiles(v);
             bases.push({ label: v.label, files: toWwwRoot(files) });
           }
           var bytes = await runHeavy(
@@ -7168,17 +7561,66 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       var _dlCat = null;
       var _dlStep = 1; // current wizard step (1-4)
       var _dlSel = null; // chosen catalog entry (gates steps 2-4)
+      var _dlFocusVersion = null; // version to spotlight (set by "Download it")
+
+      // Open the Download tab spotlighting a specific game version: switch tabs,
+      // make sure the catalog is loaded, then open + scroll to + highlight that
+      // version's row. Used by the Install tab's "Download required version" /
+      // Tomb "Download it" CTAs. `version` may be null (just open the tab).
+      async function openDownloadForVersion(version) {
+        _dlFocusVersion = version || null;
+        // Build the catalog first (idempotent) so the row exists before we focus
+        // it, then reveal the tab. Ordering this way avoids a render race with
+        // showTab()'s own lazy loadDownload() call.
+        await loadDownload();
+        selectTab("download");
+        applyDlFocus(_dlFocusVersion);
+      }
+
+      // Open the group holding `version`, scroll its row into view and highlight
+      // it. Operates on the already-rendered catalog DOM, so it works whether the
+      // catalog was just built or was loaded on an earlier visit.
+      function applyDlFocus(version) {
+        if (!version) return;
+        var box = $("dl-catalog");
+        if (!box) return;
+        var row = null;
+        box.querySelectorAll(".vitem").forEach(function (r) {
+          if (r.dataset.version === version) row = r;
+        });
+        if (!row) return;
+        var det = row.closest("details.vmajor");
+        // Collapse every other major group so only the focused version's group
+        // is open, keeping the spotlight uncluttered.
+        box.querySelectorAll("details.vmajor").forEach(function (d) {
+          d.open = d === det;
+        });
+        box.querySelectorAll(".vitem.dl-focus").forEach(function (r) {
+          r.classList.remove("dl-focus");
+        });
+        row.classList.add("dl-focus");
+        requestAnimationFrame(function () {
+          row.scrollIntoView({ block: "nearest" });
+        });
+      }
+
+      // Fetch the version catalog once (shared by the Download wizard and the
+      // version picker). Returns _dlCat or null if it can't be reached.
+      async function ensureCatalog() {
+        if (_dlCat) return _dlCat;
+        try {
+          var r = await fetch(DL_CATALOG_URL, { cache: "no-cache" });
+          if (r.ok) _dlCat = await r.json();
+        } catch (e) {}
+        return _dlCat;
+      }
 
       async function loadDownload() {
         dlGoStep(1); // reset the wizard each time the tab is (re)opened
         if (_dlLoaded) return;
         _dlLoaded = true;
         var box = $("dl-catalog");
-        try {
-          var r = await fetch(DL_CATALOG_URL, { cache: "no-cache" });
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          _dlCat = await r.json();
-        } catch (e) {
+        if (!(await ensureCatalog())) {
           _dlLoaded = false; // allow a retry on the next tab visit
           box.innerHTML =
             '<p class="meta">Could not load the version list right now. ' +
@@ -7188,6 +7630,52 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         renderDlCatalog();
       }
 
+      // Ask the user which build an imported game is, when its version can't be
+      // read from the files. Resolves to a version string or null (skip). The
+      // body is a <select> of catalog versions when available, else a free-text
+      // input so it still works offline.
+      var _verpickResolve = null;
+      async function openVerPick() {
+        await ensureCatalog();
+        var body = $("verpick-body");
+        body.innerHTML = "";
+        var majors = (_dlCat && _dlCat.majors) || [];
+        if (majors.length) {
+          var sel = document.createElement("select");
+          sel.id = "verpick-input";
+          majors.forEach(function (mj) {
+            var og = document.createElement("optgroup");
+            og.label = (mj.major || "?") + (mj.label ? " - " + mj.label : "");
+            (mj.versions || []).forEach(function (v) {
+              if (!v.version) return;
+              var o = document.createElement("option");
+              o.value = v.version;
+              o.textContent = v.name || v.version;
+              og.appendChild(o);
+            });
+            if (og.children.length) sel.appendChild(og);
+          });
+          body.appendChild(sel);
+        } else {
+          // Offline / catalog unavailable: let the user type the version.
+          var inp = document.createElement("input");
+          inp.type = "text";
+          inp.id = "verpick-input";
+          inp.placeholder = "e.g. 2.0.14";
+          body.appendChild(inp);
+        }
+        $("verpick").hidden = false;
+        return new Promise(function (resolve) {
+          _verpickResolve = resolve;
+        });
+      }
+      function closeVerPick(val) {
+        $("verpick").hidden = true;
+        var r = _verpickResolve;
+        _verpickResolve = null;
+        if (r) r((val && String(val).trim()) || null);
+      }
+
       // Show step `n`: swap the visible panel and reflect the stepper state.
       // Steps 2-4 stay locked until a version is chosen.
       function dlGoStep(n) {
@@ -7195,11 +7683,11 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         _dlStep = n;
         // The "Downloading <version>" line is context for steps 2-4 only.
         $("dl-picked").hidden = n === 1 || !_dlSel;
-        document
-          .querySelectorAll("#tab-download .step-panel")
-          .forEach(function (p) {
+        MOD_ROOT.querySelectorAll("#tab-download .step-panel").forEach(
+          function (p) {
             p.hidden = Number(p.dataset.panel) !== n;
-          });
+          },
+        );
         MOD_ROOT.querySelectorAll("#dl-stepper .step").forEach(function (b) {
           var s = Number(b.dataset.step);
           b.classList.toggle("active", s === n);
@@ -7246,9 +7734,20 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         majors.forEach(function (mj, mi) {
           var det = document.createElement("details");
           det.className = "vmajor";
-          // Open the group holding the imported match (else the first group).
+          // When steered here from the Install tab ("Download it"), open the
+          // group holding the requested version; otherwise the imported match
+          // (else the first group).
+          var hasFocus =
+            _dlFocusVersion &&
+            (mj.versions || []).some(function (v) {
+              return v.version === _dlFocusVersion;
+            });
           var hasMatch = (mj.versions || []).some(dlIsImported);
-          if (hasMatch || (!matched && mi === 0)) det.open = true;
+          if (
+            hasFocus ||
+            (!_dlFocusVersion && (hasMatch || (!matched && mi === 0)))
+          )
+            det.open = true;
           var sum = document.createElement("summary");
           sum.textContent =
             (mj.major || "?") + (mj.label ? ": " + mj.label : "");
@@ -7256,6 +7755,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           (mj.versions || []).forEach(function (v) {
             var row = document.createElement("div");
             row.className = "vitem";
+            if (v.version) row.dataset.version = v.version;
             var left = document.createElement("div");
             left.innerHTML =
               escapeHtml(v.name || v.version || "version") +
@@ -7323,13 +7823,23 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         "Best-guess default: paste the console output above to correct it for " +
         "your machine.";
       var DL_IMPORT_NOTE =
-        "In the picker, go to the path above and choose that folder. It's added " +
-        "to your <b>imported game versions</b>, ready for Create / Build.";
+        "This takes you to the <b>Modding</b> tab and opens the same importer " +
+        "as the <b>+</b> button. In the picker, go to the path above and choose " +
+        "that folder. It's added to your <b>imported game versions</b>, ready " +
+        "for Create / Build.";
+
+      // Always display the destination with forward slashes - Steam's console
+      // (and our Windows default) hand back backslashes, which are awkward to
+      // read and to paste back into the folder picker. Forward slashes work the
+      // same for the user on every platform.
+      function setDlPath(p) {
+        $("dl-path").value = (p || "").replace(/\\/g, "/");
+      }
 
       // Reset step 4 to the best-guess default (called when a version is picked).
       function dlResetPath() {
         $("dl-console").value = "";
-        $("dl-path").value = steamContentPath(dlAppid(), dlDepot());
+        setDlPath(steamContentPath(dlAppid(), dlDepot()));
         $("dl-path-src").textContent = DL_PATH_DEFAULT_NOTE;
         $("dl-import-note").innerHTML = DL_IMPORT_NOTE;
       }
@@ -7339,16 +7849,16 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         var raw = $("dl-console").value;
         var p = parseDepotPath(raw);
         if (p) {
-          $("dl-path").value = p;
+          setDlPath(p);
           $("dl-path-src").textContent =
             "Detected from your console output: this is where your files are.";
         } else if (raw.trim()) {
-          $("dl-path").value = steamContentPath(dlAppid(), dlDepot());
+          setDlPath(steamContentPath(dlAppid(), dlDepot()));
           $("dl-path-src").textContent =
             'No path found yet: paste the whole output, including the "Depot ' +
             'download complete" line.';
         } else {
-          $("dl-path").value = steamContentPath(dlAppid(), dlDepot());
+          setDlPath(steamContentPath(dlAppid(), dlDepot()));
           $("dl-path-src").textContent = DL_PATH_DEFAULT_NOTE;
         }
       }
@@ -7420,31 +7930,18 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         // the folder -> add it to the imported game versions (same list as
         // Modding -> "+"), with inline feedback here.
         $("dl-console").addEventListener("input", dlApplyConsole);
+        // "Import the downloaded version" -> Modding tab + the shared "+"
+        // importer, pre-seeded with the picked version's name so the resulting
+        // entry is labelled "v2.0.14" rather than its "depot_..." folder name.
         $("dl-import-folder").onclick = function () {
-          $("dl-import-dir").click();
-        };
-        $("dl-import-dir").onchange = async function () {
-          if (!this.files.length) return;
-          var note = $("dl-import-note");
-          note.innerHTML = SPIN + "Reading the folder...";
-          try {
-            var top =
-              (this.files[0].webkitRelativePath || "version").split("/")[0] ||
-              "version";
-            var files = await filesFromFileList(this.files);
-            var v = baseVersionFromFiles(files);
-            var label = verText(v) || top;
-            _gameVersions.push({ label: label, version: v, files: files });
-            renderGameVersions();
-            note.innerHTML =
-              "Added <b>" +
-              escapeHtml(label) +
-              "</b> to your imported game versions, it's now available under " +
-              "<b>Modding</b> and in Create / Build.";
-          } catch (e) {
-            note.textContent = "Couldn't read that folder: " + String(e);
-          }
-          this.value = "";
+          var hint = _dlSel
+            ? {
+                version: _dlSel.version || null,
+                name: _dlSel.name || verText(_dlSel.version) || null,
+              }
+            : null;
+          selectTab("modding");
+          addGameVersion(hint);
         };
         // The step tabs themselves are the only manual navigation (jump back to
         // any reached step).
@@ -7512,6 +8009,18 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         // Pack and Build so each feature exposes a single "choose" button.
         wireChooser();
 
+        // Version picker (shown when an added game's version can't be read).
+        $("verpick-ok").onclick = function () {
+          var inp = $("verpick-input");
+          closeVerPick(inp ? inp.value : null);
+        };
+        $("verpick-cancel").onclick = function () {
+          closeVerPick(null);
+        };
+        $("verpick").onclick = function (e) {
+          if (e.target === $("verpick")) closeVerPick(null);
+        };
+
         // Download tab (Steam console copy button). The catalog itself loads
         // lazily on first open (see showTab).
         wireDownload();
@@ -7524,26 +8033,19 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             (this.files[0].webkitRelativePath || "version").split("/")[0] ||
             "version";
           var files = await filesFromFileList(this.files);
-          var v = baseVersionFromFiles(files);
-          _gameVersions.push({
-            label: verText(v) || name,
-            version: v,
-            files: files,
-          });
+          var hint = _dlImportHint;
+          _dlImportHint = null;
           this.value = "";
-          renderGameVersions();
+          await pushGameVersion(files, name, hint);
         };
         $("ver-zip").onchange = async function () {
           if (!this.files.length) return;
+          var fallback = this.files[0].name.replace(/\.zip$/i, "");
           var files = await readZipFile(this.files[0]);
-          var v = baseVersionFromFiles(files);
-          _gameVersions.push({
-            label: verText(v) || this.files[0].name.replace(/\.zip$/i, ""),
-            version: v,
-            files: files,
-          });
+          var hint = _dlImportHint;
+          _dlImportHint = null;
           this.value = "";
-          renderGameVersions();
+          await pushGameVersion(files, fallback, hint);
         };
 
         // Create: pick which game version (from the Modding list) to extract.
@@ -7605,6 +8107,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         // and the default Build target.
         _importedVersion = await baseVersion(_db);
         _gameVersions.push({
+          id: gameVerId(_importedVersion, "imported game"),
           label: verText(_importedVersion) || "imported game",
           version: _importedVersion,
           imported: true,
@@ -7612,6 +8115,8 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         _createSelected = _gameVersions[0];
         _buildSelected = [_gameVersions[0]];
         renderGameVersions();
+        // Re-attach any extra game versions the user added in a prior session.
+        await loadPersistedGameVersions(_db);
         await renderInstalled();
         loadDesktopApps();
 
@@ -7652,7 +8157,8 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             analyzeFile(e.dataTransfer.files[0]);
           }
         });
-        $("btn-install").onclick = doInstall;
+        // The Install CTA's click handlers are wired per-render by
+        // setInstallActions() (install vs. download vs. the Tomb pair).
 
         _modInitDone = true;
 
