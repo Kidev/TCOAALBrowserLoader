@@ -319,9 +319,8 @@
       <div class="err-msg" id="err-msg"></div>
       <div class="actions">
         <button class="danger" onclick="window.__bootClearAndReload()">
-          Clear data &amp; re-import
+          Clear and reload
         </button>
-        <button onclick="location.reload()">Reload</button>
       </div>
       <button class="details-btn" onclick="window.__bootToggleDiag()">
         Show diagnostic info
@@ -622,6 +621,7 @@
               };
               _sReq.onsuccess = function (e) {
                 var _db = e.target.result;
+                _openIdbConns.push(_db);
                 try {
                   var _rtx = _db.transaction("saves", "readonly");
                   var _kr = _rtx.objectStore("saves").getAllKeys();
@@ -661,6 +661,12 @@
         var TRANSLATIONS_DB_NAME = "tcoaal-translations";
         var CLD_KEY = "data/9c7050ae76645487";
         var LANG_CACHE_KEY = "__lang_data__";
+
+        // Every IndexedDB connection this page opens is tracked here so the
+        // clear-and-reload flow can close them first. An open connection
+        // blocks `deleteDatabase` (it fires `onblocked` and never completes),
+        // which is what left the recovery button frozen on "Clearing...".
+        var _openIdbConns = [];
 
         var splash = document.getElementById("boot-splash");
         var errOverlay = document.getElementById("boot-error");
@@ -766,6 +772,16 @@
           try {
             localStorage.clear();
           } catch (e) {}
+
+          // 3b. Close every IndexedDB connection this page opened. An open
+          // connection makes deleteDatabase block indefinitely (onblocked,
+          // never onsuccess), which is what froze the button on "Clearing...".
+          for (var _ci = 0; _ci < _openIdbConns.length; _ci++) {
+            try {
+              _openIdbConns[_ci].close();
+            } catch (e) {}
+          }
+          _openIdbConns.length = 0;
 
           // 4. Delete the IDB databases. Resolve on success; if the
           // request is blocked, wait a short while and retry once, the
@@ -1038,6 +1054,7 @@
                 e.target.result.createObjectStore(STORE_NAME);
               };
               req.onsuccess = function (e) {
+                _openIdbConns.push(e.target.result);
                 resolve(e.target.result);
               };
               req.onerror = function (e) {

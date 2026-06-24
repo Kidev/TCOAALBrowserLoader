@@ -3850,7 +3850,14 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           const req = indexedDB.open(DB_NAME, DB_VERSION);
           req.onupgradeneeded = (e) =>
             e.target.result.createObjectStore(STORE_NAME);
-          req.onsuccess = (e) => resolve(e.target.result);
+          req.onsuccess = (e) => {
+            const db = e.target.result;
+            // Close our connection if another context (e.g. a later
+            // deleteDatabase from the wipe flow) needs exclusive access, so
+            // this connection never blocks a delete/upgrade.
+            db.onversionchange = () => db.close();
+            resolve(db);
+          };
           req.onerror = (e) => reject(e.target.error);
         });
       }
@@ -4957,21 +4964,45 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           localStorage.clear();
         } catch (e) {}
 
+        // Resolves with true on a clean delete, false if the delete was
+        // blocked (another connection holds the DB open - almost always the
+        // DevTools Application > IndexedDB inspector). A blocked delete is
+        // only queued, not done: reloading anyway leaves a zombie delete that
+        // the next openDB() gets stuck behind, stalling re-import at 0% until
+        // the blocker releases. So we surface it instead of reloading blind.
         function dropDb(name) {
           return new Promise((resolve) => {
             try {
               const req = indexedDB.deleteDatabase(name);
-              req.onsuccess = resolve;
-              req.onerror = resolve;
-              req.onblocked = resolve;
+              req.onsuccess = () => resolve(true);
+              req.onerror = () => resolve(true);
+              req.onblocked = () => resolve(false);
             } catch {
-              resolve();
+              resolve(true);
             }
           });
         }
-        await dropDb("tcoaal");
-        await dropDb("tcoaal-saves");
-        await dropDb("tcoaal-translations");
+        const results = await Promise.all([
+          dropDb("tcoaal"),
+          dropDb("tcoaal-saves"),
+          dropDb("tcoaal-translations"),
+        ]);
+
+        if (results.some((ok) => !ok)) {
+          showError(
+            "Storage busy",
+            "Couldn't finish clearing browser data because something still " +
+              "has the database open. Close any DevTools IndexedDB inspector " +
+              "(Application > Storage > IndexedDB) and any other tabs of this " +
+              "site, then clear again.",
+            "deleteDatabase blocked",
+          );
+          if ($btnClear) {
+            $btnClear.disabled = false;
+            $btnClear.textContent = "Clear browser data";
+          }
+          return;
+        }
 
         // Signal completion on the button, then reload. The dying SW can
         // swallow the navigation, so guard with a hard-reload fallback.
