@@ -5659,7 +5659,7 @@
 
         case "addCustom":
           AudioManager.stopAll();
-          window.location.href = "modding.html";
+          window.location.href = "loader.html#modding";
           break;
 
         case "enableOverhaul":
