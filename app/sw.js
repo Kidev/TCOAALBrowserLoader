@@ -98,6 +98,12 @@ const APP_SHELL = [
   "/js/libs/lang-shim.js",
   "/js/libs/achievements-shim.js",
   "/js/libs/mod-runtime-worker.js",
+  // The heavy (~2.5MB) ModRuntime bundle the modding tab lazy-loads, both on
+  // the main thread (loader.html loadRuntime: <script src>) and inside the
+  // worker (mod-runtime-worker.js: importScripts). Without precaching, the
+  // Modding tab shell loads offline but every inspect/build/install fails the
+  // moment the runtime is pulled. Cache it so the tab is fully usable offline.
+  "/js/libs/mod-runtime.js",
   "/mods.json",
   "/expected-files.json",
 ];
@@ -1627,8 +1633,15 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "manifest.webmanifest" ||
     logicalPath === "js/libs/pako_inflate.min.js" ||
     logicalPath === "js/libs/browser-shim.js" ||
+    logicalPath === "js/libs/lang-format.js" ||
     logicalPath === "js/libs/lang-shim.js" ||
     logicalPath === "js/libs/achievements-shim.js" ||
+    // The Modding tab's runtime: the worker entry and the heavy bundle it
+    // (and the main-thread fallback) load. Both are precached in APP_SHELL;
+    // route them through the shell cache so the tab works fully offline
+    // instead of falling through serveFromIDB to a failing network fetch.
+    logicalPath === "js/libs/mod-runtime-worker.js" ||
+    logicalPath === "js/libs/mod-runtime.js" ||
     logicalPath === "mods.json" ||
     logicalPath === "expected-files.json" ||
     logicalPath === "favicon.ico" ||
