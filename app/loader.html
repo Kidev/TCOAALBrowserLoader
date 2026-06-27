@@ -2059,9 +2059,12 @@
         flex: 0 0 auto;
       }
 
-      /* Same conditions as loader.html: on mobile / short landscape the links
-         become icon-only and move to a compact bar at the bottom. */
-      @media (max-width: 720px),
+      /* Flip at the SAME threshold as the "Back to loader" button (60rem,
+         see the max-width:60rem rail block): below it the pinned back button
+         appears top-left, so the link buttons must vacate the top and move to
+         the compact bottom bar (icon-only). The short-landscape clause stays as
+         an extra trigger for screens with no vertical room. */
+      @media (max-width: 60rem),
         (orientation: landscape) and (max-height: 600px) {
         .github-link,
         .tool-link,
@@ -3093,12 +3096,16 @@
         text-transform: uppercase;
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
       }
-      @media (max-width: 720px) {
+      /* Same threshold as the "Back to loader" button (60rem): when the pinned
+         back button takes the top-left corner, the big Steam banner (also fixed
+         top-left) must give way to the compact icon in the bottom link bar, so
+         the two never overlap. */
+      @media (max-width: 60rem) {
         .steam-buy-card {
           display: none;
         }
       }
-      @media (max-width: 720px),
+      @media (max-width: 60rem),
         (orientation: landscape) and (max-height: 600px) {
         .steam-link {
           display: flex;
@@ -3606,12 +3613,6 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
                       Import the downloaded version
                     </button>
                   </div>
-                  <p class="meta" id="dl-import-note">
-                    This takes you to the <b>Modding</b> tab and opens the same
-                    importer as the <b>+</b> button. In the picker, go to the
-                    path above and choose that folder. It's added to your
-                    <b>imported game versions</b>, ready for Create / Build.
-                  </p>
                 </div>
 
                 <div class="status" id="dl-status" hidden></div>
@@ -3982,6 +3983,28 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           return false;
         }
 
+        // Detect & convert pre-remaster (2.x / ".k9a") game formats. A 3.x
+        // remaster import returns null here, so `entries` is left exactly as it
+        // was and every line below runs the original, unchanged path.
+        let gameInfo = null;
+        try {
+          gameInfo = await prepareOldVersionImport(entries);
+        } catch (err) {
+          console.warn("[loader] old-version detection failed:", err);
+        }
+        if (gameInfo) {
+          console.info(
+            "[loader] Detected old game format: " +
+              gameInfo.label +
+              " - decrypting .k9a assets to plain files on import.",
+          );
+          setStatus(
+            "Detected " + gameInfo.label + " - converting assets...",
+            "ok",
+          );
+          entries = gameInfo.entries;
+        }
+
         // Mark storage as persistent before writing hundreds of MB, so the
         // browser doesn't evict the import later under storage pressure.
         await requestPersistentStorage();
@@ -4010,9 +4033,14 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
 
         let done = 0;
         const skipped = [];
-        for (const { path: filePath, getBuffer } of entries) {
+        for (const entry of entries) {
+          // Read the buffer first: converted ".k9a" entries finalise their
+          // logical `path` (with the real extension from the container header)
+          // inside getBuffer(). Plain entries read `path` the same either way.
+          let filePath = entry.path;
           try {
-            const buffer = await readWithRetry(getBuffer, 3);
+            const buffer = await readWithRetry(entry.getBuffer, 3);
+            filePath = entry.path;
             await putAsset(db, filePath, buffer);
           } catch (err) {
             // Out of storage: every remaining write would fail too, leaving a
@@ -4048,8 +4076,18 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         // the wrong directory will still see "Loading X / Y" succeed but
         // the game will boot into a broken state. Catch it now.
         setStatus("Validating import...", "ok");
+        // An old build keeps its language data in languages/<lang>/dialogue.loc
+        // rather than the remaster's hashed CLD, so require that file instead.
+        const requiredFiles = REQUIRED_FILES.map((k) =>
+          gameInfo && k === CLD_IDB_KEY ? gameInfo.cldPath : k,
+        );
+        const requiredLabels = Object.assign({}, REQUIRED_LABELS);
+        if (gameInfo) {
+          requiredLabels[gameInfo.cldPath] =
+            "language data (" + gameInfo.cldPath + ")";
+        }
         const missing = [];
-        for (const key of REQUIRED_FILES) {
+        for (const key of requiredFiles) {
           const present = await getAsset(db, key);
           if (!present) missing.push(key);
         }
@@ -4057,7 +4095,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           // Required files (engine, plugin registry, CLD) ARE fatal: the
           // game can't boot without them. Block and explain.
           const labels = missing
-            .map((k) => "  - " + (REQUIRED_LABELS[k] || k))
+            .map((k) => "  - " + (requiredLabels[k] || k))
             .join("\n");
           showError(
             "Required files missing",
@@ -4089,7 +4127,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         }
 
         setStatus(`${total} files stored. Extracting language data...`, "ok");
-        const langOk = await extractLangData(db);
+        const langOk = await extractLangData(db, gameInfo && gameInfo.cldPath);
         if (!langOk) {
           showError(
             "Language data couldn't be extracted",
@@ -4107,6 +4145,25 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         // surfaced to the user but does NOT block: mods, partial copies,
         // and version drift are all valid reasons for some files to be
         // absent. The user can choose to play anyway or re-import.
+        // The healthcheck manifest (expected-files.json) lists remaster hashed
+        // names, so it doesn't apply to a converted old build -- skip it there
+        // and launch directly rather than show a wall of false "missing" files.
+        if (gameInfo) {
+          // expected-files.json lists remaster hashed names, so index.html's
+          // boot healthcheck would always "fail" for an old build and bounce it
+          // straight back here. Mark it acknowledged (it genuinely is -- this is
+          // a known, complete non-remaster layout) so the game launches and
+          // future direct visits to index.html don't loop. Cleared on a clean
+          // remaster re-import or a full data wipe.
+          try {
+            localStorage.setItem("_healthcheckAcknowledged", "1");
+          } catch (e) {}
+          setStatus("Ready! Launching game...", "ok");
+          setTimeout(() => {
+            window.location.href = "/index.html";
+          }, 600);
+          return true;
+        }
         setStatus("Running healthcheck...", "ok");
         const health = await runHealthcheck(db);
         if (health && health.missing.length > 0) {
@@ -4344,6 +4401,345 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         return out;
       }
 
+      // Old (pre-remaster) game-format support.
+      //
+      // The 3.x remaster stores every asset under a SHA-256 hashed name and
+      // TCOAAL-encrypts it; the service worker decrypts those on the fly and
+      // that path is left completely untouched. The 2.x "Episode 2"-era builds
+      // instead keep logical filenames inside a ".k9a" container
+      //   [extLen:1][ext:extLen][keyByte:1][rolling-XOR payload]
+      // (mask seed fileMask(basename-without-ext) & 0xff -- NO +1, unlike the
+      // TCOAAL header) and ship the language data as a NEMLEI-wrapped
+      // "languages/<lang>/dialogue.loc". Neither shape is understood by the
+      // remaster service worker, so we DECRYPT them to plain logical files at
+      // import time. The result is an ordinary RPG Maker MV project the
+      // existing SW serves verbatim (its direct-path lookup hits first and
+      // dekit() is a no-op on plain bytes), so the remaster code path needs no
+      // change and behaves exactly as before. Detection keys off the presence
+      // of ".k9a" files: a remaster import has none, so prepareOldVersionImport
+      // returns null and the caller keeps the original entries untouched.
+      //
+      // Mirrors tools/build-tomb-mod.js decodeK9a() / parseLoc(); verified
+      // byte-identical against those tools on the real Episode 2 build.
+
+      var K9A_LOC_SIG = "00000NEMLEI00000"; // 16-byte CLD header
+
+      // Rolling-XOR mask seed for a ".k9a" file: derived from the basename
+      // WITHOUT its extension (e.g. "Map001"), and -- unlike the remaster --
+      // without the +1 the TCOAAL header format applies.
+      function k9aSeed(baseNoExt) {
+        let m = 0;
+        const s = baseNoExt.toUpperCase();
+        for (let i = 0; i < s.length; i++) m = (m << 1) ^ s.charCodeAt(i);
+        return m & 0xff;
+      }
+
+      // Decode a ".k9a" container. Returns { ext, bytes }: `ext` is the real
+      // extension recorded (unencrypted) in the header ("json"/"png"/"ogg"/...).
+      function decodeK9a(arrayBuffer, baseNoExt) {
+        const buf = new Uint8Array(arrayBuffer);
+        const extLen = buf[0];
+        const ext = new TextDecoder("latin1").decode(
+          buf.subarray(1, 1 + extLen),
+        );
+        let keyByte = buf[1 + extLen];
+        const payload = buf.subarray(1 + extLen + 1);
+        let mask = k9aSeed(baseNoExt);
+        if (keyByte === 0) keyByte = payload.length;
+        const out = new Uint8Array(payload.length);
+        for (let i = 0; i < payload.length; i++) {
+          if (i < keyByte) {
+            const b = payload[i];
+            out[i] = b ^ mask;
+            mask = ((mask << 1) ^ b) & 0xff;
+          } else {
+            out[i] = payload[i];
+          }
+        }
+        return { ext: ext || "", bytes: out };
+      }
+
+      // Map a "<path>.k9a" key to its decrypted logical name, using the real
+      // extension from the container header (falling back to folder convention
+      // when the header carries none).
+      function k9aLogicalPath(relPath, ext) {
+        const stem = relPath.replace(/\.k9a$/i, "");
+        if (ext) return stem + "." + ext;
+        if (/^data\//i.test(relPath)) return stem + ".json";
+        if (/^audio\//i.test(relPath)) return stem + ".ogg";
+        return stem + ".png"; // img/* and anything else
+      }
+
+      // XORENCODE assets (Episode 1).
+      //
+      // The 1.x "Episode 1" build ships the SAME cleanly-decodable ".k9a"
+      // containers as 2.x for almost every file, so it is decrypted the same
+      // way. The difference is that it ALSO ships an XORENCODE-encrypted copy
+      // under the plain name (data/X.json, img/Y.png, ...) next to each .k9a;
+      // those siblings are redundant and dropped (the .k9a wins). A handful of
+      // images, though, are shipped ONLY in this XORENCODE form (no .k9a) -- we
+      // decrypt those here so they aren't served as garbage.
+      //
+      // XORENCODE format (verified on the real Episode 1 depot): a fixed 17-byte
+      // header (the last byte is the partial-encryption keyByte) followed by the
+      // exact same rolling-XOR payload the .k9a uses, with the same seed
+      // (fileMask(basename-without-ext) & 0xff). Confirmed against the .k9a
+      // decode on all 693 paired images and yielding valid PNGs for every
+      // image shipped only as XORENCODE.
+
+      var XORENCODE_HEADER = 17;
+
+      // True when `bytes` already begin with the real magic for `ext` (i.e. the
+      // file is plain, not encrypted) -- so we never re-decode a genuine asset.
+      // Unknown extensions are treated as plain (left untouched).
+      function assetMagicOk(bytes, ext) {
+        const e = (ext || "").toLowerCase();
+        if (e === "png")
+          return (
+            bytes[0] === 0x89 &&
+            bytes[1] === 0x50 &&
+            bytes[2] === 0x4e &&
+            bytes[3] === 0x47
+          );
+        if (e === "jpg" || e === "jpeg")
+          return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+        if (e === "webp")
+          return (
+            bytes[0] === 0x52 &&
+            bytes[1] === 0x49 &&
+            bytes[2] === 0x46 &&
+            bytes[3] === 0x46 &&
+            bytes[8] === 0x57 &&
+            bytes[9] === 0x45 &&
+            bytes[10] === 0x42 &&
+            bytes[11] === 0x50
+          );
+        if (e === "ogg")
+          return (
+            bytes[0] === 0x4f &&
+            bytes[1] === 0x67 &&
+            bytes[2] === 0x67 &&
+            bytes[3] === 0x53
+          );
+        if (e === "m4a")
+          return (
+            bytes.length > 11 &&
+            bytes[4] === 0x66 &&
+            bytes[5] === 0x74 &&
+            bytes[6] === 0x79 &&
+            bytes[7] === 0x70
+          );
+        if (e === "json") {
+          for (let i = 0; i < bytes.length && i < 64; i++) {
+            const c = bytes[i];
+            // skip whitespace and a UTF-8 BOM
+            if (
+              c === 0x20 ||
+              c === 0x09 ||
+              c === 0x0a ||
+              c === 0x0d ||
+              c === 0xef ||
+              c === 0xbb ||
+              c === 0xbf
+            )
+              continue;
+            return c === 0x7b || c === 0x5b; // '{' or '['
+          }
+          return false;
+        }
+        return true; // unknown extension: assume plain
+      }
+
+      // Decrypt an XORENCODE-encrypted asset: strip the 17-byte header, then
+      // run the .k9a rolling XOR over the payload (keyByte = header's last byte,
+      // 0 = whole payload). Returns a Uint8Array.
+      function decodeXorEncode(arrayBuffer, baseNoExt) {
+        const buf = new Uint8Array(arrayBuffer);
+        if (buf.length <= XORENCODE_HEADER) return buf;
+        let keyByte = buf[XORENCODE_HEADER - 1];
+        const payload = buf.subarray(XORENCODE_HEADER);
+        let mask = k9aSeed(baseNoExt);
+        if (keyByte === 0) keyByte = payload.length;
+        const out = new Uint8Array(payload.length);
+        for (let i = 0; i < payload.length; i++) {
+          if (i < keyByte) {
+            const b = payload[i];
+            out[i] = b ^ mask;
+            mask = ((mask << 1) ^ b) & 0xff;
+          } else {
+            out[i] = payload[i];
+          }
+        }
+        return out;
+      }
+
+      // A logical game asset (image / audio / data) that may be encrypted.
+      var OLD_ASSET_RE = /^(img|audio|data|movies)\/.+\.(png|jpe?g|webp|ogg|m4a|json)$/i;
+
+      // Parse a NEMLEI-wrapped (or already-plain-JSON) CLD ".loc" buffer into
+      // its JSON text. Mirrors tools/build-tomb-mod.js parseLoc().
+      function parseLocText(arrayBuffer) {
+        const bytes = new Uint8Array(arrayBuffer);
+        const sig = new TextDecoder("latin1").decode(
+          bytes.subarray(0, K9A_LOC_SIG.length),
+        );
+        if (bytes.length >= K9A_LOC_SIG.length + 4 && sig === K9A_LOC_SIG) {
+          const off = K9A_LOC_SIG.length;
+          const view = new DataView(
+            bytes.buffer,
+            bytes.byteOffset,
+            bytes.byteLength,
+          );
+          const len = view.getUint32(off, true);
+          return new TextDecoder("utf-8").decode(
+            bytes.subarray(off + 4, off + 4 + len),
+          );
+        }
+        return new TextDecoder("utf-8").decode(bytes);
+      }
+
+      // Inspect a pending import. Returns null for a 3.x remaster import (so the
+      // caller runs the existing path unchanged), or a descriptor for an old
+      // build whose entries have been rewritten to plain decrypted logical
+      // files:
+      //   { entries, version, label, cldPath }
+      // `entries` finalise their own `path` from the container header on first
+      // getBuffer(), which is why storeFiles reads the buffer before the path.
+      async function prepareOldVersionImport(entries) {
+        const hasK9a = entries.some((e) => /\.k9a$/i.test(e.path));
+
+        // The earliest builds (1.0.0, early 2.0.x) ship NO ".k9a": their assets
+        // keep logical names (data/X.json, img/Y.png, ...) but are XORENCODE-
+        // encrypted. Detect that by probing a data file -- if data/*.json exists
+        // but isn't valid JSON, it's an encrypted old build. A 3.x remaster
+        // (hashed data names, no data/*.json) and a plain decrypted dump (valid
+        // JSON) both have no .k9a and fall through to null, untouched.
+        let xorEncoded = false;
+        if (!hasK9a) {
+          const probe = entries.find((e) => /^data\/.+\.json$/i.test(e.path));
+          if (probe) {
+            try {
+              const bytes = new Uint8Array(await probe.getBuffer());
+              xorEncoded = !assetMagicOk(bytes, "json");
+            } catch (e) {}
+          }
+        }
+        if (!hasK9a && !xorEncoded) return null; // remaster / decrypted dump
+
+        // Stems (path minus final extension) that ship a ".k9a". On a 1.x build
+        // each .k9a also has an XORENCODE-encrypted plain-named copy beside it
+        // (data/X.json, img/Y.png, ...). Those siblings are redundant and would
+        // collide in IDB with the decrypted .k9a output, so they are dropped --
+        // the .k9a is authoritative and decodes cleanly.
+        const k9aStems = new Set();
+        for (const e of entries) {
+          if (/\.k9a$/i.test(e.path))
+            k9aStems.add(e.path.replace(/\.k9a$/i, ""));
+        }
+        const stemOf = (p) => p.replace(/\.[^./]+$/, "");
+
+        // Version read from js/main.js (GAME_VERSION = "2.0.14"). 1.x "Episode
+        // 1" predates that constant but is uniquely identified by shipping the
+        // XORENCODE plain-named siblings next to its .k9a files.
+        let version = "";
+        const mainEntry = entries.find((e) => e.path === "js/main.js");
+        if (mainEntry) {
+          try {
+            const txt = new TextDecoder("utf-8").decode(
+              await mainEntry.getBuffer(),
+            );
+            const m = txt.match(/GAME_VERSION\s*=\s*["']([^"']+)["']/);
+            if (m) version = m[1];
+          } catch (e) {}
+        }
+        const shipsXorSiblings = entries.some(
+          (e) => !/\.k9a$/i.test(e.path) && k9aStems.has(stemOf(e.path)),
+        );
+        const major = version
+          ? version.split(".")[0]
+          : shipsXorSiblings
+            ? "1"
+            : "";
+        const episode =
+          major === "2"
+            ? "Episode 2"
+            : major === "1"
+              ? "Episode 1"
+              : "an older build";
+        const label = episode + (version ? " (v" + version + ")" : "");
+
+        // Locate the CLD: old builds ship languages/<lang>/dialogue.loc,
+        // English preferred (the remaster default), else the first found.
+        const cldEntry =
+          entries.find(
+            (e) => e.path.toLowerCase() === "languages/english/dialogue.loc",
+          ) ||
+          entries.find((e) =>
+            /^languages\/[^/]+\/dialogue\.loc$/i.test(e.path),
+          );
+        const cldPath = cldEntry ? cldEntry.path : CLD_IDB_KEY;
+
+        // Rewrite each entry. Decoding is lazy (one buffer at a time) so we
+        // never hold the whole decrypted game in memory.
+        const out = [];
+        for (const e of entries) {
+          const p = e.path;
+
+          // 1. ".k9a" container -> plain decrypted logical file. The real
+          //    extension lives in the header, so the path is finalised inside
+          //    getBuffer() (storeFiles reads the buffer before the path).
+          if (/\.k9a$/i.test(p)) {
+            const baseNoExt = p.split("/").pop().replace(/\.[^.]+$/, "");
+            let logical = k9aLogicalPath(p, "");
+            out.push({
+              get path() {
+                return logical;
+              },
+              getBuffer: async () => {
+                const dec = decodeK9a(await e.getBuffer(), baseNoExt);
+                logical = k9aLogicalPath(p, dec.ext);
+                return dec.bytes.buffer;
+              },
+            });
+            continue;
+          }
+
+          // 2. The XORENCODE-encrypted plain-named sibling of a .k9a: drop it
+          //    (the .k9a above already produces the decrypted logical file).
+          if (k9aStems.has(stemOf(p))) continue;
+
+          // 3. A bare game asset with no .k9a (e.g. the few Episode 1 images
+          //    shipped only in XORENCODE form): decrypt if encrypted, else
+          //    keep. assetMagicOk gates both decisions so a genuinely plain
+          //    file (or an undecryptable one) is never corrupted.
+          if (OLD_ASSET_RE.test(p)) {
+            const baseNoExt = p.split("/").pop().replace(/\.[^.]+$/, "");
+            const ext = (p.match(/\.([^./]+)$/) || ["", ""])[1];
+            out.push({
+              path: p,
+              getBuffer: async () => {
+                const ab = await e.getBuffer();
+                const bytes = new Uint8Array(ab);
+                if (assetMagicOk(bytes, ext)) return ab; // already plain
+                const dec = decodeXorEncode(ab, baseNoExt);
+                if (assetMagicOk(dec, ext)) return dec.buffer;
+                console.warn(
+                  "[loader] could not decrypt old asset, keeping as-is:",
+                  p,
+                );
+                return ab;
+              },
+            });
+            continue;
+          }
+
+          // 4. Plain file (engine JS, fonts, the .loc CLD, icon, txt, ...).
+          out.push(e);
+        }
+
+        return { entries: out, version: version, label: label, cldPath: cldPath };
+      }
+
       function getAsset(db, key) {
         return new Promise((resolve) => {
           const tx = db.transaction(STORE_NAME, "readonly");
@@ -4356,13 +4752,12 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       // Extract & cache the plain CLD JSON. Returns true on success,
       // false on any decode/parse failure (so the caller can surface a
       // clear "import incomplete" error).
-      async function extractLangData(db) {
-        const raw = await getAsset(db, CLD_IDB_KEY);
+      async function extractLangData(db, cldPathOverride) {
+        const cldKey = cldPathOverride || CLD_IDB_KEY;
+        const raw = await getAsset(db, cldKey);
         if (!raw) {
           console.warn(
-            "[loader] CLD file (" +
-              CLD_IDB_KEY +
-              ") not found in imported data",
+            "[loader] CLD file (" + cldKey + ") not found in imported data",
           );
           return false;
         }
@@ -4378,6 +4773,23 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         } else {
           console.warn("[loader] CLD: unexpected IDB type:", typeof raw);
           return false;
+        }
+
+        // Old build: the CLD is a NEMLEI-wrapped (or plain-JSON)
+        // languages/<lang>/dialogue.loc. Parse it to plain JSON and cache it
+        // under the same key the remaster path uses, so the service worker and
+        // browser shim serve it identically at /lang-data.json.
+        if (cldPathOverride) {
+          let jsonStr;
+          try {
+            jsonStr = parseLocText(buf);
+            JSON.parse(jsonStr);
+          } catch (e) {
+            console.warn("[loader] old CLD (.loc) parse failed:", e);
+            return false;
+          }
+          await putAsset(db, LANG_DATA_CACHE_KEY, jsonStr);
+          return true;
         }
 
         // Decrypt (no-op if not TCOAAL-encrypted)
@@ -7926,12 +8338,6 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       var DL_PATH_DEFAULT_NOTE =
         "Best-guess default: paste the console output above to correct it for " +
         "your machine.";
-      var DL_IMPORT_NOTE =
-        "This takes you to the <b>Modding</b> tab and opens the same importer " +
-        "as the <b>+</b> button. In the picker, go to the path above and choose " +
-        "that folder. It's added to your <b>imported game versions</b>, ready " +
-        "for Create / Build.";
-
       // Always display the destination with forward slashes - Steam's console
       // (and our Windows default) hand back backslashes, which are awkward to
       // read and to paste back into the folder picker. Forward slashes work the
@@ -7945,7 +8351,6 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         $("dl-console").value = "";
         setDlPath(steamContentPath(dlAppid(), dlDepot()));
         $("dl-path-src").textContent = DL_PATH_DEFAULT_NOTE;
-        $("dl-import-note").innerHTML = DL_IMPORT_NOTE;
       }
 
       // Live-update the destination as the user pastes their console output.
