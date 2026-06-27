@@ -3801,6 +3801,13 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             };
             req.onsuccess = function (e) {
               var db = e.target.result;
+              // Never let this best-effort handle block the wipe flow's
+              // deleteDatabase("tcoaal-saves") - close on versionchange.
+              db.onversionchange = function () {
+                try {
+                  db.close();
+                } catch (_) {}
+              };
               try {
                 var rtx = db.transaction("saves", "readonly");
                 var keysReq = rtx.objectStore("saves").getAllKeys();
@@ -3816,7 +3823,12 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
                       idoomed.push(ik);
                     }
                   }
-                  if (idoomed.length === 0) return;
+                  if (idoomed.length === 0) {
+                    try {
+                      db.close();
+                    } catch (_) {}
+                    return;
+                  }
                   try {
                     var wtx = db.transaction("saves", "readwrite");
                     var store = wtx.objectStore("saves");
@@ -3825,6 +3837,13 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
                         store.delete(idoomed[w]);
                       } catch (_) {}
                     }
+                    // Release the handle once the deletes commit so it can't
+                    // linger and block a later deleteDatabase.
+                    wtx.oncomplete = function () {
+                      try {
+                        db.close();
+                      } catch (_) {}
+                    };
                   } catch (_) {}
                 };
               } catch (_) {}
@@ -3845,6 +3864,8 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       var TCOAAL_SIG = [84, 67, 79, 65, 65, 76]; // "TCOAAL"
       var CLD_IDB_KEY = "data/9c7050ae76645487";
       var LANG_DATA_CACHE_KEY = "__lang_data__";
+      // hash->logical asset map for pre-remaster builds (see buildOldHashMap).
+      var OLD_HASHMAP_KEY = "__oldhashmap__";
 
       function openDB() {
         return new Promise((resolve, reject) => {
@@ -4137,6 +4158,16 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           setImportButtonsDisabled(false);
           return false;
         }
+
+        // Old builds: the pre-remaster DRM payload hashes some asset URLs at
+        // runtime even though the assets are stored under logical names. Record
+        // a hash->logical map so the service worker can resolve those requests
+        // (remaster imports never reach here, so they get no map).
+        if (gameInfo) {
+          setStatus("Indexing assets...", "ok");
+          await buildOldHashMap(db, entries);
+        }
+
         setStatus("Registering service worker...", "ok");
         await registerSW();
 
@@ -4164,6 +4195,23 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           }, 600);
           return true;
         }
+        // A remaster build that isn't the manifest's targetVersion has
+        // different hashed filenames, so the healthcheck would report a wall of
+        // false "missing" files. Treat it exactly like an old build: skip the
+        // check, acknowledge (so index.html's boot check doesn't bounce the
+        // user back here), and launch.
+        const outdated = await detectOutdatedRemaster(db);
+        if (outdated) {
+          try {
+            localStorage.setItem("_healthcheckAcknowledged", "1");
+          } catch (e) {}
+          setStatus("Ready! Launching game...", "ok");
+          setTimeout(() => {
+            window.location.href = "/index.html";
+          }, 600);
+          return true;
+        }
+
         setStatus("Running healthcheck...", "ok");
         const health = await runHealthcheck(db);
         if (health && health.missing.length > 0) {
@@ -4249,7 +4297,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       }
 
       // Render healthcheck result into the manage-panel's health section.
-      function renderHealthcheck(health) {
+      function renderHealthcheck(health, oldInfo) {
         const $hp = document.getElementById("health-panel");
         const $sum = document.getElementById("health-summary");
         const $counts = document.getElementById("health-counts");
@@ -4263,6 +4311,45 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         $sum.classList.remove("ok", "warn");
         if ($counts) $counts.textContent = "";
         if ($note) $note.textContent = "";
+
+        // Install the file-presence check doesn't apply to: either a
+        // pre-remaster build (expected-files.json covers only the remaster) or
+        // a remaster build that isn't the manifest's targetVersion (its hashed
+        // filenames differ). Both show the version and explain the skip instead
+        // of a false "files missing" wall. The `target` field distinguishes a
+        // known-but-different remaster version from an old build.
+        if (oldInfo) {
+          $hp.classList.add("ok");
+          $sum.classList.add("ok");
+          // Same summary for every non-target version (old build or a remaster
+          // that isn't the latest). Builds before 2.0.12 predate the
+          // GAME_VERSION constant, so the exact number is unknown - label them
+          // as older than that cutoff.
+          $sum.textContent = oldInfo.version
+            ? "Old game version (v" + oldInfo.version + ") used"
+            : "Old game version (< 2.0.12) used";
+          if ($note) {
+            $note.style.whiteSpace = "pre-line";
+            const tail =
+              "Only the latest game version is checked for missing files.\n" +
+              "Your imported copy should still work.";
+            // Lead with the latest version (when known, bold), then a blank
+            // line. innerHTML for the bold; \n still breaks under pre-line.
+            if (oldInfo.target) {
+              $note.innerHTML =
+                "Current game version is <strong>v" +
+                oldInfo.target +
+                "</strong>\n\n" +
+                tail;
+            } else {
+              $note.textContent = tail;
+            }
+          }
+          $tog.style.display = "none";
+          $list.classList.remove("visible");
+          setManageFooter(true);
+          return;
+        }
 
         if (!health) {
           $sum.textContent = "Library status unavailable";
@@ -4576,6 +4663,41 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       // A logical game asset (image / audio / data) that may be encrypted.
       var OLD_ASSET_RE = /^(img|audio|data|movies)\/.+\.(png|jpe?g|webp|ogg|m4a|json)$/i;
 
+      // SHA-256 asset-path hash (mirrors sw.js hashPath). The pre-remaster DRM
+      // payload, run in the browser, hashes some asset URLs the same way the
+      // remaster does (e.g. img/system/language.png -> img/system/<sha>), then
+      // appends the extension. Old builds store assets under LOGICAL names, so
+      // those hashed requests would 404. We record a hash->logical map at import
+      // (see buildOldHashMap) for the SW to resolve them.
+      async function swHashPath(logicalPath) {
+        const parts = logicalPath.split(/[/\\]/);
+        const fname = parts[parts.length - 1];
+        const encoded = new TextEncoder().encode(parts.join("/"));
+        const hashBuf = await crypto.subtle.digest("SHA-256", encoded);
+        const hex = Array.from(new Uint8Array(hashBuf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        let h = hex.substring(0, 16);
+        if (fname.toUpperCase().includes("[BUST]")) h += "[BUST]";
+        if (fname.startsWith("!")) h = "!" + h;
+        parts[parts.length - 1] = h;
+        return parts.join("/");
+      }
+
+      // Build and store the hash->logical asset map for an old build, keyed by
+      // hashPath (no extension, matching the SW's extension-stripped lookup).
+      async function buildOldHashMap(db, entries) {
+        const map = {};
+        for (const e of entries) {
+          const p = e.path;
+          if (!/^(data|img|audio|movies)\//i.test(p)) continue;
+          try {
+            map[await swHashPath(p)] = p;
+          } catch (err) {}
+        }
+        await putAsset(db, OLD_HASHMAP_KEY, map);
+      }
+
       // Parse a NEMLEI-wrapped (or already-plain-JSON) CLD ".loc" buffer into
       // its JSON text. Mirrors tools/build-tomb-mod.js parseLoc().
       function parseLocText(arrayBuffer) {
@@ -4749,6 +4871,76 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         });
       }
 
+      // Pre-remaster imports (Episode 1 / Episode 2) are converted to a plain
+      // logical-name layout at import and leave an `__oldhashmap__` marker (see
+      // buildOldHashMap). The healthcheck manifest (expected-files.json) lists
+      // only the remaster's hashed names, so it would flag almost every file as
+      // "missing" for these builds even though they run fine. Detect such an
+      // install so the health panel shows an "old version" notice instead of a
+      // bogus missing-files wall. Returns { version } when old (version is "" for
+      // Episode 1, which predates the GAME_VERSION constant), or null for a
+      // remaster install.
+      async function detectOldInstall(db) {
+        let isOld = false;
+        try {
+          isOld = (await getAsset(db, OLD_HASHMAP_KEY)) != null;
+        } catch (e) {}
+        if (!isOld) return null;
+        let version = "";
+        try {
+          // GAME_VERSION = "2.0.14" lives in js/main.js for every 2.x build.
+          const raw = await getAsset(db, "js/main.js");
+          if (raw) {
+            const bytes = raw instanceof ArrayBuffer ? new Uint8Array(raw) : raw;
+            const txt = new TextDecoder("utf-8").decode(bytes);
+            const m = txt.match(/GAME_VERSION\s*=\s*["']([^"']+)["']/);
+            if (m) version = m[1];
+          }
+        } catch (e) {}
+        // The latest/target version (for the "Current game version is v..."
+        // note) comes from the same manifest the remaster check uses.
+        let target = "";
+        try {
+          const manifest = await loadExpectedManifest();
+          target = (manifest && manifest.targetVersion) || "";
+        } catch (e) {}
+        return { version: version, target: target };
+      }
+
+      // Read the imported game's version string from js/main.js
+      // (`GAME_VERSION = "3.0.13"`, present in every build). Returns the
+      // version, or "" when it can't be read. Used to decide whether the
+      // remaster healthcheck (expected-files.json lists ONE version's hashed
+      // names) even applies to this install.
+      async function readImportedVersion(db) {
+        try {
+          const raw = await getAsset(db, "js/main.js");
+          if (!raw) return "";
+          const bytes = raw instanceof ArrayBuffer ? new Uint8Array(raw) : raw;
+          const txt = new TextDecoder("utf-8").decode(bytes);
+          const m = txt.match(/GAME_VERSION\s*=\s*["']([^"']+)["']/);
+          return (m && m[1].trim()) || "";
+        } catch (e) {
+          return "";
+        }
+      }
+
+      // A remaster install whose version differs from the one the healthcheck
+      // manifest was built for (expected-files.json `targetVersion`). The
+      // hashed filenames differ between versions, so the file-presence check
+      // would flag almost everything as missing even though the game is fine.
+      // Returns { version, target } to skip the check (mirroring old builds),
+      // or null when the install is the target version (or either version is
+      // unknown - then we check honestly).
+      async function detectOutdatedRemaster(db) {
+        const manifest = await loadExpectedManifest();
+        const target = manifest && manifest.targetVersion;
+        if (!target) return null; // manifest version-agnostic: check as before
+        const version = await readImportedVersion(db);
+        if (!version || version === target) return null;
+        return { version: version, target: target };
+      }
+
       // Extract & cache the plain CLD JSON. Returns true on success,
       // false on any decode/parse failure (so the caller can surface a
       // clear "import incomplete" error).
@@ -4920,6 +5112,12 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         }
         try {
           localStorage.clear();
+        } catch (e) {}
+
+        // Release the modding panel's long-lived IDB handle so it can't block
+        // the deletes below (same reason as performClearAndReimport).
+        try {
+          if (typeof window.__closeModDb === "function") window.__closeModDb();
         } catch (e) {}
 
         function dropDb(name) {
@@ -5376,22 +5574,53 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           localStorage.clear();
         } catch (e) {}
 
-        // Resolves with true on a clean delete, false if the delete was
+        // Proactively close any IDB handle this page itself still holds open
+        // (the modding panel keeps a connection open for its lifetime). An open
+        // connection from our own page is the most common cause of a blocked
+        // delete - far more than DevTools. Closing here lets deleteDatabase
+        // proceed immediately; the onversionchange handlers on every other
+        // connection cover handles we can't reach directly.
+        try {
+          if (typeof window.__closeModDb === "function") window.__closeModDb();
+        } catch (e) {}
+
+        // Resolves with true on a clean delete, false if the delete stays
         // blocked (another connection holds the DB open - almost always the
         // DevTools Application > IndexedDB inspector). A blocked delete is
         // only queued, not done: reloading anyway leaves a zombie delete that
         // the next openDB() gets stuck behind, stalling re-import at 0% until
         // the blocker releases. So we surface it instead of reloading blind.
+        //
+        // onblocked is NOT terminal, though: it commonly fires while this
+        // page's own IDB handles (or the just-unregistered SW) are still
+        // closing asynchronously, then the queued delete completes a beat
+        // later via onsuccess. Treating that first onblocked as failure is
+        // why the initial click reported "Storage busy" yet the retry button
+        // (which waits/retries) then worked. So on block we keep the queued
+        // request and give it a grace window to finish before giving up.
         function dropDb(name) {
           return new Promise((resolve) => {
+            let req;
             try {
-              const req = indexedDB.deleteDatabase(name);
-              req.onsuccess = () => resolve(true);
-              req.onerror = () => resolve(true);
-              req.onblocked = () => resolve(false);
+              req = indexedDB.deleteDatabase(name);
             } catch {
-              resolve(true);
+              return resolve(true);
             }
+            let timer = null;
+            let settled = false;
+            const settle = (ok) => {
+              if (settled) return;
+              settled = true;
+              if (timer) clearTimeout(timer);
+              resolve(ok);
+            };
+            req.onsuccess = () => settle(true);
+            req.onerror = () => settle(true);
+            req.onblocked = () => {
+              // Let the still-queued delete have time to complete once the
+              // lingering connections release; only fail if it never does.
+              if (!timer) timer = setTimeout(() => settle(false), 1500);
+            };
           });
         }
         const results = await Promise.all([
@@ -5844,9 +6073,25 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         if ($info) $info.style.display = "none";
         if ($managePanel) $managePanel.classList.add("visible");
 
-        const health = await runHealthcheck(db);
-        // renderHealthcheck() sets the footer mode (export vs re-import).
-        renderHealthcheck(health);
+        // Pre-remaster builds don't match the (remaster-only) expected-files
+        // manifest, so skip the healthcheck and show an "old version" notice
+        // rather than a wall of false positives.
+        const oldInfo = await detectOldInstall(db);
+        if (oldInfo) {
+          renderHealthcheck(null, oldInfo);
+        } else {
+          // A remaster build that isn't the version the manifest targets can't
+          // be file-checked (its hashes differ), so treat it like an old build:
+          // skip the check and show a version notice instead of false misses.
+          const outdated = await detectOutdatedRemaster(db);
+          if (outdated) {
+            renderHealthcheck(null, outdated);
+          } else {
+            const health = await runHealthcheck(db);
+            // renderHealthcheck() sets the footer mode (export vs re-import).
+            renderHealthcheck(health);
+          }
+        }
       })();
     </script>
 
@@ -5872,6 +6117,19 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       var STORE = "assets";
       var REGISTRY_KEY = "__imported_mods__";
 
+      // The wipe flow (performClearAndReimport, outside this IIFE) can't reach
+      // _db directly. Expose a closer so it can release this long-lived handle
+      // before deleteDatabase, otherwise the delete blocks on our own
+      // connection. The onversionchange handler in openDb() is the backstop.
+      window.__closeModDb = function () {
+        try {
+          if (_db) {
+            _db.close();
+            _db = null;
+          }
+        } catch (_) {}
+      };
+
       // Feature switch: accept packaged mod .zip archives (full-game overhauls
       // shipping their own www/, and Tomb-format mods built against an older
       // base) in addition to .tcoaalmod files. Flip to false to restrict the
@@ -5887,7 +6145,14 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         return new Promise(function (resolve, reject) {
           var req = indexedDB.open(DB_NAME);
           req.onsuccess = function () {
-            resolve(req.result);
+            var db = req.result;
+            // Drop this connection if another context (the wipe flow's
+            // deleteDatabase) needs exclusive access, so a long-lived handle
+            // like the modding panel's _db never blocks the delete.
+            db.onversionchange = function () {
+              db.close();
+            };
+            resolve(db);
           };
           req.onerror = function () {
             reject(req.error);

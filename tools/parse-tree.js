@@ -48,6 +48,12 @@ var path = require("path");
 var ROOT = path.join(__dirname, "..");
 var TREE_FILE = path.join(ROOT, "tree.txt");
 var OUT_FILE = path.join(ROOT, "app", "expected-files.json");
+// The version catalog. tree.txt is dumped from the latest release, so the
+// hashed names in expected-files.json belong to that version; record it as
+// targetVersion so the loader/boot can skip the file check for any other
+// (known, older) imported version instead of flagging a wall of "missing"
+// files that are really just hashed differently.
+var VERSIONS_FILE = path.join(ROOT, "tools", "tcoaal-versions.json");
 
 // Top-level paths the browser player doesn't need. Listed once here so
 // the warning UI doesn't nag the user about Steam SDKs or PDFs.
@@ -113,6 +119,41 @@ function parseTree(text) {
   return files;
 }
 
+// Numeric semver-ish compare: "3.0.13" > "3.0.9" > "2.0.14". Missing
+// components count as 0, so "3.0.0" < "3.0.0.1".
+function cmpVersion(a, b) {
+  var pa = String(a).split(".");
+  var pb = String(b).split(".");
+  var n = Math.max(pa.length, pb.length);
+  for (var i = 0; i < n; i++) {
+    var da = parseInt(pa[i] || "0", 10) || 0;
+    var db = parseInt(pb[i] || "0", 10) || 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
+// Highest version across every major in the catalog. Returns "" if the
+// catalog can't be read (the loader/boot then keep their current behaviour:
+// check every install, version-agnostic).
+function latestCatalogVersion() {
+  try {
+    var cat = JSON.parse(fs.readFileSync(VERSIONS_FILE, "utf8"));
+    var best = "";
+    (cat.majors || []).forEach(function (m) {
+      (m.versions || []).forEach(function (v) {
+        if (v && v.version && (!best || cmpVersion(v.version, best) > 0)) {
+          best = v.version;
+        }
+      });
+    });
+    return best;
+  } catch (e) {
+    console.warn("[parse-tree] couldn't read " + VERSIONS_FILE + ":", e.message);
+    return "";
+  }
+}
+
 function shouldKeep(filePath) {
   for (var i = 0; i < EXCLUDE_ROOTS.length; i++) {
     var root = EXCLUDE_ROOTS[i];
@@ -129,10 +170,13 @@ function main() {
   var kept = all.filter(shouldKeep);
   kept.sort();
 
+  var targetVersion = latestCatalogVersion();
+
   var json = JSON.stringify(
     {
       generated: new Date().toISOString(),
       source: "tree.txt",
+      targetVersion: targetVersion,
       count: kept.length,
       excludedCount: all.length - kept.length,
       files: kept,
@@ -149,7 +193,8 @@ function main() {
       kept.length +
       " files (" +
       (all.length - kept.length) +
-      " excluded)",
+      " excluded), targetVersion=" +
+      (targetVersion || "(unknown)"),
   );
 }
 

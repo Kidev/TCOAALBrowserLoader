@@ -887,7 +887,7 @@
         // Bump this constant in lockstep with SW_VERSION in app/sw.js
         // whenever an SW change requires existing users to drop their
         // previous install. Pure additive features don't need a bump.
-        var EXPECTED_SW_VERSION = 13;
+        var EXPECTED_SW_VERSION = 14;
 
         function maybeRecoverStaleSW() {
           if (!("serviceWorker" in navigator)) return;
@@ -1136,36 +1136,63 @@
             })
             .then(function (manifest) {
               if (!manifest || !Array.isArray(manifest.files)) return true;
-              return new Promise(function (resolve) {
-                try {
-                  var req = db
-                    .transaction("assets", "readonly")
-                    .objectStore("assets")
-                    .getAllKeys();
-                  req.onsuccess = function () {
-                    var keys = req.result || [];
-                    var present = new Set();
-                    for (var i = 0; i < keys.length; i++) {
-                      if (typeof keys[i] === "string") {
-                        present.add(keys[i].toLowerCase());
-                      }
-                    }
-                    for (var j = 0; j < manifest.files.length; j++) {
-                      if (!present.has(manifest.files[j].toLowerCase())) {
-                        resolve(false);
-                        return;
-                      }
-                    }
-                    resolve(true);
-                  };
-                  req.onerror = function () {
-                    resolve(true);
-                  };
-                } catch (e) {
-                  resolve(true);
-                }
-              });
+              // The manifest lists ONE version's hashed filenames
+              // (manifest.targetVersion). A different, known imported version
+              // has different hashes, so the file check doesn't apply - skip
+              // it (the loader shows a version notice) rather than bouncing the
+              // user here on every navigation.
+              var target = manifest.targetVersion;
+              if (target) {
+                return idbGet(db, "js/main.js").then(function (raw) {
+                  var version = "";
+                  if (raw != null) {
+                    try {
+                      var bytes =
+                        raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+                      var txt = new TextDecoder("utf-8").decode(bytes);
+                      var m = txt.match(/GAME_VERSION\s*=\s*["']([^"']+)["']/);
+                      version = (m && m[1].trim()) || "";
+                    } catch (e) {}
+                  }
+                  if (version && version !== target) return true;
+                  return checkManifestFiles(db, manifest);
+                });
+              }
+              return checkManifestFiles(db, manifest);
             });
+        }
+
+        // Resolve true iff every file the manifest lists is present in IDB.
+        function checkManifestFiles(db, manifest) {
+          return new Promise(function (resolve) {
+            try {
+              var req = db
+                .transaction("assets", "readonly")
+                .objectStore("assets")
+                .getAllKeys();
+              req.onsuccess = function () {
+                var keys = req.result || [];
+                var present = new Set();
+                for (var i = 0; i < keys.length; i++) {
+                  if (typeof keys[i] === "string") {
+                    present.add(keys[i].toLowerCase());
+                  }
+                }
+                for (var j = 0; j < manifest.files.length; j++) {
+                  if (!present.has(manifest.files[j].toLowerCase())) {
+                    resolve(false);
+                    return;
+                  }
+                }
+                resolve(true);
+              };
+              req.onerror = function () {
+                resolve(true);
+              };
+            } catch (e) {
+              resolve(true);
+            }
+          });
         }
 
         // Check whether server.js mode is serving the game (no IDB needed).

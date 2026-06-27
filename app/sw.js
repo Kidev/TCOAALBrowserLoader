@@ -49,7 +49,7 @@ const STORE_NAME = "assets";
 // their old installation: e.g. a fix to the fetch handler or a new IDB
 // schema. Pure additive features (new message types the page can feature-
 // detect) do not need a bump.
-const SW_VERSION = 13;
+const SW_VERSION = 14;
 
 // App-shell cache. Bump the version to invalidate previously cached shells
 // on the next SW activation (e.g. when shipping a breaking change to one of
@@ -537,6 +537,18 @@ function openDB() {
     req.onupgradeneeded = (e) => e.target.result.createObjectStore(STORE_NAME);
     req.onsuccess = (e) => {
       _db = e.target.result;
+      // Release this long-lived connection the moment another context (the
+      // loader's clear-data flow) requests a deleteDatabase. Without this the
+      // SW's open handle blocks the delete indefinitely: unregister() doesn't
+      // stop a running SW, so the delete only completes once the page unloads
+      // (a manual refresh), leaving the "Storage busy" error and ~700MB still
+      // occupied until then. Mirrors the loader's own openDB/onversionchange.
+      _db.onversionchange = () => {
+        try {
+          _db.close();
+        } catch (e) {}
+        _db = null;
+      };
       resolve(_db);
     };
     req.onerror = (e) => reject(e.target.error);
@@ -1250,6 +1262,16 @@ let _activeModLoadPromise = null;
 let _activeLang = null;
 let _activeLangLoadPromise = null;
 
+// Pre-remaster ("old build") hash->logical asset map. The old DRM payload runs
+// in the browser and hashes some asset URLs the same way the remaster does
+// (e.g. img/system/language.png -> img/system/<sha>), but old builds store
+// assets under their LOGICAL names, so those hashed requests would 404. The
+// loader records this map ('__oldhashmap__') at import for old builds only;
+// remaster installs have no such key, so _oldHashMap stays null and the
+// fallback below is inert. Value: { "<dir>/<sha>": "<dir>/<logical>.<ext>" }.
+let _oldHashMap = null;
+let _oldHashMapLoadPromise = null;
+
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
@@ -1403,6 +1425,23 @@ function ensureActiveLangLoaded(db) {
     } catch {}
   })();
   return _activeLangLoadPromise;
+}
+
+/**
+ * Load the old-build hash->logical asset map from IDB (once). Returns the map
+ * object, or null when there is none (remaster installs) so the caller's
+ * fallback is skipped entirely.
+ */
+function ensureOldHashMapLoaded(db) {
+  if (_oldHashMapLoadPromise) return _oldHashMapLoadPromise;
+  _oldHashMapLoadPromise = (async () => {
+    try {
+      const val = await getAsset(db, "__oldhashmap__");
+      if (val && typeof val === "object") _oldHashMap = val;
+    } catch {}
+    return _oldHashMap;
+  })();
+  return _oldHashMapLoadPromise;
 }
 
 /**
@@ -1973,6 +2012,25 @@ async function serveFromIDB(logicalPath, request) {
             headers: { "Content-Type": mimeFor(withExt) },
           });
         }
+      }
+    }
+  }
+
+  // 4.5 Old-build hashed-name fallback. The pre-remaster DRM payload hashes
+  //     some asset URLs (e.g. img/system/language.png -> img/system/<sha>.png)
+  //     even though old builds store assets under logical names, so resolve the
+  //     hash back to the logical file via the import-time map. Gated on the map
+  //     existing (only old builds have it), so remaster installs are unaffected.
+  const oldMap = await ensureOldHashMapLoaded(db);
+  if (oldMap) {
+    const logical = oldMap[noExt] || oldMap[logicalPath];
+    if (logical) {
+      const hit = await getAssetCI(db, logical);
+      if (hit !== null) {
+        return new Response(dekit(hit.value, hit.actualKey), {
+          status: 200,
+          headers: { "Content-Type": mimeFor(logical) },
+        });
       }
     }
   }
