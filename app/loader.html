@@ -5361,39 +5361,68 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         );
       }
 
+      // Longest directory prefix (ending in "/") shared by every path in
+      // `names`. "" when they share no leading directory.
+      function commonDirPrefix(names) {
+        if (names.length === 0) return "";
+        let prefix = names[0];
+        for (const n of names) {
+          let i = 0;
+          const max = Math.min(prefix.length, n.length);
+          while (i < max && prefix[i] === n[i]) i++;
+          prefix = prefix.slice(0, i);
+          if (!prefix) break;
+        }
+        const slash = prefix.lastIndexOf("/");
+        return slash >= 0 ? prefix.slice(0, slash + 1) : "";
+      }
+
       // Translate ZIP central-directory entries into the same
-      // {path, getBuffer} shape as the folder import. Mirrors the folder
-      // path rules:
-      //   1. If every file shares a common top-level directory, strip it
-      //      (handles archives like "Coffin/www/...").
-      //   2. If the result starts with "www/", strip that too.
-      // Directory entries (name ends with "/") and entries that resolve
-      // to an empty path are dropped.
+      // {path, getBuffer} shape as the folder import, locating the game root
+      // inside the archive however deeply it is nested. Real-world archives
+      // wrap the game arbitrarily: "www/...", "Coffin/www/...",
+      // "TCOAAL v2/Coffin/www/..." (re-zipped or Steam-depot layouts),
+      // sometimes alongside stray siblings (Coffin.exe, readme.txt). The old
+      // "strip one common top-level dir + a leading www/" rule only handled a
+      // single wrapper, so a deeper layout imported with the wrapper baked into
+      // every key and failed the required-files check -- even though the
+      // equivalent folder import worked (the user just navigates into the game
+      // folder). So:
+      //   1. If any entry sits under a `www/` path segment, that segment marks
+      //      the game root: strip everything up to and including the LAST `www/`
+      //      and drop entries with no `www/` (they live outside the game tree).
+      //   2. Otherwise the archive is the game's www contents directly (maybe
+      //      inside wrapper folders): strip the longest common directory prefix
+      //      so "Wrapper/Coffin/data/..." -> "data/...".
+      // Directory entries (name ends with "/") and entries that resolve to an
+      // empty path are dropped.
       function zipEntriesToImports(buffer, entries) {
         const fileEntries = entries.filter(
           (e) => e.name.length > 0 && !e.name.endsWith("/"),
         );
         if (fileEntries.length === 0) return [];
 
-        const firstParts = new Set();
-        for (const e of fileEntries) {
-          const slash = e.name.indexOf("/");
-          firstParts.add(slash > 0 ? e.name.substring(0, slash) : "");
-        }
-
-        let stripPrefix = "";
-        if (firstParts.size === 1) {
-          const only = firstParts.values().next().value;
-          if (only) stripPrefix = only + "/";
-        }
+        const hasWww = fileEntries.some((e) =>
+          e.name.split("/").includes("www"),
+        );
+        const stripPrefix = hasWww
+          ? null
+          : commonDirPrefix(fileEntries.map((e) => e.name));
 
         const out = [];
         for (const e of fileEntries) {
-          let p = e.name;
-          if (stripPrefix && p.startsWith(stripPrefix)) {
-            p = p.substring(stripPrefix.length);
+          let p;
+          if (hasWww) {
+            const parts = e.name.split("/");
+            const idx = parts.lastIndexOf("www");
+            if (idx < 0) continue; // outside the game tree -- drop
+            p = parts.slice(idx + 1).join("/");
+          } else {
+            p = e.name;
+            if (stripPrefix && p.startsWith(stripPrefix)) {
+              p = p.substring(stripPrefix.length);
+            }
           }
-          if (p.startsWith("www/")) p = p.substring(4);
           if (!p || p.endsWith("/")) continue;
           out.push({
             path: p,
