@@ -586,6 +586,99 @@
         background: var(--bg-color-section-lighter);
       }
 
+      /* In-place drag-and-drop swap. While a folder/.zip is dragged over the
+         page, the two import buttons cross-fade out and a dashed rounded drop
+         box cross-fades in to take their place (see wireDropImport()). The
+         container grows to the box's height so the swap reads as the buttons
+         turning into one clear "Drop to import" target. */
+      .import-drop-area {
+        position: relative;
+        transition: min-height 0.2s ease;
+      }
+      .import-drop-area.dragging {
+        min-height: clamp(96px, 14vmin, 132px);
+      }
+      .import-drop-area .panel-footer {
+        transition:
+          opacity 0.18s ease,
+          transform 0.18s ease;
+      }
+      .import-drop-area.dragging .panel-footer {
+        opacity: 0;
+        transform: scale(0.97);
+        pointer-events: none;
+      }
+      .import-dropzone {
+        position: absolute;
+        inset: clamp(4px, 0.6vmin, 10px) 0 0 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        text-align: center;
+        padding: 16px;
+        color: var(--white);
+        border: 2px dashed rgba(236, 131, 195, 0.5);
+        border-radius: 16px;
+        background: rgba(236, 131, 195, 0.06);
+        opacity: 0;
+        transform: scale(0.97);
+        pointer-events: none;
+        transition:
+          opacity 0.18s ease,
+          transform 0.18s ease,
+          border-color 0.12s ease,
+          background 0.12s ease,
+          box-shadow 0.12s ease;
+      }
+      .import-drop-area.dragging .import-dropzone {
+        opacity: 1;
+        transform: scale(1);
+        pointer-events: auto;
+      }
+      .import-drop-area.over .import-dropzone {
+        border-color: var(--purple);
+        background: rgba(236, 131, 195, 0.14);
+        box-shadow: 0 0 32px rgba(236, 131, 195, 0.22);
+      }
+      /* Children inert so dragenter/leave only fire on the box itself. */
+      .import-dropzone * {
+        pointer-events: none;
+      }
+      .import-dropzone-icon {
+        width: clamp(30px, 5vmin, 44px);
+        height: clamp(30px, 5vmin, 44px);
+        color: var(--purple);
+        opacity: 0.9;
+      }
+      .import-dropzone-title {
+        font-family: "Georgia", serif;
+        font-weight: bold;
+        font-size: clamp(15px, 2.3vmin, 22px);
+        letter-spacing: 0.03em;
+      }
+      .import-dropzone-sub {
+        font-size: clamp(12px, 1.6vmin, 15px);
+        opacity: 0.7;
+      }
+      .import-dropzone-sub code {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .import-drop-area,
+        .import-drop-area .panel-footer,
+        .import-dropzone {
+          transition: none;
+        }
+        .import-drop-area.dragging .panel-footer,
+        .import-dropzone {
+          transform: none;
+        }
+      }
+
       /* PWA install step inside the info panel: a distinct, recommended
          first block, separated from the import instructions by a divider so
          the user reads it as "do this first, then import below". */
@@ -1552,21 +1645,45 @@
               Your game folder is likely located at<br />
               <code id="path-hint-value"></code>
             </p>
-            <div class="panel-footer">
-              <button
-                class="action-btn"
-                id="btn-load"
-                onclick="loadGameFiles()"
-              >
-                Import Folder
-              </button>
-              <button
-                class="action-btn"
-                id="btn-load-zip"
-                onclick="loadGameZip()"
-              >
-                Import .zip file
-              </button>
+            <!-- The two import buttons + the in-place drop box that replaces
+                 them while a folder/.zip is dragged over the page. -->
+            <div class="import-drop-area" id="import-drop-area">
+              <div class="panel-footer">
+                <button
+                  class="action-btn"
+                  id="btn-load"
+                  onclick="loadGameFiles()"
+                >
+                  Import Folder
+                </button>
+                <button
+                  class="action-btn"
+                  id="btn-load-zip"
+                  onclick="loadGameZip()"
+                >
+                  Import .zip file
+                </button>
+              </div>
+              <div class="import-dropzone" id="import-dropzone" aria-hidden="true">
+                <svg
+                  class="import-dropzone-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3v11" />
+                  <path d="m7 9 5 5 5-5" />
+                  <path d="M5 20h14" />
+                </svg>
+                <div class="import-dropzone-title">Drop to import</div>
+                <div class="import-dropzone-sub">
+                  Game folder or <code>.zip</code> archive
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -5432,10 +5549,9 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         return out;
       }
 
-      async function onZipInputChange(e) {
-        const file = e.target.files && e.target.files[0];
-        // Reset so picking the same file again re-fires the change event.
-        e.target.value = "";
+      // Shared import of a .zip File (from the picker or a drop). Parses the
+      // archive into { path, getBuffer } entries and hands them to storeFiles.
+      async function importZipFile(file) {
         if (!file) {
           showError(
             "No file selected",
@@ -5482,14 +5598,29 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         }
       }
 
-      /**
-       * Handler for the hidden <input type="file" webkitdirectory> fallback.
-       * webkitRelativePath looks like "www/data/be1a37535e921f91"; we strip the
-       * leading directory component so keys match what the SW expects.
-       */
-      async function onFileInputChange(e) {
-        const fileList = e.target.files;
-        if (!fileList || fileList.length === 0) {
+      async function onZipInputChange(e) {
+        const file = e.target.files && e.target.files[0];
+        // Reset so picking the same file again re-fires the change event.
+        e.target.value = "";
+        await importZipFile(file);
+      }
+
+      // Normalize a folder-relative path (from the directory picker's
+      // webkitRelativePath, or a dropped entry's fullPath) to an SW key:
+      // drop the user-chosen top-level directory, then an optional leading
+      // "www/" if they picked the game root rather than its `www` folder.
+      // "MyGame/www/data/x" / "MyGame/data/x" / "www/data/x" -> "data/x".
+      function normalizeFolderPath(rel) {
+        let p = rel.split("/").slice(1).join("/");
+        if (p.startsWith("www/")) p = p.slice(4);
+        return p;
+      }
+
+      // Shared import of a folder's worth of { path, getBuffer } entries
+      // (from the directory picker or a dropped folder).
+      async function importFolderEntries(entries) {
+        entries = (entries || []).filter((e) => e.path);
+        if (!entries.length) {
           showError(
             "No folder selected",
             "Pick the game's folder (the one named after the " +
@@ -5506,16 +5637,6 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         showProgress(true);
         setStatus("Preparing...");
 
-        const entries = Array.from(fileList)
-          .map((file) => {
-            // Drop the top-level directory name chosen by the user.
-            let relPath = file.webkitRelativePath.split("/").slice(1).join("/");
-            // If user selected the game root, relPath starts with "www/"; strip it.
-            if (relPath.startsWith("www/")) relPath = relPath.slice(4);
-            return { path: relPath, getBuffer: () => file.arrayBuffer() };
-          })
-          .filter((e) => e.path); // discard empty paths
-
         try {
           await storeFiles(entries);
         } catch (err) {
@@ -5528,6 +5649,198 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           );
           setImportButtonsDisabled(false);
         }
+      }
+
+      /**
+       * Handler for the hidden <input type="file" webkitdirectory> fallback.
+       * webkitRelativePath looks like "www/data/be1a37535e921f91"; we strip the
+       * leading directory component so keys match what the SW expects.
+       */
+      async function onFileInputChange(e) {
+        const fileList = e.target.files;
+        if (!fileList || fileList.length === 0) {
+          showError(
+            "No folder selected",
+            "Pick the game's folder (the one named after the " +
+              "game, or its `www` subfolder) to import.",
+          );
+          return;
+        }
+
+        const entries = Array.from(fileList).map((file) => ({
+          path: normalizeFolderPath(file.webkitRelativePath),
+          getBuffer: () => file.arrayBuffer(),
+        }));
+
+        await importFolderEntries(entries);
+      }
+
+      // Drag-and-drop import (folder or .zip, dropped anywhere)
+
+      function dragHasFiles(e) {
+        const t = e.dataTransfer && e.dataTransfer.types;
+        // `types` is an array (modern) or DOMStringList (older); both work
+        // with Array.prototype.indexOf.
+        return !!t && Array.prototype.indexOf.call(t, "Files") !== -1;
+      }
+
+      // True while an import is already running (buttons disabled) - used to
+      // ignore further drops mid-import.
+      function importBusy() {
+        return !!($load && $load.disabled);
+      }
+
+      // Read a FileSystemFileEntry into a File.
+      function dropEntryFile(entry) {
+        return new Promise((resolve, reject) => entry.file(resolve, reject));
+      }
+
+      // A directory reader returns children in batches; call until empty.
+      function dropReadDir(reader) {
+        return new Promise((resolve, reject) => {
+          const all = [];
+          (function next() {
+            reader.readEntries((batch) => {
+              if (!batch.length) return resolve(all);
+              for (const c of batch) all.push(c);
+              next();
+            }, reject);
+          })();
+        });
+      }
+
+      // Recurse a dropped entry tree into { path, getBuffer } imports.
+      async function collectDropEntries(entry, out) {
+        if (entry.isFile) {
+          const file = await dropEntryFile(entry);
+          // fullPath looks like "/MyGame/www/data/x"; normalize like the
+          // folder picker (drop the dropped-root segment + optional "www/").
+          const rel = (entry.fullPath || entry.name).replace(/^\/+/, "");
+          out.push({
+            path: normalizeFolderPath(rel),
+            getBuffer: () => file.arrayBuffer(),
+          });
+        } else if (entry.isDirectory) {
+          const children = await dropReadDir(entry.createReader());
+          for (const c of children) await collectDropEntries(c, out);
+        }
+      }
+
+      async function handleImportDrop(e) {
+        const dt = e.dataTransfer;
+        if (!dt) return;
+
+        // Prefer the entries API so dropped folders work; fall back to flat
+        // files for a lone .zip when items/entries aren't available.
+        const items = dt.items ? Array.from(dt.items) : [];
+        const entries = items
+          .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
+          .filter(Boolean);
+
+        // A single dropped .zip -> archive import.
+        if (
+          entries.length === 1 &&
+          entries[0].isFile &&
+          /\.zip$/i.test(entries[0].name)
+        ) {
+          await importZipFile(await dropEntryFile(entries[0]));
+          return;
+        }
+        if (
+          !entries.length &&
+          dt.files &&
+          dt.files.length === 1 &&
+          /\.zip$/i.test(dt.files[0].name)
+        ) {
+          await importZipFile(dt.files[0]);
+          return;
+        }
+
+        // Otherwise treat the drop as a folder (or loose files): recurse.
+        if (entries.length) {
+          const collected = [];
+          try {
+            for (const entry of entries) {
+              await collectDropEntries(entry, collected);
+            }
+          } catch (err) {
+            console.error("[loader] reading dropped folder failed:", err);
+            showError(
+              "Couldn't read the dropped folder",
+              "Your browser blocked reading the dropped item. Use the " +
+                "Import Folder button instead.",
+              err && err.message ? err.message : String(err),
+            );
+            return;
+          }
+          await importFolderEntries(collected);
+          return;
+        }
+
+        showError(
+          "Nothing to import",
+          "Drop your game's folder, or a .zip archive of it.",
+        );
+      }
+
+      // Window-level drag wiring: when a folder/.zip is dragged over the page,
+      // cross-fade the two import buttons out and the dashed drop box in (in
+      // place), then route the drop to the shared import paths. Skipped while
+      // the modding view is up (it owns its own drop zone), and only swaps when
+      // the fresh-import panel is actually on screen.
+      function wireDropImport() {
+        const area = document.getElementById("import-drop-area");
+        const zone = document.getElementById("import-dropzone");
+        if (!area || !zone) return;
+        let depth = 0;
+
+        // Suppress the browser's "open the dropped file" default on any file
+        // drag over the loader (but not the modding view).
+        function blockDefault(e) {
+          return (
+            dragHasFiles(e) &&
+            !document.body.classList.contains("show-modding")
+          );
+        }
+        // Swap + import only when the fresh-import panel is visible (offsetParent
+        // is null when it or an ancestor is display:none) and idle.
+        function active() {
+          return area.offsetParent !== null && !importBusy();
+        }
+        function setDragging(on) {
+          area.classList.toggle("dragging", on);
+          if (!on) area.classList.remove("over");
+        }
+
+        window.addEventListener("dragenter", (e) => {
+          if (!blockDefault(e)) return;
+          e.preventDefault();
+          depth++;
+          if (active()) setDragging(true);
+        });
+        window.addEventListener("dragover", (e) => {
+          if (!blockDefault(e)) return;
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+          // Intensify the box only when the pointer is over it (its children
+          // are pointer-events:none, so the box itself is the drag target).
+          if (active()) area.classList.toggle("over", e.target === zone);
+        });
+        window.addEventListener("dragleave", (e) => {
+          if (!blockDefault(e)) return;
+          depth--;
+          if (depth <= 0) {
+            depth = 0;
+            setDragging(false);
+          }
+        });
+        window.addEventListener("drop", (e) => {
+          if (!blockDefault(e)) return;
+          e.preventDefault();
+          depth = 0;
+          setDragging(false);
+          if (active()) handleImportDrop(e);
+        });
       }
 
       // "Play": jump back to the game. SW/IDB are intact already. The game
@@ -6065,6 +6378,8 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         document
           .getElementById("zip-input")
           .addEventListener("change", onZipInputChange);
+
+        wireDropImport();
 
         const $confirm = document.getElementById("confirm-dialog");
         if ($confirm) {
