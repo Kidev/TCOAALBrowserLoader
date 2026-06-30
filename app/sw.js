@@ -78,8 +78,6 @@ const APP_SHELL = [
   "/lock.json",
   "/manifest.webmanifest",
   "/favicon.ico",
-  "/favicon16.ico",
-  "/favicon64.ico",
   "/img/icon-192.png",
   "/img/icon-512.png",
   "/img/icon-maskable-512.png",
@@ -1684,8 +1682,6 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "mods.json" ||
     logicalPath === "expected-files.json" ||
     logicalPath === "favicon.ico" ||
-    logicalPath === "favicon16.ico" ||
-    logicalPath === "favicon64.ico" ||
     logicalPath === "img/icon-192.png" ||
     logicalPath === "img/icon-512.png" ||
     logicalPath === "img/icon-maskable-512.png" ||

@@ -5198,6 +5198,56 @@
       hw.resetTextColor();
     };
 
+    Scene_Mods.prototype._drawOfflineBadge = function () {
+      var hw = this._helpWindow;
+      if (this._offlineBadgeRect) {
+        var r = this._offlineBadgeRect;
+        // Clear 1px wider on each side to catch anti-aliasing bleed.
+        hw.contents.clearRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
+        this._offlineBadgeRect = null;
+      }
+      // Only draw when definitively offline; undefined/true means online or unknown.
+      if (navigator.onLine !== false) return;
+
+      var label = "OFFLINE";
+      var badgeFontSize = 14;
+      var dotR = 4;
+      var dotGap = 6;
+      var hPad = 8;
+      var textPad = hw.textPadding ? hw.textPadding() : 6;
+
+      var savedSize = hw.contents.fontSize;
+      // Measure "Mods" at the title font size to find where it ends on the bitmap.
+      // Window_Help.refresh calls drawTextEx(text, textPadding(), 0).
+      hw.contents.fontSize = hw.standardFontSize ? hw.standardFontSize() : 28;
+      var modsW = hw.contents.measureTextWidth("Mods");
+
+      hw.contents.fontSize = badgeFontSize;
+      var labelW = hw.contents.measureTextWidth(label);
+
+      // Span the full content height so the badge aligns with the "Mods" text row.
+      var badgeH = hw.contentsHeight();
+      var badgeY = 0;
+      var badgeW = hPad + dotR * 2 + dotGap + labelW + hPad;
+      var badgeX = textPad + modsW + 8;
+
+      hw.contents.fillRect(badgeX, badgeY, badgeW, badgeH, "rgba(110,20,30,0.88)");
+
+      var dotCX = badgeX + hPad + dotR;
+      var dotCY = Math.floor(badgeH / 2);
+      hw.contents.drawCircle(dotCX, dotCY, dotR, "#ff5f6e");
+
+      hw.contents.textColor = "#ffd5d8";
+      var lineH = badgeFontSize + 4;
+      var textX = dotCX + dotR + dotGap;
+      var textY = Math.floor((badgeH - lineH) / 2);
+      hw.contents.drawText(label, textX, textY, labelW + 2, lineH);
+
+      this._offlineBadgeRect = { x: badgeX, y: badgeY, w: badgeW, h: badgeH };
+      hw.contents.fontSize = savedSize;
+      hw.resetTextColor();
+    };
+
     Scene_Mods.prototype.createListWindow = function () {
       var y = this._helpWindow.height;
       if (this._activeModWindow) y += this._activeModWindow.height;
@@ -5274,6 +5324,10 @@
       try {
         document.body.classList.add("mods-scene-active");
       } catch (e) {}
+      this._offlineBadgeHandler = function () { self._drawOfflineBadge(); };
+      window.addEventListener("online", this._offlineBadgeHandler);
+      window.addEventListener("offline", this._offlineBadgeHandler);
+      this._drawOfflineBadge();
       // Re-read user-imported mods (installed via modding.html, possibly while
       // this game tab was already open) before resolving install status, so a
       // freshly created mod appears without a full page reload. The boot-time
@@ -5294,6 +5348,11 @@
       if (this._modsMouseHandler) {
         document.removeEventListener("mousemove", this._modsMouseHandler);
         this._modsMouseHandler = null;
+      }
+      if (this._offlineBadgeHandler) {
+        window.removeEventListener("online", this._offlineBadgeHandler);
+        window.removeEventListener("offline", this._offlineBadgeHandler);
+        this._offlineBadgeHandler = null;
       }
       try {
         document.body.classList.remove("mods-scene-active");

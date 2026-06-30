@@ -81,7 +81,7 @@
     <!-- Default to the BrowserPlayer icon during boot (game not started yet).
          loadFavicon() swaps both to the loaded game's own icon/icon.png. -->
     <link rel="icon" id="favicon" href="favicon.ico" type="image/x-icon" />
-    <link rel="apple-touch-icon" id="apple-icon" href="favicon64.ico" />
+    <link rel="apple-touch-icon" id="apple-icon" href="img/icon-192.png" />
 
     <script type="application/ld+json">
       {
@@ -281,9 +281,7 @@
         transition: opacity 0.25s ease;
         user-select: none;
       }
-      body.mods-scene-active #offline-indicator.visible {
-        opacity: 1;
-      }
+      /* offline badge is now drawn on the _helpWindow canvas in lang-shim.js */
       #offline-indicator::before {
         content: "";
         display: inline-block;
