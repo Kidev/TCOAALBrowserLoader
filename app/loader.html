@@ -1803,7 +1803,8 @@
                     id="btn-clear"
                     onclick="askClearAll()"
                   >
-                    Clear browser data
+                    <span class="android-hide">Clear browser data</span>
+                    <span class="android-only">Clear game data</span>
                   </button>
                 </div>
               </div>
@@ -1854,15 +1855,19 @@
           <div class="confirm-dialog-content">
             <h2>Clear all game data?</h2>
             <p>
-              This will erase the imported game files
-              <strong>and your save files</strong> from this browser. This
-              cannot be undone.
+              <span class="android-hide">This will erase the imported game
+              files <strong>and your save files</strong> from this browser.
+              This cannot be undone.</span>
+              <span class="android-only">This will erase the imported game
+              files from this browser.
+              <strong>Your save files will be kept.</strong> This cannot be
+              undone.</span>
             </p>
-            <p class="confirm-saves-msg" id="confirm-saves-msg"></p>
-            <p class="confirm-saves-status" id="confirm-saves-status"></p>
+            <p class="confirm-saves-msg android-hide" id="confirm-saves-msg"></p>
+            <p class="confirm-saves-status android-hide" id="confirm-saves-status"></p>
             <div class="confirm-actions">
               <button
-                class="action-btn success"
+                class="action-btn success android-hide"
                 id="btn-confirm-download"
                 onclick="downloadSavesZip()"
               >
@@ -5946,6 +5951,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
       // Wipe IDB/SW/caches/localStorage and reload into a fresh loader.
       // Mirrors resetAndRetry but stays on /loader.html.
       async function performClearAndReimport() {
+        const isAndroid = document.body.classList.contains("android-app");
         const $btnClear = document.getElementById("btn-clear");
         if ($btnClear) {
           $btnClear.disabled = true;
@@ -5965,7 +5971,18 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           } catch (e) {}
         }
         try {
-          localStorage.clear();
+          if (isAndroid) {
+            // On Android, preserve save keys (RPG File*, RPG Global, etc.)
+            // so the user's progress survives a game-data wipe.
+            var keysToRemove = [];
+            for (var i = 0; i < localStorage.length; i++) {
+              var k = localStorage.key(i);
+              if (k && !SAVE_KEY_RE.test(k)) keysToRemove.push(k);
+            }
+            keysToRemove.forEach(function(k) { localStorage.removeItem(k); });
+          } else {
+            localStorage.clear();
+          }
         } catch (e) {}
 
         // Proactively close any IDB handle this page itself still holds open
@@ -6017,16 +6034,16 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
             };
           });
         }
-        const results = await Promise.all([
-          dropDb("tcoaal"),
-          dropDb("tcoaal-saves"),
-          dropDb("tcoaal-translations"),
-        ]);
+        const dbsToDrop = isAndroid
+          ? ["tcoaal", "tcoaal-translations"]
+          : ["tcoaal", "tcoaal-saves", "tcoaal-translations"];
+        const results = await Promise.all(dbsToDrop.map((n) => dropDb(n)));
 
+        const clearLabel = isAndroid ? "Clear game data" : "Clear browser data";
         if (results.some((ok) => !ok)) {
           showError(
             "Storage busy",
-            "Couldn't finish clearing browser data because something still " +
+            "Couldn't finish clearing game data because something still " +
               "has the database open. Close any DevTools IndexedDB inspector " +
               "(Application > Storage > IndexedDB) and any other tabs of this " +
               "site, then clear again.",
@@ -6034,7 +6051,7 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
           );
           if ($btnClear) {
             $btnClear.disabled = false;
-            $btnClear.textContent = "Clear browser data";
+            $btnClear.textContent = clearLabel;
           }
           return;
         }
