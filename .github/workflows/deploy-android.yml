@@ -70,10 +70,13 @@ jobs:
           name: app-release-apk
           path: dist
 
+      - name: Rename APK
+        run: mv dist/app-release.apk "dist/TCOAAL-Player-v${{ inputs.version }}.apk"
+
       - name: Publish release and tag the build commit
         uses: softprops/action-gh-release@v3.0.1
         with:
           tag_name: android/v${{ inputs.version }}
           name: Android v${{ inputs.version }}
           target_commitish: ${{ github.sha }}
-          files: dist/app-release.apk
+          files: dist/TCOAAL-Player-v${{ inputs.version }}.apk
