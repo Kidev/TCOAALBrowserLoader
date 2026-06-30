@@ -32,8 +32,6 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: "8.7"
 
       - name: Decode keystore
         run: echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
@@ -47,7 +45,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          gradle assembleRelease --no-daemon --stacktrace \
+          ./gradlew assembleRelease --no-daemon --stacktrace \
             -PversionName="${{ inputs.version }}" \
             -PversionCode="${{ github.run_number }}"
 
