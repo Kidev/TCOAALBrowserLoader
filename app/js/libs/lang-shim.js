@@ -1338,6 +1338,42 @@
     } catch (e) {}
   }
 
+  // Offline state shared across the module. Probed once at startup and every
+  // 5s while Scene_Mods is open; cached so the badge is instant on scene entry.
+  var _isAndroidApp = /TCOAALApp\//.test(navigator.userAgent);
+  var _cachedOffline = false;
+
+  function _probeOffline(cb) {
+    // navigator.onLine === false is a reliable "definitely offline" on desktop;
+    // Android WebView may return true even when offline, so we confirm with a
+    // fetch probe there (mirrors loader.html's approach).
+    if (navigator.onLine === false) {
+      _cachedOffline = true;
+      if (cb) cb(true);
+      return;
+    }
+    if (!_isAndroidApp) {
+      _cachedOffline = false;
+      if (cb) cb(false);
+      return;
+    }
+    var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var tid = ctrl ? setTimeout(function () { ctrl.abort(); }, 5000) : null;
+    var opts = { method: "HEAD", cache: "no-store" };
+    if (ctrl) opts.signal = ctrl.signal;
+    fetch("/mods.json", opts)
+      .then(function (r) {
+        if (tid) clearTimeout(tid);
+        _cachedOffline = !r.ok;
+        if (cb) cb(_cachedOffline);
+      })
+      .catch(function () {
+        if (tid) clearTimeout(tid);
+        _cachedOffline = true;
+        if (cb) cb(true);
+      });
+  }
+
   // "Seen updates" tracking for the NEW/UPDATED badge in the Mods menu.
   // Maps modKey -> the lastUpdate value the user has already laid their
   // cursor on. A mod is flagged until the user hovers/selects its row, at
@@ -5206,8 +5242,9 @@
         hw.contents.clearRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
         this._offlineBadgeRect = null;
       }
-      // Only draw when definitively offline; undefined/true means online or unknown.
-      if (navigator.onLine !== false) return;
+      // Uses module-level _cachedOffline (probe-confirmed) so Android WebView's
+      // unreliable navigator.onLine doesn't suppress the badge.
+      if (!_cachedOffline) return;
 
       var label = "OFFLINE";
       var badgeFontSize = 14;
@@ -5324,10 +5361,19 @@
       try {
         document.body.classList.add("mods-scene-active");
       } catch (e) {}
-      this._offlineBadgeHandler = function () { self._drawOfflineBadge(); };
+      this._offlineBadgeHandler = function () {
+        _probeOffline(function () { self._drawOfflineBadge(); });
+      };
       window.addEventListener("online", this._offlineBadgeHandler);
       window.addEventListener("offline", this._offlineBadgeHandler);
-      this._drawOfflineBadge();
+      // 5s probe while in Mods menu: Android events are unreliable so we poll;
+      // desktop online/offline events are sufficient so no interval needed.
+      if (_isAndroidApp) {
+        this._offlineProbeInterval = setInterval(this._offlineBadgeHandler, 5000);
+      }
+      // Draw immediately from cached state, then kick off a fresh probe.
+      self._drawOfflineBadge();
+      this._offlineBadgeHandler();
       // Re-read user-imported mods (installed via modding.html, possibly while
       // this game tab was already open) before resolving install status, so a
       // freshly created mod appears without a full page reload. The boot-time
@@ -5349,11 +5395,16 @@
         document.removeEventListener("mousemove", this._modsMouseHandler);
         this._modsMouseHandler = null;
       }
+      if (this._offlineProbeInterval) {
+        clearInterval(this._offlineProbeInterval);
+        this._offlineProbeInterval = null;
+      }
       if (this._offlineBadgeHandler) {
         window.removeEventListener("online", this._offlineBadgeHandler);
         window.removeEventListener("offline", this._offlineBadgeHandler);
         this._offlineBadgeHandler = null;
       }
+      // Restore 30s background probe now that the Mods menu is closed.
       try {
         document.body.classList.remove("mods-scene-active");
       } catch (e) {}
@@ -7247,4 +7298,8 @@
       });
     });
   };
+
+  // Single startup probe so _cachedOffline is accurate before the first
+  // Scene_Mods entry (no periodic background check outside the Mods menu).
+  _probeOffline(null);
 })();

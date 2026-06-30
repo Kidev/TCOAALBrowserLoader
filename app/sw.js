@@ -82,6 +82,7 @@ const APP_SHELL = [
   "/img/icon-512.png",
   "/img/icon-maskable-512.png",
   "/img/bg.webp",
+  "/img/bg-android.webp",
   "/img/mods.png",
   "/img/achievements.png",
   "/img/achievement-locked.jpg",
@@ -1687,6 +1688,7 @@ self.addEventListener("fetch", (event) => {
     logicalPath === "img/icon-maskable-512.png" ||
     logicalPath === "img/mods.png" ||
     logicalPath === "img/bg.webp" ||
+    logicalPath === "img/bg-android.webp" ||
     logicalPath === "img/achievements.png" ||
     logicalPath === "img/achievement-locked.jpg" ||
     logicalPath === "img/achievement-unlocked.jpg" ||
