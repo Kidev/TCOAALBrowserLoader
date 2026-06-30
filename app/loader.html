@@ -1379,6 +1379,15 @@
           animation-delay: 0s;
         }
       }
+      body.android-app #btn-load,
+      body.android-app #btn-reimport,
+      body.android-app #chooser-folder,
+      body.android-app #path-hint,
+      body.android-app #install-step,
+      body.android-app #install-step-manage { display: none !important; }
+      .android-only { display: none; }
+      body.android-app .android-only { display: inline; }
+      body.android-app .android-hide { display: none !important; }
     </style>
   </head>
   <body>
@@ -1402,6 +1411,9 @@
           var MH = ["modding", "install-mods", "create-project", "build-mod", "download-game"];
           if (MH.indexOf(location.hash.replace(/^#/, "")) !== -1) {
             document.body.classList.add("show-modding");
+          }
+          if (/TCOAALApp\//.test(navigator.userAgent)) {
+            document.body.classList.add("android-app");
           }
         } catch (e) {}
       })();
@@ -1585,7 +1597,10 @@
         />
 
         <div class="panel info-panel" id="info-fresh">
-          <h2 class="panel-title">Play TCOAAL in browser (desktop/mobile)</h2>
+          <h2 class="panel-title">
+            <span class="android-hide">Play TCOAAL in browser (desktop/mobile)</span>
+            <span class="android-only">Import your game</span>
+          </h2>
 
           <!--
             PWA install step. Shown only when the browser offers an install
@@ -1635,8 +1650,9 @@
               by Kit9
             </p>
             <p class="info">
-              Load your owned copy of the game into your browser,<br />
-              either as a folder or as a .zip archive.
+              <span class="android-hide">Load your owned copy of the game into your browser,<br />
+              either as a folder or as a .zip archive.</span>
+              <span class="android-only">Export your game from Steam as a <code>.zip</code> file and import it below.</span>
             </p>
             <p class="info-aside">
               Your files stay on your device and are never uploaded anywhere
@@ -1681,7 +1697,7 @@
                 </svg>
                 <div class="import-dropzone-title">Drop to import</div>
                 <div class="import-dropzone-sub">
-                  Game folder or <code>.zip</code> archive
+                  <span class="android-hide">Game folder or </span><code>.zip</code> archive
                 </div>
               </div>
             </div>
@@ -1815,12 +1831,26 @@
             (function () {
               var el = document.getElementById("offline-indicator");
               if (!el) return;
-              function update() {
-                var offline = navigator.onLine === false;
+              function apply(offline) {
                 el.classList.toggle("visible", offline);
                 el.setAttribute("aria-hidden", offline ? "false" : "true");
               }
+              function probe() {
+                var ctrl = new AbortController();
+                var tid = setTimeout(function () { ctrl.abort(); }, 5000);
+                fetch("/mods.json", { method: "HEAD", cache: "no-store", signal: ctrl.signal })
+                  .then(function (r) { clearTimeout(tid); apply(!r.ok); })
+                  .catch(function () { clearTimeout(tid); apply(true); });
+              }
+              function update() {
+                // navigator.onLine === false is reliable as a "definitely offline"
+                // signal on desktop. On Android WebView it may wrongly return true
+                // when offline, so always confirm with a real probe.
+                if (navigator.onLine === false) { apply(true); return; }
+                probe();
+              }
               update();
+              setInterval(probe, 30000);
               try {
                 window.addEventListener("online", update);
                 window.addEventListener("offline", update);
@@ -3277,6 +3307,22 @@
         to { opacity: 0; transform: translateX(-30px); }
       }
 
+      .android-only { display: none; }
+      :host(.android-app) .android-only { display: inline !important; }
+      :host(.android-app) .android-hide { display: none !important; }
+      :host(.android-app) [data-tab="create"],
+      :host(.android-app) [data-tab="build"],
+      :host(.android-app) [data-tab="download"],
+      :host(.android-app) [data-goto="create"],
+      :host(.android-app) [data-goto="build"],
+      :host(.android-app) #tab-create,
+      :host(.android-app) #tab-build,
+      :host(.android-app) #tab-download,
+      :host(.android-app) #tab-modding .sep,
+      :host(.android-app) #tab-modding .split,
+      :host(.android-app) .app-dl,
+      :host(.android-app) #chooser-folder { display: none !important; }
+
       /* Only the content column (.wrap) animates; the Steam card and top-link
          buttons stay put (see loader side). Incoming is delayed so the outgoing
          column clears first - minimal overlap between the two views. */
@@ -3436,8 +3482,10 @@
             <div class="panel">
               <h2 class="panel-title">Modding</h2>
               <p class="lede">
-                The full modding toolchain, right in your browser. Everything
-                runs locally on your imported game and nothing is uploaded.
+                <span class="android-hide">The full modding toolchain, right in your browser. Everything
+                runs locally on your imported game and nothing is uploaded.</span>
+                <span class="android-only">Install community mods, then turn them on or off in the in-game
+                <strong>Mods</strong> menu. Saves stay separate per mod.</span>
               </p>
 
               <label style="margin-top: 14px">Imported game versions</label>
@@ -3493,7 +3541,10 @@
                 remove it anytime. Your saves are kept separate per mod.
               </p>
               <div class="drop" id="drop">
-                <p><strong>Drop a mod file here</strong> or click to choose</p>
+                <p>
+                  <span class="android-hide"><strong>Drop a mod file here</strong> or click to choose</span>
+                  <span class="android-only">Tap to choose a mod file</span>
+                </p>
                 <p class="meta" id="drop-supported">
                   Supported: <code>.tcoaalmod</code> files and packaged mod
                   <code>.zip</code> archives.
@@ -6445,6 +6496,9 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         // Clone the modding template into a shadow root for full CSS isolation.
         var host = document.getElementById("modding-host");
         var tpl = document.getElementById("modding-template");
+        if (document.body.classList.contains("android-app")) {
+          host.classList.add("android-app");
+        }
         window.MOD_ROOT = host.attachShadow({ mode: "open" });
         window.MOD_ROOT.appendChild(tpl.content.cloneNode(true));
         tpl.remove();

@@ -2143,6 +2143,10 @@
 
       function processBatch() {
         if (queue.length === 0 && stored + errors >= total) {
+          if (stored === 0) {
+            if (onError) onError("Check your connection");
+            return;
+          }
           var meta = JSON.stringify({
             version: version,
             date: new Date().toISOString().substring(0, 10),
@@ -2165,8 +2169,11 @@
 
         for (var i = 0; i < batch.length; i++) {
           (function (relPath) {
-            fetch(wwwBase + relPath)
+            var ctrl = new AbortController();
+            var tid = setTimeout(function () { ctrl.abort(); }, 10000);
+            fetch(wwwBase + relPath, { signal: ctrl.signal })
               .then(function (res) {
+                clearTimeout(tid);
                 if (!res.ok) throw new Error(res.status);
                 return res.arrayBuffer();
               })
@@ -2199,6 +2206,7 @@
                 );
               })
               .catch(function () {
+                clearTimeout(tid);
                 errors++;
                 pending--;
                 if (pending <= 0) processBatch();

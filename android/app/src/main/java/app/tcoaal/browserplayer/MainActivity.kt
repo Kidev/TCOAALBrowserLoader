@@ -3,9 +3,11 @@ package app.tcoaal.browserplayer
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -16,6 +18,9 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.ServiceWorkerClientCompat
 import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebViewFeature
@@ -52,6 +57,12 @@ class MainActivity : AppCompatActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
 
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+
         saveStore = SaveStore(File(filesDir, SaveStore.FILE_NAME))
 
         fileChooser = registerForActivityResult(
@@ -66,6 +77,7 @@ class MainActivity : AppCompatActivity() {
 
         webView = WebView(this)
         setContentView(webView)
+        enterFullscreen()
         configureWebView()
         enableServiceWorkers()
 
@@ -84,6 +96,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         webView.settings.apply {
+            userAgentString = "$userAgentString TCOAALApp/1"
             javaScriptEnabled = true
             domStorageEnabled = true
             @Suppress("DEPRECATION")
@@ -182,6 +195,19 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             // No handling app; silently ignore.
         }
+    }
+
+    private fun enterFullscreen() {
+        WindowInsetsControllerCompat(window, window.decorView).let { ctrl ->
+            ctrl.hide(WindowInsetsCompat.Type.systemBars())
+            ctrl.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) enterFullscreen()
     }
 
     override fun onResume() {

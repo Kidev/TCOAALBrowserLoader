@@ -344,12 +344,23 @@
       (function () {
         var el = document.getElementById("offline-indicator");
         if (!el) return;
-        function update() {
-          var offline = navigator.onLine === false;
+        function apply(offline) {
           el.classList.toggle("visible", offline);
           el.setAttribute("aria-hidden", offline ? "false" : "true");
         }
+        function probe() {
+          var ctrl = new AbortController();
+          var tid = setTimeout(function () { ctrl.abort(); }, 5000);
+          fetch("/mods.json", { method: "HEAD", cache: "no-store", signal: ctrl.signal })
+            .then(function (r) { clearTimeout(tid); apply(!r.ok); })
+            .catch(function () { clearTimeout(tid); apply(true); });
+        }
+        function update() {
+          if (navigator.onLine === false) { apply(true); return; }
+          probe();
+        }
         update();
+        setInterval(probe, 30000);
         try {
           window.addEventListener("online", update);
           window.addEventListener("offline", update);
