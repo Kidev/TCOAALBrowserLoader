@@ -4863,7 +4863,9 @@
     // Help / Feedback title entry: opens the "feedback." subdomain of the
     // current host in a new tab. Sits right below "Mods" (or before Quit
     // when no mods are registered).
-    if (typeof Window_TitleCommand !== "undefined") {
+    // Hidden for now (kept intact to re-enable later).
+    var SHOW_REPORT_ISSUE_ENTRY = false;
+    if (SHOW_REPORT_ISSUE_ENTRY && typeof Window_TitleCommand !== "undefined") {
       var _pre_help_makeCmdList = Window_TitleCommand.prototype.makeCommandList;
       Window_TitleCommand.prototype.makeCommandList = function () {
         _pre_help_makeCmdList.call(this);
@@ -4932,7 +4934,7 @@
       }
     }
 
-    if (typeof Scene_Title !== "undefined") {
+    if (SHOW_REPORT_ISSUE_ENTRY && typeof Scene_Title !== "undefined") {
       var _orig_help_createCmdWin = Scene_Title.prototype.createCommandWindow;
       Scene_Title.prototype.createCommandWindow = function () {
         _orig_help_createCmdWin.call(this);

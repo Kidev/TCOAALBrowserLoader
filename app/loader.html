@@ -1478,15 +1478,15 @@
           rel="noopener"
           class="feedback-link"
           data-feedback-link
-          aria-label="Share feedback or report an issue"
+          aria-label="Contact, share feedback, report issue"
           onclick="event.stopPropagation()"
         >
           <svg class="feedback-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
-              d="M5 3h14a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-7.2l-4.3 3.4a1 1 0 0 1-1.62-.78V18H5a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm6.94 4.1c-1.62 0-2.86 1-2.86 2.55h1.86c0-.62.4-1 .98-1 .55 0 .94.34.94.84 0 .42-.2.7-.85 1.12-.78.49-1.13.99-1.1 1.93l.01.28h1.82c0-.55.13-.82.78-1.23.86-.55 1.36-1.17 1.36-2.16 0-1.4-1.18-2.33-2.94-2.33Zm-.05 6.95a1.08 1.08 0 1 0 .01 2.16 1.08 1.08 0 0 0-.01-2.16Z"
+              d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"
             />
           </svg>
-          <span>Share feedback or report an issue</span>
+          <span>Contact, share feedback, report issue</span>
         </a>
         <a
           href="https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/"
@@ -1533,15 +1533,17 @@
 
       <script>
         (function () {
-          // Resolve the feedback link to the "feedback." subdomain of the
-          // current host. Falls back to tcoaal.app when running on a host
-          // without a public dot-domain (e.g. localhost, raw IP).
-          var host = location.hostname || "";
-          var target =
-            /\./.test(host) && !/^\d+\.\d+\.\d+\.\d+$/.test(host)
-              ? host
-              : "tcoaal.app";
-          var url = "https://feedback." + target + "/";
+          // Build the contact mailto: at runtime from char codes so the
+          // address isn't sitting in the page source as scrapeable plain
+          // text (a mailto: link still has to be reachable to real visitors,
+          // just not to a dumb regex crawler).
+          var u = [112, 117, 98, 108, 105, 99]
+            .map(function (c) { return String.fromCharCode(c); })
+            .join("");
+          var d = [107, 105, 100, 101, 118, 46, 111, 114, 103]
+            .map(function (c) { return String.fromCharCode(c); })
+            .join("");
+          var url = "mailto:" + u + "@" + d;
           var links = document.querySelectorAll("[data-feedback-link]");
           for (var i = 0; i < links.length; i++) links[i].href = url;
         })();
@@ -2156,7 +2158,7 @@
         flex: 0 0 auto;
       }
 
-      /* Top-right link stack (mirrors loader.html): GitHub / Tools / Feedback.
+      /* Top-right link stack (mirrors loader.html): GitHub / Tools / Contact.
          Fixed so it stays on screen while a tall pane scrolls. */
       .top-links {
         position: fixed;
@@ -3353,7 +3355,7 @@
       </style>
     <div class="bg"></div>
 
-    <!-- Top-right links (mirrors loader.html): GitHub / Tools / Feedback. -->
+    <!-- Top-right links (mirrors loader.html): GitHub / Tools / Contact. -->
     <div class="top-links">
       <a
         href="https://github.com/Kidev/TCOAALBrowserLoader"
@@ -3389,14 +3391,14 @@
         rel="noopener"
         class="feedback-link"
         data-feedback-link
-        aria-label="Share feedback or report an issue"
+        aria-label="Contact, share feedback, report issue"
       >
         <svg class="feedback-icon" viewBox="0 0 24 24" aria-hidden="true">
           <path
-            d="M5 3h14a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-7.2l-4.3 3.4a1 1 0 0 1-1.62-.78V18H5a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm6.94 4.1c-1.62 0-2.86 1-2.86 2.55h1.86c0-.62.4-1 .98-1 .55 0 .94.34.94.84 0 .42-.2.7-.85 1.12-.78.49-1.13.99-1.1 1.93l.01.28h1.82c0-.55.13-.82.78-1.23.86-.55 1.36-1.17 1.36-2.16 0-1.4-1.18-2.33-2.94-2.33Zm-.05 6.95a1.08 1.08 0 1 0 .01 2.16 1.08 1.08 0 0 0-.01-2.16Z"
+            d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5-8-5V6l8 5 8-5v2Z"
           />
         </svg>
-        <span>Share feedback or report an issue</span>
+        <span>Contact, share feedback, report issue</span>
       </a>
       <a
         href="https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/"
@@ -9374,13 +9376,19 @@ Depot download complete : "...\steamapps\content\app_2378900\depot_2378901"'
         hashes: Object.keys(TAB_BY_HASH),
       };
 
-      // Resolve the in-shadow feedback link (the loader's global resolver
-      // cannot reach into the shadow root).
+      // Resolve the in-shadow contact link (the loader's global resolver
+      // cannot reach into the shadow root). Built from char codes so the
+      // address isn't sitting in the page source as scrapeable plain text.
       (function () {
-        var h = location.hostname || "";
-        var t = /\./.test(h) && !/^\d+\.\d+\.\d+\.\d+$/.test(h) ? h : "tcoaal.app";
+        var u = [112, 117, 98, 108, 105, 99]
+          .map(function (c) { return String.fromCharCode(c); })
+          .join("");
+        var d = [107, 105, 100, 101, 118, 46, 111, 114, 103]
+          .map(function (c) { return String.fromCharCode(c); })
+          .join("");
+        var url = "mailto:" + u + "@" + d;
         MOD_ROOT.querySelectorAll("[data-feedback-link]").forEach(function (a) {
-          a.href = "https://feedback." + t + "/";
+          a.href = url;
         });
       })();
       })();
