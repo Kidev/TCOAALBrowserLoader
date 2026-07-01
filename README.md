@@ -1,61 +1,67 @@
 # kidev's TCOAAL Browser Loader
 
-**Requires to own the game to work.**  
+**You must OWN the game: this tool only allows you to make it playable on a browser**
 
-A browser tool to play [_The Coffin of Andy and Leyley_](https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/) (by _Nemlei_) from the browser. Allows you to play the base game and mods without installing anything. Save files are kept between sessions, and are saved in a per-mod basis.  
+A browser tool to play [_The Coffin of Andy and Leyley_](https://store.steampowered.com/app/2378900/The_Coffin_of_Andy_and_Leyley/) (by _Nemlei_) from the browser.  
+Game files stay on your device. Works on desktop and mobile (Chrome, Edge, Firefox, Safari), and can be installed as an Android app or a PWA.
 
-## Additional tools
+## Loader features
 
-Maintenance and modding scripts live in `tools/` and are run from the project root.
+- **Play in browser** - import your own copy (folder or `.zip`) once via `loader.html`, then just open the page to play. No Node/NW.js required.
+- **Offline play** - after the first import, a Service Worker serves every game file locally; the game keeps working with no connection.
+- **Multiple versions** - import several builds of the game side by side and switch between them; a guided wizard can drive your own Steam client (via `steam://` console commands) to download older depots for mods that need a specific version.
+- **Mods** - browse and install community overhauls, translations and plugins from the in-game **Mods** menu. Overhauls are exclusive (one active at a time), plugins can be combined freely, and saves are kept isolated per active mod.
+- **Modding menu** - a full point-and-click modding suite in the loader itself, no coding or local tools required: pick any imported game version and recover it as an editable RPG Maker MV project (download as a `.zip`), edit it in the actual editor, then package your edits into a shareable `.tcoaalmod`. Building compares your project against the game versions you pick and keeps only your changes, so the mod file is copyright-safe to distribute (no game assets inside). Other players install it with a drop, same as any other mod.
+- **Data management** - clear/reset all browser data for a fresh start; save files can be exported and re-imported independently of the browser profile.
 
-### Modding round-trip
+## Game additions
 
-Recover an editable RPG Maker MV project from a shipped game, edit it, then pack it back:
+Quality-of-life features layered on top of the original game, available regardless of which mod (if any) is active:
 
-```bash
-# Extract an editable project (baked dialogue + recovered names + map backgrounds)
-node tools/extract-project.js --www <wwwGameDir> --out <projectDir>
+- **Save anytime, even mid-scene** - Escape opens the pause menu at any point during a CG or line of dialogue, not just on a quiet map like stock RPG Maker requires. You're never stuck without a way to save because a cutscene is running.
+- **Saves keep the exact line** - saving while a message is on screen stores that exact line; loading the save resumes right there instead of skipping ahead to the next command like a naive save/load would.
+- **Save annotations** - press `[N]` on any save slot (or long-press it on touch) to add or edit a free-form note right on the row; new saves are auto-labeled with their creation time until you overwrite the note yourself.
+- **Save preview** - the Continue screen renders a real snapshot of each save (map, characters, on-screen dialogue) instead of a blank/generic background.
+- **Instant drag & drop loading** - drop a `.rpgsave` (or a legacy `.json` export) anywhere on the window and it loads immediately, jumping straight into that save.
+- **Save export/import** - export any save, or all of them at once, as standard `.rpgsave` files you can back up or move to another browser/device.
+- **Quick save** - a dedicated key (`M`) or on-screen button saves instantly to a new file slot without opening the menu.
+- **Infinite save slots** - the stock 30/50-slot cap is removed; the save screen scrolls to as many files as you make.
+- **Achievements** - Steam achievements are replaced with a local unlock system and an on-screen toast, so progress tracking works without Steamworks.
 
-# Run the extracted project in true browser mode straight from the shell
-node tools/play.js <projectDir>
+## Included plugins and mods
 
-# Pack the edited project back into a shipped TCOAAL www/
-node tools/pack-project.js --project <projectDir> --out <wwwModedGameDir>
+Available directly from the in-game **Mods** menu (no external download needed):
 
-# Then play it offline after importing <wwwModedGameDir> in browser
-node server.js 
-```
+**Plugins** (any combination can be active):
+- Mouse Control - mouse/touch input for menus and gameplay
+- Virtual Controller - on-screen D-pad + action buttons
+- Analog Move - free (non-tile-locked) movement
+- Message Backlog - message history (TAB)
+- Seamless Maps - keeps the player centered and turns door transfers into a smooth pan
+- Unlocker - unlocks the vision room, visions and stars
 
-### Building mods
+**Overhauls** (one active at a time):
+- The Coffin of Andrew and Renee (TCOAAR)
+- The Coffin of Andy and July (TCOAAJ)
+- The Coffin of Andy and Lili
+- The Lost Coffin of Andrew and Ashley (TLCOAAA)
+- The Dubbing Of Andy And Leyley (TDOAAL) - Chapter 1 voice acting
+- Side Dishes - extra content for episode 1
+- Mod of Extension - more branches, CGs, sprites and maps
+- The Coffin of Andy and Catley
 
-```bash
-# Flatten a Tomb-format overhaul into a self-contained, importable www/
-node tools/build-tomb-mod.js --diff <modDir> --base <v2_0_14_gameDir> --out <outDir>
+**Translations:** Chinese, French, German, Hungarian, Italian, Japanese, Korean, Polish, Brazilian Portuguese, Russian, Castilian Spanish, Mexican Spanish, Turkish, Ukrainian (base game), plus partial translations for several overhauls.
 
-# Prune a mod's files that are byte-identical to the base game (--dry-run to preview)
-node tools/dedup-mods.js <modFolder>
-```
+## License
 
-### Inspection
-
-```bash
-# Decrypt a single logical file from any game version
-node tools/decode.js <gameDir> <filePath>
-
-# Dump the MapInfos id->name table
-node tools/decode.js <gameDir> --names
-
-# Extract a CLD into the translator layout (img/, font/, dialogue.csv)
-node tools/extract-cld.js <input.cld> <outDir>
-```
+AGPLv3 - see [LICENSE](LICENSE). No telemetry, no ads, no tracking.
 
 ## Credits
 
-Created by Kidev as a fan tool for the community. 
+Created by Kidev as a fan tool for the community.
 
 Some assets, theme and inspiration by **Nemlei**
 
 Faustina font by Google.
 
 [pako](https://github.com/nodeca/pako) by nodeca.
-
